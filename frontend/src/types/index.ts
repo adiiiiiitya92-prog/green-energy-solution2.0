@@ -2,7 +2,7 @@ export interface Profile {
   id: string;
   fullName: string;
   phone: string;
-  role: 'super_admin' | 'admin' | 'field_employee';
+  role: 'super_admin' | 'admin' | 'field_employee' | 'inventory_manager';
   email?: string;
   aadhaarNumber?: string;
   panNumber?: string;
@@ -10,6 +10,8 @@ export interface Profile {
   designation?: string;
   createdBy?: string;
   isActive: boolean;
+  isActivated?: boolean;
+  password?: string;
   createdAt: string;
 }
 
@@ -20,19 +22,41 @@ export interface Lead {
   email?: string;
   requirement: string;
   description: string;
-  assignedEmployeeId?: string;
+  assignedEmployeeId?: string; // Legacy fallback
+  assignedSalesPersonId?: string; // 👤 Sales Person
+  assignedAdminId?: string; // 🏢 Administration Person
   createdBy: string;
   status: 'new' | 'quotation_sent' | 'confirmed' | 'registered' | 'installed' | 'closed' | 'lost';
   clientRating?: 1 | 2 | 3 | 4 | 5;
+  isHot?: boolean;
+  nextFollowUpDate?: string;
+  followUpNotes?: string;
+  followUpSetAt?: string;
+  followUpSetBy?: string;
+  followUpCompleted?: boolean;
   createdAt: string;
   updatedAt: string;
 }
 
 export interface QuotationItem {
   itemName: string;
+  brand?: string;
+  unit?: string;
+  description?: string;
   qty: number;
   rate: number;
   amount: number;
+}
+
+export interface BomItem {
+  srNo?: number | string;
+  itemName: string;
+  qty: number | string;
+  unit: string;
+  brand?: string;
+  description?: string;
+  category?: string;
+  isHeader?: boolean;
 }
 
 export interface Quotation {
@@ -40,14 +64,61 @@ export interface Quotation {
   leadId: string;
   quotationNumber: string;
   items: QuotationItem[];
+  bomItems?: BomItem[];
   subtotal: number;
   grandTotal: number;
   followUpDate: string;
+  followUpNotes?: string;
+  followUpSetAt?: string;
+  followUpCompleted?: boolean;
+  consumerName?: string;
+  consumerMobile?: string;
+  consumerEmail?: string;
+  consumerNo?: string;
+  sanctionLoad?: string;
+  city?: string;
+  statePin?: string;
+  companyName?: string;
+  companyAddress?: string;
+  companyState?: string;
+  leadType?: string;
+  proposalId?: string;
+  proposalDate?: string;
+  preparedBy?: string;
+  systemCapacity?: string;
+  pvModuleMake?: string;
+  pvModuleCount?: string;
+  inverterMake?: string;
+  structureType?: string;
+  estAnnualUnits?: string;
+  warrantyModules?: string;
+  warrantyInverter?: string;
+  lineItems?: any[];
+  subsidyAmount?: string;
+  gstRate?: number;
+  signatureDataUrl?: string;
   pdfBlob?: Blob; // stored in IndexedDB
+  pdfDataUrl?: string; // compressed base64 PDF data URL
+  pdfUrl?: string; // Firebase Cloud Storage Bucket URL
+  pdfStoragePath?: string; // Cloud Storage bucket path
+  pdfSizeKB?: number; // File size in KB
   createdBy: string;
   createdAt: string;
+  updatedAt?: string;
   sentViaWhatsapp: boolean;
   whatsappSentAt?: string;
+}
+
+export interface PaymentInstallment {
+  id: string;
+  installmentNo: number;
+  label: string;
+  amount: number;
+  paymentMode: 'transaction_id' | 'utr' | 'cheque' | 'cash';
+  paymentReference?: string;
+  paidAt: string;
+  receiptPdfUrl?: string;
+  notes?: string;
 }
 
 export interface OrderConfirmation {
@@ -61,6 +132,7 @@ export interface OrderConfirmation {
   paymentReference?: string;
   clientSignatureBlob: Blob | string; // PNG or Firebase Storage URL
   confirmationPdfBlob?: Blob | string;
+  payments?: PaymentInstallment[];
   createdBy: string;
   createdAt: string;
 }
@@ -68,10 +140,12 @@ export interface OrderConfirmation {
 export interface ClientDocument {
   id: string;
   leadId: string;
-  docType: 'pan_card' | 'aadhar_card' | 'electricity_bill' | 'tax_paper' | 'account_details';
+  docType: 'pan_card' | 'aadhar_card' | 'electricity_bill' | 'tax_paper' | 'account_details' | 'dcr_certificate' | 'wcr_report' | 'model_agreement' | 'annexure_proforma';
   fileBlob: Blob | string;
   uploadedBy: string;
   uploadedAt: string;
+  notes?: string;
+  formData?: any;
 }
 
 export interface ClientRegistration {
@@ -124,7 +198,10 @@ export interface FieldVisitReport {
 export interface Product {
   id: string;
   name: string;
-  category: 'solar_panel' | 'inverter' | 'battery' | 'structure' | 'other';
+  brand?: string;
+  unit?: string; // Unit of Measurement (e.g. Nos, Watt, kW, Meters, Sets, Kg)
+  category: 'solar_panel' | 'inverter' | 'battery' | 'structure' | 'other' | 'bom_item';
+  bomCategory?: string; // Sub-category for BOM items (e.g. Cables & Wiring, Protection Devices, Earthing & LA, Conduit, Accessories)
   rate: number;
   description?: string;
   stockQuantity: number;

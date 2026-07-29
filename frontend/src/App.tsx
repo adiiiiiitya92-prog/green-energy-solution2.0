@@ -15,12 +15,18 @@ import { ShadowAnalysisContainer } from './components/ShadowAnalysis';
 import { DcrDocument } from './views/Admin/DcrDocument';
 import { WcrDocument } from './views/Admin/WcrDocument';
 import { ModelAgreementDocument } from './views/Admin/ModelAgreementDocument';
+import { QuotationDocument } from './views/Admin/QuotationDocument';
+
+import { InventoryPanel } from './views/InventoryManager/InventoryPanel';
+
+import { syncAllLocalDataToFirestore } from './services/firebase';
 
 export const App: React.FC = () => {
   const { currentRole, initAuth, isLoading, isAuthenticated } = useAuthStore();
 
   useEffect(() => {
     initAuth();
+    syncAllLocalDataToFirestore();
   }, []);
 
   if (isLoading) {
@@ -45,26 +51,35 @@ export const App: React.FC = () => {
 
   // Routing checks based on mock persona
   const isEmployee = currentRole === 'field_employee';
+  const isInventoryManager = currentRole === 'inventory_manager';
 
   return (
     <BrowserRouter>
       <Layout>
         <Routes>
-          {/* Shared routes but adapting view layouts */}
-          <Route path="/leads" element={<Leads />} />
-          <Route path="/visits" element={<Visits />} />
-          <Route path="/shadow-analysis" element={<ShadowAnalysisContainer />} />
-          
-          {/* Admin / Super Admin ONLY routes */}
-          {!isEmployee ? (
+          {/* Inventory Manager Dedicated Panel & Routes */}
+          {isInventoryManager ? (
+            <>
+              <Route path="/inventory-panel" element={<InventoryPanel />} />
+              <Route path="/products" element={<Products />} />
+              <Route path="/challans" element={<Challans />} />
+              <Route path="*" element={<Navigate to="/inventory-panel" replace />} />
+            </>
+          ) : !isEmployee ? (
+            /* Admin / Super Admin Routes */
             <>
               <Route path="/dashboard" element={<Dashboard />} />
+              <Route path="/inventory-panel" element={<InventoryPanel />} />
+              <Route path="/leads" element={<Leads />} />
+              <Route path="/visits" element={<Visits />} />
+              <Route path="/shadow-analysis" element={<ShadowAnalysisContainer />} />
               <Route path="/products" element={<Products />} />
               <Route path="/employees" element={<Employees />} />
               <Route path="/challans" element={<Challans />} />
               <Route path="/dcr-document" element={<DcrDocument />} />
               <Route path="/wcr-document" element={<WcrDocument />} />
               <Route path="/model-agreement" element={<ModelAgreementDocument />} />
+              <Route path="/quotation-document" element={<QuotationDocument />} />
               
               {currentRole === 'super_admin' ? (
                 <Route path="/settings" element={<Settings />} />
@@ -77,7 +92,10 @@ export const App: React.FC = () => {
           ) : (
             // Field Employee routes
             <>
+              <Route path="/leads" element={<Leads />} />
+              <Route path="/visits" element={<Visits />} />
               <Route path="/visits/new" element={<VisitsNewAutoOpen />} />
+              <Route path="/shadow-analysis" element={<ShadowAnalysisContainer />} />
               <Route path="/profile" element={<ProfileView />} />
               
               <Route path="*" element={<Navigate to="/leads" replace />} />

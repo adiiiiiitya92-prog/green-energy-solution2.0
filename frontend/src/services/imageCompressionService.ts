@@ -28,8 +28,8 @@ export async function compressImage(
     inputfile = new File([fileOrBlob], `upload_${Date.now()}.jpg`, { type: fileOrBlob.type || 'image/jpeg' });
   }
 
-  // Check if file is already extremely tiny (< 40 KB)
-  if (inputfile.size <= 40 * 1024) {
+  // Instant bypass if file is already small (< 100 KB)
+  if (inputfile.size <= 100 * 1024) {
     return inputfile;
   }
 
@@ -37,14 +37,13 @@ export async function compressImage(
     const options = {
       maxSizeMB: targetSizeKB / 1024, // Convert KB to MB
       maxWidthOrHeight: targetDimension,
-      useWebWorker: true,
+      useWebWorker: false, // Fast main thread single pass
       fileType: config.useWebP !== false ? 'image/webp' : 'image/jpeg',
       initialQuality: quality
     };
 
     const compressedBlob = await imageCompression(inputfile, options);
 
-    // Create a new File object from the compressed blob
     const fileName = inputfile.name.replace(/\.[^/.]+$/, "") + (options.fileType === 'image/webp' ? '.webp' : '.jpg');
     const compressedFile = new File([compressedBlob], fileName, {
       type: options.fileType,
@@ -52,13 +51,12 @@ export async function compressImage(
     });
 
     console.log(
-      `📸 Image compressed: ${(inputfile.size / 1024).toFixed(1)} KB ➔ ${(compressedFile.size / 1024).toFixed(1)} KB`
+      `⚡ Fast Image compressed: ${(inputfile.size / 1024).toFixed(1)} KB ➔ ${(compressedFile.size / 1024).toFixed(1)} KB`
     );
 
     return compressedFile;
   } catch (error) {
-    console.warn("Image compression fallback triggered:", error);
-    // Fallback to Canvas compression if web worker fails
+    console.warn("Fast compression fallback triggered:", error);
     return await compressImageCanvasFallback(inputfile, targetDimension, quality);
   }
 }

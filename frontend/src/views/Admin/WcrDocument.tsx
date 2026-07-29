@@ -1,5 +1,6 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { leadService } from '../../services/leadService';
+import { orderService } from '../../services/orderService';
 import type { Lead } from '../../types';
 import {
   FileText,
@@ -13,17 +14,23 @@ import {
   ChevronRight,
   FileSignature,
   CheckCircle2,
-  Edit3
+  Edit3,
+  Save
 } from 'lucide-react';
-import { compressImage } from '../../services/imageCompressionService';
-import { uploadImageToFirebase } from '../../services/firebase';
+import { generateOptimizedPDF } from '../../services/pdfOptimizationService';
 
-export const WcrDocument: React.FC<{ defaultLeadId?: string; isEmbedded?: boolean }> = ({ defaultLeadId, isEmbedded }) => {
+export const WcrDocument: React.FC<{
+  defaultLeadId?: string;
+  isEmbedded?: boolean;
+  initialData?: any;
+  onSaveSuccess?: () => void;
+}> = ({ defaultLeadId, isEmbedded, initialData, onSaveSuccess }) => {
+  const printContainerRef = useRef<HTMLDivElement>(null);
   const [leads, setLeads] = useState<Lead[]>([]);
   const [selectedLeadId, setSelectedLeadId] = useState('');
 
   // Form Fields
-  const [companyName, setCompanyName] = useState('Arrow Sales Corporation');
+  const [companyName, setCompanyName] = useState('Green Energy Solution');
   const [consumerName, setConsumerName] = useState('');
   const [consumerNumber, setConsumerNumber] = useState('');
   const [address, setAddress] = useState('');
@@ -113,6 +120,106 @@ export const WcrDocument: React.FC<{ defaultLeadId?: string; isEmbedded?: boolea
       }
     }
   }, [leads, defaultLeadId]);
+
+  useEffect(() => {
+    if (initialData) {
+      if (initialData.companyName) setCompanyName(initialData.companyName);
+      if (initialData.consumerName) setConsumerName(initialData.consumerName);
+      if (initialData.consumerNumber) setConsumerNumber(initialData.consumerNumber);
+      if (initialData.address) setAddress(initialData.address);
+      if (initialData.category) setCategory(initialData.category);
+      if (initialData.sanctionNumber) setSanctionNumber(initialData.sanctionNumber);
+      if (initialData.sanctionedCapacity) setSanctionedCapacity(initialData.sanctionedCapacity);
+      if (initialData.installedCapacity) setInstalledCapacity(initialData.installedCapacity);
+      if (initialData.moduleMake) setModuleMake(initialData.moduleMake);
+      if (initialData.almmModel) setAlmmModel(initialData.almmModel);
+      if (initialData.moduleWattage) setModuleWattage(initialData.moduleWattage);
+      if (initialData.moduleCount) setModuleCount(initialData.moduleCount);
+      if (initialData.moduleCapacityKwp) setModuleCapacityKwp(initialData.moduleCapacityKwp);
+      if (initialData.moduleWarrantee) setModuleWarrantee(initialData.moduleWarrantee);
+      if (initialData.inverterMakeModel) setInverterMakeModel(initialData.inverterMakeModel);
+      if (initialData.inverterRating) setInverterRating(initialData.inverterRating);
+      if (initialData.controllerType) setControllerType(initialData.controllerType);
+      if (initialData.inverterCapacity) setInverterCapacity(initialData.inverterCapacity);
+      if (initialData.hpd) setHpd(initialData.hpd);
+      if (initialData.inverterMfgYear) setInverterMfgYear(initialData.inverterMfgYear);
+      if (initialData.earthingCount) setEarthingCount(initialData.earthingCount);
+      if (initialData.earthCertifiedText) setEarthCertifiedText(initialData.earthCertifiedText);
+      if (initialData.lightningArrester) setLightningArrester(initialData.lightningArrester);
+      if (initialData.aadharNumber) setAadharNumber(initialData.aadharNumber);
+    }
+  }, [initialData]);
+
+  const [isSaving, setIsSaving] = useState(false);
+
+  const handleSaveDocument = async () => {
+    const targetLeadId = selectedLeadId || defaultLeadId;
+    if (!targetLeadId) {
+      alert('Please select a customer lead first.');
+      return;
+    }
+
+    if (isSaving) return;
+    setIsSaving(true);
+
+    try {
+      const formData = {
+        companyName,
+        consumerName,
+        consumerNumber,
+        address,
+        category,
+        sanctionNumber,
+        sanctionedCapacity,
+        installedCapacity,
+        moduleMake,
+        almmModel,
+        moduleWattage,
+        moduleCount,
+        moduleCapacityKwp,
+        moduleWarrantee,
+        inverterMakeModel,
+        inverterRating,
+        controllerType,
+        inverterCapacity,
+        hpd,
+        inverterMfgYear,
+        earthingCount,
+        earthCertifiedText,
+        lightningArrester,
+        aadharNumber
+      };
+
+      let pdfUrl = '';
+      if (printContainerRef.current) {
+        const res = await generateOptimizedPDF(printContainerRef.current, {
+          uploadToFirebase: true,
+          firebasePath: `documents/${targetLeadId}/wcr_report_${Date.now()}.pdf`
+        });
+        if (res.pdfUrl) pdfUrl = res.pdfUrl;
+      }
+
+      if (!pdfUrl) {
+        throw new Error('PDF upload to Backblaze B2 failed.');
+      }
+
+      await orderService.uploadClientDocument({
+        leadId: targetLeadId,
+        docType: 'wcr_report',
+        fileBlob: pdfUrl,
+        uploadedBy: 'Admin',
+        formData
+      });
+
+      alert('✅ WCR Work Completion Report PDF saved & uploaded to Backblaze B2!');
+      if (onSaveSuccess) onSaveSuccess();
+    } catch (err: any) {
+      console.error('Error saving WCR document:', err);
+      alert(`❌ Failed to upload WCR Report PDF to Backblaze B2: ${err.message || err}`);
+    } finally {
+      setIsSaving(false);
+    }
+  };
 
   // Autofill form when lead changes
   const handleLeadChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
@@ -213,26 +320,103 @@ export const WcrDocument: React.FC<{ defaultLeadId?: string; isEmbedded?: boolea
     ctx.stroke();
   };
 
-  const clearSignature = () => {
-    const canvas = activeCanvas === 'vendor' ? vendorCanvasRef.current : consumerCanvasRef.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-    if (activeCanvas === 'vendor') setVendorSignatureUrl('');
-    else setConsumerSignatureUrl('');
+  const clearVendorSignature = () => {
+    if (vendorCanvasRef.current) {
+      const ctx = vendorCanvasRef.current.getContext('2d');
+      ctx?.clearRect(0, 0, vendorCanvasRef.current.width, vendorCanvasRef.current.height);
+    }
+    setVendorSignatureUrl('');
+  };
+
+  const clearConsumerSignature = () => {
+    if (consumerCanvasRef.current) {
+      const ctx = consumerCanvasRef.current.getContext('2d');
+      ctx?.clearRect(0, 0, consumerCanvasRef.current.width, consumerCanvasRef.current.height);
+    }
+    setConsumerSignatureUrl('');
   };
 
   const saveCanvasImage = () => {
-    const canvas = activeCanvas === 'vendor' ? vendorCanvasRef.current : consumerCanvasRef.current;
-    if (!canvas) return;
-    const dataUrl = canvas.toDataURL('image/png');
-    if (activeCanvas === 'vendor') setVendorSignatureUrl(dataUrl);
-    else setConsumerSignatureUrl(dataUrl);
+    if (activeCanvas === 'vendor' && vendorCanvasRef.current) {
+      setVendorSignatureUrl(vendorCanvasRef.current.toDataURL('image/png'));
+    } else if (activeCanvas === 'consumer' && consumerCanvasRef.current) {
+      setConsumerSignatureUrl(consumerCanvasRef.current.toDataURL('image/png'));
+    }
   };
 
   const handlePrint = () => {
-    window.print();
+    const pages = document.querySelectorAll('.dcr-page');
+    if (!pages || pages.length === 0) {
+      window.print();
+      return;
+    }
+
+    const printWindow = window.open('', '_blank');
+    if (!printWindow) {
+      window.print();
+      return;
+    }
+
+    let innerHtml = '';
+    pages.forEach((page) => {
+      innerHtml += `<div class="wcr-print-page">${page.innerHTML}</div>`;
+    });
+
+    printWindow.document.write(`
+      <!DOCTYPE html>
+      <html>
+        <head>
+          <title>Work Completion Report (WCR) - ${consumerName || 'Solar Project'}</title>
+          <script src="https://cdn.tailwindcss.com"></script>
+          <style>
+            @page {
+              size: A4 portrait;
+              margin: 0 !important;
+            }
+            html, body {
+              margin: 0 !important;
+              padding: 0 !important;
+              background: #ffffff !important;
+              color: #0f172a !important;
+              font-family: Georgia, Cambria, "Times New Roman", Times, serif !important;
+              -webkit-print-color-adjust: exact !important;
+              print-color-adjust: exact !important;
+            }
+            .wcr-print-page {
+              width: 210mm;
+              height: 297mm;
+              max-height: 297mm;
+              padding: 10mm 14mm;
+              box-sizing: border-box;
+              display: flex;
+              flex-direction: column;
+              justify-content: space-between;
+              overflow: hidden;
+              page-break-after: always;
+              page-break-inside: avoid;
+            }
+            .wcr-print-page:last-child {
+              page-break-after: avoid;
+            }
+            .border-dotted {
+              border-bottom-style: dotted !important;
+            }
+          </style>
+        </head>
+        <body>
+          ${innerHtml}
+          <script>
+            window.onload = function() {
+              setTimeout(function() {
+                window.print();
+                window.close();
+              }, 350);
+            };
+          </script>
+        </body>
+      </html>
+    `);
+    printWindow.document.close();
   };
 
   const toggleSection = (section: string) => {
@@ -242,7 +426,7 @@ export const WcrDocument: React.FC<{ defaultLeadId?: string; isEmbedded?: boolea
   const resetForm = () => {
     if (confirm('Are you sure you want to reset all WCR details to defaults?')) {
       setSelectedLeadId('');
-      setCompanyName('Arrow Sales Corporation');
+      setCompanyName('Green Energy Solution');
       setConsumerName('');
       setConsumerNumber('');
       setAddress('');
@@ -398,18 +582,28 @@ export const WcrDocument: React.FC<{ defaultLeadId?: string; isEmbedded?: boolea
           </div>
           <div className="flex items-center space-x-2">
             <button
+              type="button"
               onClick={resetForm}
-              className="flex items-center space-x-1.5 px-3 py-1.5 border border-slate-200 rounded-lg text-slate-500 hover:bg-slate-50 hover:text-slate-700 text-xs font-bold transition-colors cursor-pointer"
+              className="flex items-center space-x-1.5 px-3 py-1.5 border border-slate-200 rounded-lg text-slate-500 hover:bg-slate-50 hover:text-slate-700 text-xs font-bold transition-colors cursor-pointer bg-white"
             >
               <RotateCcw className="w-3.5 h-3.5" />
-              <span>Reset Fields</span>
+              <span>Reset</span>
             </button>
             <button
+              type="button"
+              onClick={handleSaveDocument}
+              className="flex items-center space-x-1.5 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-black shadow-sm transition-colors cursor-pointer"
+            >
+              <Save className="w-3.5 h-3.5" />
+              <span>Save Document</span>
+            </button>
+            <button
+              type="button"
               onClick={handlePrint}
-              className="flex items-center space-x-1.5 px-4 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-extrabold shadow-sm transition-colors cursor-pointer"
+              className="flex items-center space-x-1.5 px-4 py-1.5 bg-slate-900 hover:bg-slate-800 text-white rounded-lg text-xs font-extrabold shadow-sm transition-colors cursor-pointer"
             >
               <Printer className="w-3.5 h-3.5" />
-              <span>Print / Save PDF</span>
+              <span>Print PDF</span>
             </button>
           </div>
         </div>
@@ -803,7 +997,7 @@ export const WcrDocument: React.FC<{ defaultLeadId?: string; isEmbedded?: boolea
             )}
           </div>
 
-          {/* Section 5: Signature Pad */}
+          {/* Section 5: Signature Pads */}
           <div className="border border-slate-100 rounded-xl overflow-hidden shadow-xs">
             <button
               onClick={() => toggleSection('signatures')}
@@ -811,7 +1005,7 @@ export const WcrDocument: React.FC<{ defaultLeadId?: string; isEmbedded?: boolea
             >
               <div className="flex items-center space-x-2">
                 <FileSignature className="w-4 h-4 text-emerald-600" />
-                <span>Draw Signatures</span>
+                <span>Draw Signatures (Vendor & Consumer)</span>
               </div>
               {expandedSection === 'signatures' ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
             </button>
@@ -820,38 +1014,43 @@ export const WcrDocument: React.FC<{ defaultLeadId?: string; isEmbedded?: boolea
                 <div className="flex bg-slate-50 p-1 rounded-lg border border-slate-200 gap-1 select-none">
                   <button
                     type="button"
-                    onClick={() => { setActiveCanvas('vendor'); clearSignature(); }}
-                    className={`flex-1 py-1 text-center font-bold text-[10px] rounded transition-colors ${
-                      activeCanvas === 'vendor' ? 'bg-emerald-600 text-white shadow-xs' : 'text-slate-500 hover:bg-slate-100'
+                    onClick={() => setActiveCanvas('vendor')}
+                    className={`flex-1 py-1.5 text-center font-bold text-[11px] rounded transition-colors flex items-center justify-center gap-1 cursor-pointer ${
+                      activeCanvas === 'vendor' ? 'bg-emerald-600 text-white shadow-xs' : 'text-slate-600 hover:bg-slate-100'
                     }`}
                   >
-                    M/S Vendor
+                    <span>M/S Vendor</span>
+                    {vendorSignatureUrl && <CheckCircle2 className="w-3.5 h-3.5 text-emerald-200 shrink-0" />}
                   </button>
                   <button
                     type="button"
-                    onClick={() => { setActiveCanvas('consumer'); clearSignature(); }}
-                    className={`flex-1 py-1 text-center font-bold text-[10px] rounded transition-colors ${
-                      activeCanvas === 'consumer' ? 'bg-emerald-600 text-white shadow-xs' : 'text-slate-500 hover:bg-slate-100'
+                    onClick={() => setActiveCanvas('consumer')}
+                    className={`flex-1 py-1.5 text-center font-bold text-[11px] rounded transition-colors flex items-center justify-center gap-1 cursor-pointer ${
+                      activeCanvas === 'consumer' ? 'bg-emerald-600 text-white shadow-xs' : 'text-slate-600 hover:bg-slate-100'
                     }`}
                   >
-                    Consumer
+                    <span>Consumer</span>
+                    {consumerSignatureUrl && <CheckCircle2 className="w-3.5 h-3.5 text-emerald-200 shrink-0" />}
                   </button>
                 </div>
 
-                <div className="flex justify-between items-center mb-1 pt-1.5">
-                  <label className="block text-[10px] font-bold text-slate-400 uppercase">Draw {activeCanvas === 'vendor' ? 'Vendor' : 'Consumer'} Sign</label>
+                <div className="flex justify-between items-center mb-1 pt-1">
+                  <label className="block text-[10px] font-bold text-slate-500 uppercase">
+                    Drawing: <span className="text-emerald-700 font-extrabold">{activeCanvas === 'vendor' ? 'M/S Vendor Signature' : 'Consumer Signature'}</span>
+                  </label>
                   <button
                     type="button"
-                    onClick={clearSignature}
+                    onClick={activeCanvas === 'vendor' ? clearVendorSignature : clearConsumerSignature}
                     className="text-[10px] text-rose-500 hover:text-rose-600 font-bold transition-colors cursor-pointer"
                   >
-                    Clear
+                    Clear {activeCanvas === 'vendor' ? 'Vendor' : 'Consumer'}
                   </button>
                 </div>
 
                 <div className="border border-dashed border-slate-300 rounded-lg overflow-hidden bg-slate-50 h-28 relative">
+                  {/* Vendor Canvas */}
                   <canvas
-                    ref={activeCanvas === 'vendor' ? vendorCanvasRef : consumerCanvasRef}
+                    ref={vendorCanvasRef}
                     width={320}
                     height={112}
                     onMouseDown={startDrawing}
@@ -861,8 +1060,37 @@ export const WcrDocument: React.FC<{ defaultLeadId?: string; isEmbedded?: boolea
                     onTouchStart={startTouchDrawing}
                     onTouchMove={drawTouch}
                     onTouchEnd={stopDrawing}
-                    className="w-full h-full cursor-crosshair bg-slate-50 touch-none"
+                    className={`w-full h-full cursor-crosshair bg-slate-50 touch-none ${
+                      activeCanvas === 'vendor' ? 'block' : 'hidden'
+                    }`}
                   />
+
+                  {/* Consumer Canvas */}
+                  <canvas
+                    ref={consumerCanvasRef}
+                    width={320}
+                    height={112}
+                    onMouseDown={startDrawing}
+                    onMouseMove={draw}
+                    onMouseUp={stopDrawing}
+                    onMouseLeave={stopDrawing}
+                    onTouchStart={startTouchDrawing}
+                    onTouchMove={drawTouch}
+                    onTouchEnd={stopDrawing}
+                    className={`w-full h-full cursor-crosshair bg-slate-50 touch-none ${
+                      activeCanvas === 'consumer' ? 'block' : 'hidden'
+                    }`}
+                  />
+                </div>
+
+                {/* Status Badges */}
+                <div className="flex items-center justify-between text-[10px] pt-1 border-t border-slate-100">
+                  <span className={vendorSignatureUrl ? 'text-emerald-600 font-bold flex items-center gap-1' : 'text-slate-400'}>
+                    {vendorSignatureUrl ? '✓ Vendor Sign Saved' : '• Vendor Sign Pending'}
+                  </span>
+                  <span className={consumerSignatureUrl ? 'text-emerald-600 font-bold flex items-center gap-1' : 'text-slate-400'}>
+                    {consumerSignatureUrl ? '✓ Consumer Sign Saved' : '• Consumer Sign Pending'}
+                  </span>
                 </div>
               </div>
             )}
@@ -948,7 +1176,7 @@ export const WcrDocument: React.FC<{ defaultLeadId?: string; isEmbedded?: boolea
           };
 
           return (
-            <div className={`flex-1 overflow-y-auto overflow-x-auto bg-slate-100 p-2 sm:p-4 md:p-8 flex flex-col items-center space-y-6 main-content-wrapper select-none relative max-w-full ${
+            <div ref={printContainerRef} className={`flex-1 overflow-y-auto overflow-x-auto bg-slate-100 p-2 sm:p-4 md:p-8 flex flex-col items-center space-y-6 main-content-wrapper select-none relative max-w-full ${
               mobileTab === 'preview' ? 'block w-full' : 'hidden lg:flex'
             }`}>
               {isSidebarCollapsed && (

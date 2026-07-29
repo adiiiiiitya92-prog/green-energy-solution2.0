@@ -4,16 +4,27 @@ import { saveRecordToFirestore, deleteRecordFromFirestore, fetchCollectionFromFi
 
 export const leadService = {
   async getLeads(): Promise<Lead[]> {
-    // 1. Sync latest from Firestore if online
     try {
       const remoteLeads = await fetchCollectionFromFirestore<Lead>('leads');
-      if (remoteLeads && remoteLeads.length > 0) {
-        await db.leads.bulkPut(remoteLeads);
+      if (Array.isArray(remoteLeads)) {
+        // Sync local Dexie DB with latest remote state
+        const remoteIds = new Set(remoteLeads.map(l => l.id));
+        const localLeads = await db.leads.toArray();
+        const deletedIds = localLeads.filter(l => !remoteIds.has(l.id)).map(l => l.id);
+        
+        if (remoteLeads.length > 0) {
+          await db.leads.bulkPut(remoteLeads);
+        }
+        if (deletedIds.length > 0) {
+          await db.leads.bulkDelete(deletedIds);
+        }
+        
+        return await db.leads.orderBy('createdAt').reverse().toArray();
       }
     } catch (err) {
-      console.warn("Firestore leads sync offline note:", err);
+      console.warn("Firestore leads sync note, returning local cache:", err);
     }
-    // 2. Return sorted from local Dexie database for 0ms latency UI
+
     return db.leads.orderBy('createdAt').reverse().toArray();
   },
 
@@ -44,6 +55,9 @@ export const leadService = {
   },
 
   async deleteLead(id: string): Promise<void> {
+    const quotes = await db.quotations.where({ leadId: id }).toArray();
+    const ocs = await db.orderConfirmations.where({ leadId: id }).toArray();
+
     await db.transaction('rw', [
       db.leads,
       db.quotations,
@@ -65,12 +79,20 @@ export const leadService = {
     });
 
     deleteRecordFromFirestore('leads', id);
+    for (const q of quotes) {
+      deleteRecordFromFirestore('quotations', q.id);
+    }
+    for (const oc of ocs) {
+      deleteRecordFromFirestore('orderConfirmations', oc.id);
+    }
   },
 
-  async assignLead(leadId: string, employeeId: string | undefined): Promise<void> {
+  async assignLead(leadId: string, salesPersonId?: string, adminId?: string): Promise<void> {
     const lead = await db.leads.get(leadId);
     if (lead) {
-      lead.assignedEmployeeId = employeeId;
+      lead.assignedSalesPersonId = salesPersonId;
+      lead.assignedAdminId = adminId;
+      lead.assignedEmployeeId = salesPersonId || adminId || undefined;
       lead.updatedAt = new Date().toISOString();
       await db.leads.put(lead);
       saveRecordToFirestore('leads', leadId, lead);

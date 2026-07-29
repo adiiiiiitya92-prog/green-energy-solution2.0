@@ -1,75 +1,264 @@
 import { initializeApp, getApps, getApp } from 'firebase/app';
+import { getAuth, setPersistence, browserLocalPersistence } from 'firebase/auth';
 import { getStorage, ref, uploadBytes, getDownloadURL, deleteObject } from 'firebase/storage';
 import { getFirestore, doc, setDoc, getDocs, collection, deleteDoc } from 'firebase/firestore';
 import { compressImage, compressDataUrl, type ImageCompressionConfig } from './imageCompressionService';
 
-// Firebase Project Configuration (Securely loaded from .env environment variables)
+// Firebase Project Configuration
+const NATIVE_BUCKET = import.meta.env.VITE_FIREBASE_STORAGE_BUCKET || "green-energy-solution-dcfa8.firebasestorage.app";
+const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || "";
+const buildApiUrl = (path: string) => `${BACKEND_URL}${path}`;
+
 const firebaseConfig = {
-  apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
-  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
-  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
-  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
-  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
-  appId: import.meta.env.VITE_FIREBASE_APP_ID
+  apiKey: import.meta.env.VITE_FIREBASE_API_KEY || "AIzaSyBKLwdN137XN8xbFU58BATMRoVFPyVbVVE",
+  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN || "green-energy-solution-dcfa8.firebaseapp.com",
+  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID || "green-energy-solution-dcfa8",
+  storageBucket: NATIVE_BUCKET,
+  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID || "169155482765",
+  appId: import.meta.env.VITE_FIREBASE_APP_ID || "1:169155482765:web:955e322b4c1655fe2ebec4"
 };
 
-// Initialize Firebase App singleton
-const app = !getApps().length ? initializeApp(firebaseConfig) : getApp();
+// Initialize distinct Firebase App instance for Green Energy Solution
+const APP_NAME = "GreenEnergySolutionApp";
+const app = !getApps().some(a => a.name === APP_NAME)
+  ? initializeApp(firebaseConfig, APP_NAME)
+  : getApp(APP_NAME);
 
-// Initialize Firebase Cloud Storage & Firestore Database
+// Export isolated Firebase Auth instance bound to GreenEnergySolutionApp
+export const auth = getAuth(app);
+setPersistence(auth, browserLocalPersistence).catch((err) => {
+  console.warn("Firebase Auth persistence configuration note:", err);
+});
+
+// Primary Storage Bucket targeting
 export const storage = getStorage(app);
-export const firestoreDb = getFirestore(app);
+
+// Custom Firestore Database ID targeting
+export const TARGET_DATABASE_ID = import.meta.env.VITE_FIREBASE_DATABASE_ID || "(default)";
+export const firestoreDb = TARGET_DATABASE_ID && TARGET_DATABASE_ID !== '(default)'
+  ? getFirestore(app, TARGET_DATABASE_ID)
+  : getFirestore(app);
+
+const B2_KEY_ID = import.meta.env.VITE_B2_KEY_ID || '005ff217b03db580000000001';
+const B2_APP_KEY = import.meta.env.VITE_B2_APPLICATION_KEY || 'K005gOTKgViCFANig1DqeD7fLVoNU80';
+const B2_BUCKET_ID = import.meta.env.VITE_B2_BUCKET_ID || '7fffc2f1470ba0d39dfb0518';
+const B2_BUCKET_NAME = import.meta.env.VITE_B2_BUCKET_NAME || 'Green-Energy-Solution';
+
+let cachedClientAuth: any = null;
+let lastClientAuthTime = 0;
 
 /**
- * Auto-compresses an image File/Blob down to ultra-low KB sizes (<60KB-90KB)
- * and uploads it directly to Firebase Cloud Storage.
+ * Direct Client-Side Backblaze B2 Upload Helper (Works 100% even when local backend server is offline)
  */
-export async function uploadImageToFirebase(
-  fileOrBlob: File | Blob,
-  storagePath: string,
-  compressionConfig: ImageCompressionConfig = {}
-): Promise<string> {
+async function uploadViaClientDirectB2(base64Data: string, storagePath: string, contentType: string): Promise<string | null> {
   try {
-    const compressedFile = await compressImage(fileOrBlob, compressionConfig);
-    const storageRef = ref(storage, storagePath);
-    const snapshot = await uploadBytes(storageRef, compressedFile, {
-      contentType: compressedFile.type,
-      cacheControl: 'public, max-age=31536000'
+    const now = Date.now();
+    let authData = cachedClientAuth;
+    if (!authData || (now - lastClientAuthTime > 12 * 3600 * 1000)) {
+      const credentials = btoa(`${B2_KEY_ID}:${B2_APP_KEY}`);
+      const authRes = await fetch('https://api.backblazeb2.com/b2api/v2/b2_authorize_account', {
+        headers: { Authorization: `Basic ${credentials}` }
+      });
+      if (!authRes.ok) return null;
+      authData = await authRes.json();
+      cachedClientAuth = authData;
+      lastClientAuthTime = now;
+    }
+
+    const uploadUrlRes = await fetch(`${authData.apiUrl}/b2api/v2/b2_get_upload_url`, {
+      method: 'POST',
+      headers: { Authorization: authData.authorizationToken },
+      body: JSON.stringify({ bucketId: B2_BUCKET_ID })
+    });
+    if (!uploadUrlRes.ok) return null;
+    const uploadInfo = await uploadUrlRes.json();
+
+    const cleanPath = storagePath.replace(/^\/+/, '');
+    const cleanBase64 = base64Data.includes(',') ? base64Data.split(',')[1] : base64Data;
+    const binaryStr = atob(cleanBase64);
+    const bytes = new Uint8Array(binaryStr.length);
+    for (let i = 0; i < binaryStr.length; i++) {
+      bytes[i] = binaryStr.charCodeAt(i);
+    }
+
+    const uploadRes = await fetch(uploadInfo.uploadUrl, {
+      method: 'POST',
+      headers: {
+        Authorization: uploadInfo.authorizationToken,
+        'X-Bz-File-Name': encodeURIComponent(cleanPath),
+        'Content-Type': contentType || 'application/octet-stream',
+        'X-Bz-Content-Sha1': 'do_not_verify'
+      },
+      body: bytes
+    });
+    if (!uploadRes.ok) return null;
+
+    const dnldAuthRes = await fetch(`${authData.apiUrl}/b2api/v2/b2_get_download_authorization`, {
+      method: 'POST',
+      headers: { Authorization: authData.authorizationToken },
+      body: JSON.stringify({
+        bucketId: B2_BUCKET_ID,
+        fileNamePrefix: cleanPath,
+        validDurationInSeconds: 604800 // 7 days
+      })
     });
 
-    const downloadURL = await getDownloadURL(snapshot.ref);
-    console.log(`🔥 Firebase Storage Uploaded: ${storagePath} (${(compressedFile.size / 1024).toFixed(1)} KB)`);
-    return downloadURL;
-  } catch (error) {
-    console.warn(`Firebase Storage upload note at ${storagePath}:`, error);
-    return new Promise((resolve) => {
-      const reader = new FileReader();
-      reader.onloadend = () => resolve(reader.result as string);
-      reader.readAsDataURL(fileOrBlob);
-    });
+    let directUrl = `${authData.downloadUrl}/file/${B2_BUCKET_NAME}/${cleanPath}`;
+    if (dnldAuthRes.ok) {
+      const dnldData = await dnldAuthRes.json();
+      if (dnldData.authorizationToken) {
+        directUrl += `?Authorization=${encodeURIComponent(dnldData.authorizationToken)}`;
+      }
+    }
+    console.log(`📦 Directly Uploaded from Client to Backblaze B2 Storage: ${directUrl}`);
+    return directUrl;
+  } catch (err) {
+    console.warn("Direct Client Backblaze B2 upload note:", err);
+    return null;
   }
 }
 
 /**
- * Uploads a Data URL (e.g. from Canvas or PDF snapshot) after auto-compression to Firebase Storage.
+ * Helper to upload via backend API / Netlify Serverless Functions to Backblaze B2 Storage Bucket (10 GB Free Storage)
  */
-export async function uploadDataUrlToFirebase(
-  dataUrl: string,
-  storagePath: string,
+async function uploadViaBackend(base64Data: string, storagePath: string, contentType: string): Promise<string | null> {
+  const backendUrl = import.meta.env.VITE_BACKEND_URL || (window.location.hostname === 'localhost' ? 'http://localhost:5050' : '');
+  
+  const uploadEndpoints = Array.from(new Set([
+    `${backendUrl}/api/upload`.replace(/^\/api/, '/api'),
+    '/.netlify/functions/upload',
+    '/api/upload'
+  ])).filter(Boolean);
+
+  // 1. Try Backend & Netlify Function Upload Endpoints
+  for (const apiUrl of uploadEndpoints) {
+    try {
+      const res = await fetch(apiUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ imageBase64: base64Data, storagePath, contentType })
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.url) {
+          console.log(`📦 Uploaded to Backblaze B2 Storage via ${apiUrl}: ${data.url}`);
+          return data.url;
+        }
+      }
+    } catch (err) {
+      console.warn(`API upload note for ${apiUrl}:`, err);
+    }
+  }
+
+  // 2. Fallback: Try Client Direct B2 Upload using Upload URL Endpoints
+  const authEndpoints = Array.from(new Set([
+    `${backendUrl}/api/b2-upload-url`,
+    '/.netlify/functions/b2-upload-url',
+    '/api/b2-upload-url'
+  ])).filter(Boolean);
+
+  for (const authUrl of authEndpoints) {
+    try {
+      const authRes = await fetch(authUrl);
+      if (authRes.ok) {
+        const authInfo = await authRes.json();
+        const cleanPath = storagePath.replace(/^\/+/, '');
+        const cleanBase64 = base64Data.includes(',') ? base64Data.split(',')[1] : base64Data;
+        const binaryStr = atob(cleanBase64);
+        const bytes = new Uint8Array(binaryStr.length);
+        for (let i = 0; i < binaryStr.length; i++) {
+          bytes[i] = binaryStr.charCodeAt(i);
+        }
+
+        const uploadRes = await fetch(authInfo.uploadUrl, {
+          method: 'POST',
+          headers: {
+            Authorization: authInfo.authorizationToken,
+            'X-Bz-File-Name': encodeURIComponent(cleanPath),
+            'Content-Type': contentType || 'application/octet-stream',
+            'X-Bz-Content-Sha1': 'do_not_verify'
+          },
+          body: bytes
+        });
+
+        if (uploadRes.ok) {
+          let directUrl = `${authInfo.downloadUrl}/file/${authInfo.bucketName}/${cleanPath}`;
+          if (authInfo.downloadAuthToken) {
+            directUrl += `?Authorization=${encodeURIComponent(authInfo.downloadAuthToken)}`;
+          }
+          console.log(`📦 Directly Uploaded from Client to Backblaze B2 Storage: ${directUrl}`);
+          return directUrl;
+        }
+      }
+    } catch (err2) {
+      console.warn(`Client Direct B2 Upload note for ${authUrl}:`, err2);
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Auto-compresses an image File/Blob down to ultra-low KB sizes (<60KB-90KB)
+ * and uploads it directly to Backblaze B2 Cloud Storage (10 GB free bucket capacity).
+ */
+export async function uploadImageToFirebase(
+  fileOrBlob: File | Blob,
+  rawPath: string,
   compressionConfig: ImageCompressionConfig = {}
 ): Promise<string> {
-  try {
-    const compressedFile = await compressDataUrl(dataUrl, `upload_${Date.now()}.webp`, compressionConfig);
-    const storageRef = ref(storage, storagePath);
-    const snapshot = await uploadBytes(storageRef, compressedFile, {
-      contentType: compressedFile.type,
-      cacheControl: 'public, max-age=31536000'
-    });
-    return await getDownloadURL(snapshot.ref);
-  } catch (error) {
-    console.warn("Firebase DataUrl upload note:", error);
-    return dataUrl;
-  }
+  const compressedFile = fileOrBlob.size <= 100 * 1024 
+    ? (fileOrBlob instanceof File ? fileOrBlob : new File([fileOrBlob], `upload_${Date.now()}.webp`, { type: fileOrBlob.type || 'image/webp' }))
+    : await compressImage(fileOrBlob, compressionConfig);
+
+  const storagePath = rawPath.replace(/^green-energy-solution\//, '');
+
+  const base64Data = await new Promise<string>((resolve) => {
+    const reader = new FileReader();
+    reader.onloadend = () => resolve(reader.result as string);
+    reader.readAsDataURL(compressedFile);
+  });
+
+  const b2Url = await uploadViaBackend(base64Data, storagePath, compressedFile.type);
+  if (b2Url) return b2Url;
+
+  return base64Data;
+}
+
+export async function uploadDataUrlToFirebase(
+  dataUrl: string,
+  rawPath: string,
+  compressionConfig: ImageCompressionConfig = {}
+): Promise<string> {
+  const compressedFile = await compressDataUrl(dataUrl, `upload_${Date.now()}.webp`, compressionConfig);
+
+  const storagePath = rawPath.replace(/^green-energy-solution\//, '');
+
+  const b2Url = await uploadViaBackend(dataUrl, storagePath, compressedFile.type);
+  if (b2Url) return b2Url;
+
+  return dataUrl;
+}
+
+/**
+ * Uploads a PDF Blob (e.g. quotation proposals, WCR, DCR, Annexures) to Backblaze B2 Cloud Storage bucket.
+ */
+export async function uploadPdfToFirebase(
+  pdfBlob: Blob,
+  rawPath: string
+): Promise<string> {
+  const storagePath = rawPath.replace(/^green-energy-solution\//, '');
+
+  const base64Data = await new Promise<string>((resolve) => {
+    const reader = new FileReader();
+    reader.onloadend = () => resolve(reader.result as string);
+    reader.readAsDataURL(pdfBlob);
+  });
+
+  const b2Url = await uploadViaBackend(base64Data, storagePath, 'application/pdf');
+  if (b2Url) return b2Url;
+
+  return base64Data;
 }
 
 /**
@@ -111,22 +300,88 @@ function sanitizeForFirestore(data: any): any {
   return data;
 }
 
-/**
- * Saves or updates a document in Firebase Firestore
- */
-export async function saveRecordToFirestore(collectionName: string, id: string, data: any): Promise<void> {
+function encodeCollectionPath(collectionName: string): string {
+  return collectionName
+    .split('/')
+    .filter(Boolean)
+    .map(segment => encodeURIComponent(segment))
+    .join('/');
+}
+
+async function saveRecordViaBackend(collectionName: string, id: string, data: any): Promise<boolean> {
   try {
-    const cleanData = sanitizeForFirestore(data);
-    const docRef = doc(firestoreDb, collectionName, id);
-    await setDoc(docRef, cleanData, { merge: true });
-    console.log(`🔥 Firestore Synced [${collectionName}/${id}]`);
+    const res = await fetch(buildApiUrl(`/api/firestore/${encodeCollectionPath(collectionName)}/${encodeURIComponent(id)}`), {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data)
+    });
+    if (!res.ok) {
+      const text = await res.text().catch(() => '');
+      console.warn(`Backend Firestore save failed [${collectionName}/${id}]:`, text || res.statusText);
+      return false;
+    }
+    return true;
   } catch (err) {
-    console.warn(`Firestore save note [${collectionName}/${id}]:`, err);
+    console.warn(`Backend Firestore save note [${collectionName}/${id}]:`, err);
+    return false;
+  }
+}
+
+async function fetchCollectionViaBackend<T>(collectionName: string): Promise<T[]> {
+  try {
+    const res = await fetch(buildApiUrl(`/api/firestore/${encodeCollectionPath(collectionName)}`));
+    if (!res.ok) {
+      const text = await res.text().catch(() => '');
+      console.warn(`Backend Firestore fetch failed [${collectionName}]:`, text || res.statusText);
+      return [];
+    }
+    const data = await res.json();
+    return Array.isArray(data) ? data as T[] : [];
+  } catch (err) {
+    console.warn(`Backend Firestore fetch note [${collectionName}]:`, err);
+    return [];
+  }
+}
+
+async function deleteRecordViaBackend(collectionName: string, id: string): Promise<boolean> {
+  try {
+    const res = await fetch(buildApiUrl(`/api/firestore/${encodeCollectionPath(collectionName)}/${encodeURIComponent(id)}`), {
+      method: 'DELETE'
+    });
+    if (!res.ok) {
+      const text = await res.text().catch(() => '');
+      console.warn(`Backend Firestore delete failed [${collectionName}/${id}]:`, text || res.statusText);
+      return false;
+    }
+    return true;
+  } catch (err) {
+    console.warn(`Backend Firestore delete note [${collectionName}/${id}]:`, err);
+    return false;
   }
 }
 
 /**
- * Fetches all documents in a collection from Firebase Firestore
+ * Saves or updates a document in Firebase Firestore (strictly targets green-energy-solution database)
+ */
+export async function saveRecordToFirestore(collectionName: string, id: string, data: any): Promise<void> {
+  const cleanData = sanitizeForFirestore(data);
+  try {
+    const docRef = doc(firestoreDb, collectionName, id);
+    await setDoc(docRef, cleanData, { merge: true });
+    console.log(`Firestore synced [${collectionName}/${id}] -> DB: [${TARGET_DATABASE_ID}]`);
+    return;
+  } catch (err) {
+    console.warn(`Firestore direct save note [${collectionName}/${id}], trying backend:`, err);
+    const saved = await saveRecordViaBackend(collectionName, id, cleanData);
+    if (saved) {
+      console.log(`Firestore synced through backend [${collectionName}/${id}] -> DB: [${TARGET_DATABASE_ID}]`);
+    }
+    return;
+  }
+}
+
+/**
+ * Fetches all documents in a collection from Firebase Firestore (strictly from green-energy-solution database)
  */
 export async function fetchCollectionFromFirestore<T>(collectionName: string): Promise<T[]> {
   try {
@@ -134,20 +389,51 @@ export async function fetchCollectionFromFirestore<T>(collectionName: string): P
     const snapshot = await getDocs(colRef);
     return snapshot.docs.map(docSnap => ({ id: docSnap.id, ...docSnap.data() }) as unknown as T);
   } catch (err) {
-    console.warn(`Firestore fetch note [${collectionName}]:`, err);
-    return [];
+    console.warn(`Firestore direct fetch note [${collectionName}], trying backend:`, err);
+    return fetchCollectionViaBackend<T>(collectionName);
   }
 }
 
 /**
- * Deletes a document from Firebase Firestore
+ * Deletes a document from Firebase Firestore (strictly from green-energy-solution database)
  */
 export async function deleteRecordFromFirestore(collectionName: string, id: string): Promise<void> {
   try {
     const docRef = doc(firestoreDb, collectionName, id);
     await deleteDoc(docRef);
-    console.log(`🔥 Firestore Deleted [${collectionName}/${id}]`);
+    console.log(`Firestore deleted [${collectionName}/${id}] -> DB: [${TARGET_DATABASE_ID}]`);
+    return;
   } catch (err) {
-    console.warn(`Firestore delete note [${collectionName}/${id}]:`, err);
+    console.warn(`Firestore direct delete note [${collectionName}/${id}], trying backend:`, err);
+    await deleteRecordViaBackend(collectionName, id);
+    return;
+  }
+}
+
+/**
+ * Background sync function to push all local Dexie records to Firestore Cloud Database
+ */
+export async function syncAllLocalDataToFirestore(): Promise<void> {
+  try {
+    const { db } = await import('./db');
+    const leads = await db.leads.toArray();
+    for (const l of leads) {
+      await saveRecordToFirestore('leads', l.id, l);
+    }
+    const quotations = await db.quotations.toArray();
+    for (const q of quotations) {
+      await saveRecordToFirestore('quotations', q.id, q);
+    }
+    const releaseDocs = await db.releaseDocuments.toArray();
+    for (const r of releaseDocs) {
+      await saveRecordToFirestore('releaseDocuments', r.id, r);
+    }
+    const clientDocs = await db.clientDocuments.toArray();
+    for (const cd of clientDocs) {
+      await saveRecordToFirestore('clientDocuments', cd.id, cd);
+    }
+    console.log("🔥 Initialized background dual-sync of all local data to Firestore!");
+  } catch (err) {
+    console.warn("syncAllLocalDataToFirestore note:", err);
   }
 }

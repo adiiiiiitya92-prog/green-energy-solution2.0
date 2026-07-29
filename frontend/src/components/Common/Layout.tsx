@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
 import { useAuthStore } from '../../store/authStore';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
-import logoImg from '../../assets/Arrow-sales-corporation_logo-300x84.png';
+import logoImg from '../../assets/Green-Energy-Solution.png';
+import { PWAInstallPrompt } from './PWAInstallPrompt';
 import {
   LayoutDashboard,
   Users,
@@ -15,7 +16,8 @@ import {
   X,
   Truck,
   LogOut,
-  Sun
+  Sun,
+  Package
 } from 'lucide-react';
 
 interface LayoutProps {
@@ -53,15 +55,21 @@ export const Layout: React.FC<LayoutProps> = ({ children }) => {
       icon: Compass
     },
     {
+      name: 'Inventory & Challan Panel',
+      path: '/inventory-panel',
+      roles: ['inventory_manager'],
+      icon: Package
+    },
+    {
       name: 'Product Catalog',
       path: '/products',
-      roles: ['super_admin', 'admin'],
+      roles: ['super_admin', 'admin', 'inventory_manager'],
       icon: FileText
     },
     {
       name: 'Delivery Challans',
       path: '/challans',
-      roles: ['super_admin', 'admin'],
+      roles: ['super_admin', 'admin', 'inventory_manager'],
       icon: Truck
     },
     {
@@ -161,7 +169,7 @@ export const Layout: React.FC<LayoutProps> = ({ children }) => {
           <Link to="/" className="flex items-center">
             <img
               src={logoImg}
-              alt="Arrow Sales Corporation"
+              alt="Green Energy Solution"
               className="h-8 sm:h-9 w-auto object-contain cursor-pointer"
             />
           </Link>
@@ -283,7 +291,7 @@ export const Layout: React.FC<LayoutProps> = ({ children }) => {
                 <div className="flex items-center space-x-2">
                   <img
                     src={logoImg}
-                    alt="Arrow Sales Corporation"
+                    alt="Green Energy Solution"
                     className="h-7 w-auto object-contain"
                   />
                 </div>
@@ -332,12 +340,15 @@ export const Layout: React.FC<LayoutProps> = ({ children }) => {
                 <span>Sign Out</span>
               </button>
               <div className="text-[10px] text-slate-400 text-center font-medium">
-                v1.0.0 (Offline Native)
+                v1.0.0 (Offline Native PWA)
               </div>
             </div>
           </div>
         </div>
       )}
+
+      {/* PWA Installation Banner & Offline Status Toast */}
+      <PWAInstallPrompt />
     </div>
   );
 };

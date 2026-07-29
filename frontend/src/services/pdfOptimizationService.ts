@@ -1,6 +1,6 @@
 import html2canvas from 'html2canvas';
 import { jsPDF } from 'jspdf';
-import { uploadImageToFirebase } from './firebase';
+import { uploadPdfToFirebase } from './firebase';
 
 export interface PDFGeneratorOptions {
   fileName?: string;
@@ -11,29 +11,93 @@ export interface PDFGeneratorOptions {
 }
 
 /**
+ * Completely purges modern unsupported CSS color functions (oklch, oklab, color-mix, lab, lch)
+ * from cloned document style tags, stylesheets, and element inline styles before html2canvas runs.
+ */
+function sanitizeClonedDocumentForHtml2Canvas(clonedDoc: Document) {
+  // 1. Sanitize all <style> blocks
+  try {
+    const styleTags = clonedDoc.querySelectorAll('style');
+    styleTags.forEach((st) => {
+      if (st.innerHTML && /(oklch|oklab|color-mix|lch|lab)/i.test(st.innerHTML)) {
+        st.innerHTML = st.innerHTML.replace(/(oklch|oklab|color-mix|lch|lab)\([^)]+\)/gi, '#0f172a');
+      }
+    });
+  } catch (_) {}
+
+  // 2. Remove stylesheet rules containing oklch/oklab
+  try {
+    for (let i = 0; i < clonedDoc.styleSheets.length; i++) {
+      const sheet = clonedDoc.styleSheets[i];
+      try {
+        const rules = sheet.cssRules || sheet.rules;
+        if (!rules) continue;
+        for (let j = rules.length - 1; j >= 0; j--) {
+          const rule = rules[j];
+          if (rule.cssText && /(oklch|oklab|color-mix|lch|lab)/i.test(rule.cssText)) {
+            sheet.deleteRule(j);
+          }
+        }
+      } catch (_) {}
+    }
+  } catch (_) {}
+
+  // 3. Sanitize inline styles on elements
+  try {
+    const allEls = clonedDoc.querySelectorAll('*');
+    allEls.forEach((el) => {
+      const htmlEl = el as HTMLElement;
+      if (htmlEl.style && htmlEl.style.cssText && /(oklch|oklab|color-mix|lch|lab)/i.test(htmlEl.style.cssText)) {
+        htmlEl.style.cssText = htmlEl.style.cssText.replace(/(oklch|oklab|color-mix|lch|lab)\([^)]+\)/gi, '#0f172a');
+      }
+    });
+  } catch (_) {}
+}
+
+/**
  * Generates an ultra-compact PDF from an HTML element or container,
  * with canvas compression to keep output file size under 150 KB - 250 KB.
+ * Captures live A4 page targets (.dcr-page, .wcr-page, .annexure-proforma-page, .model-agreement-page)
+ * and uploads directly to Backblaze B2 Storage.
  */
 export async function generateOptimizedPDF(
   element: HTMLElement,
   options: PDFGeneratorOptions = {}
 ): Promise<{ pdfBlob: Blob; pdfUrl?: string; fileSizeKB: number }> {
-  const quality = options.quality || 0.60;
+  const quality = options.quality || 0.65;
   const scale = options.scale || 1.3;
   const fileName = options.fileName || `document_${Date.now()}.pdf`;
 
-  // 1. Render HTML element to canvas with optimized scale
-  const canvas = await html2canvas(element, {
-    scale,
-    useCORS: true,
-    allowTaint: true,
-    backgroundColor: '#ffffff',
-    logging: false
-  });
+  // Find target pages in element or DOM
+  let targets: HTMLElement[] = [];
+  if (element) {
+    const pagesInEl = Array.from(element.querySelectorAll('.dcr-page, .wcr-page, .annexure-proforma-page, .model-agreement-page')) as HTMLElement[];
+    if (pagesInEl.length > 0) {
+      targets = pagesInEl;
+    } else if (
+      element.classList.contains('dcr-page') ||
+      element.classList.contains('wcr-page') ||
+      element.classList.contains('annexure-proforma-page') ||
+      element.classList.contains('model-agreement-page')
+    ) {
+      targets = [element];
+    }
+  }
 
-  const imgData = canvas.toDataURL('image/jpeg', quality);
+  // Fallback if targets still empty: query document.body
+  if (targets.length === 0) {
+    const globalPages = Array.from(document.querySelectorAll('.dcr-page, .wcr-page, .annexure-proforma-page, .model-agreement-page')) as HTMLElement[];
+    if (globalPages.length > 0) {
+      targets = globalPages;
+    } else if (element) {
+      targets = [element];
+    }
+  }
 
-  // 2. Initialize A4 jsPDF
+  if (targets.length === 0) {
+    throw new Error("No document page container found for PDF generation.");
+  }
+
   const pdf = new jsPDF({
     orientation: 'portrait',
     unit: 'mm',
@@ -41,41 +105,119 @@ export async function generateOptimizedPDF(
     compress: true
   });
 
-  const pdfWidth = pdf.internal.pageSize.getWidth();
-  const pdfHeight = pdf.internal.pageSize.getHeight();
+  for (let i = 0; i < targets.length; i++) {
+    const targetEl = targets[i];
+    
+    // Ensure element is visible during canvas capture
+    const originalDisplay = targetEl.style.display;
+    const originalVisibility = targetEl.style.visibility;
+    targetEl.style.display = 'flex';
+    targetEl.style.visibility = 'visible';
 
-  const imgProps = pdf.getImageProperties(imgData);
-  const imgHeight = (imgProps.height * pdfWidth) / imgProps.width;
+    try {
+      const canvas = await html2canvas(targetEl, {
+        scale,
+        useCORS: true,
+        allowTaint: true,
+        backgroundColor: '#ffffff',
+        logging: false,
+        imageTimeout: 8000,
+        onclone: (clonedDoc) => {
+          sanitizeClonedDocumentForHtml2Canvas(clonedDoc);
 
-  let heightLeft = imgHeight;
-  let position = 0;
+          // Ensure target page containers are 100% flex & visible in clone
+          const pages = clonedDoc.querySelectorAll('.dcr-page, .wcr-page, .annexure-proforma-page, .model-agreement-page');
+          pages.forEach((p) => {
+            const pageEl = p as HTMLElement;
+            pageEl.style.display = 'flex';
+            pageEl.style.visibility = 'visible';
+            pageEl.style.opacity = '1';
+          });
+        }
+      });
 
-  pdf.addImage(imgData, 'JPEG', 0, position, pdfWidth, imgHeight, undefined, 'FAST');
-  heightLeft -= pdfHeight;
-
-  while (heightLeft >= 0) {
-    position = heightLeft - imgHeight;
-    pdf.addPage();
-    pdf.addImage(imgData, 'JPEG', 0, position, pdfWidth, imgHeight, undefined, 'FAST');
-    heightLeft -= pdfHeight;
+      const imgData = canvas.toDataURL('image/jpeg', quality);
+      if (i > 0) pdf.addPage();
+      pdf.addImage(imgData, 'JPEG', 0, 0, 210, 297, undefined, 'FAST');
+    } finally {
+      targetEl.style.display = originalDisplay;
+      targetEl.style.visibility = originalVisibility;
+    }
   }
 
-  // 3. Output compressed Blob
   const pdfBlob = pdf.output('blob');
   const fileSizeKB = parseFloat((pdfBlob.size / 1024).toFixed(1));
-  console.log(`📄 Optimized PDF Generated: ${fileName} (${fileSizeKB} KB)`);
+  console.log(`📄 PDF Generated Successfully: ${fileName} (${fileSizeKB} KB, ${targets.length} pages)`);
 
-  // 4. Optionally upload to Firebase Storage
   let pdfUrl: string | undefined = undefined;
   if (options.uploadToFirebase && options.firebasePath) {
-    pdfUrl = await uploadImageToFirebase(
-      pdfBlob,
-      options.firebasePath,
-      { maxSizeKB: 250, isDocument: true }
-    );
+    pdfUrl = await uploadPdfToFirebase(pdfBlob, options.firebasePath);
+    if (!pdfUrl) {
+      throw new Error(`Failed to upload ${fileName} to Backblaze B2 Storage.`);
+    }
   }
 
   return { pdfBlob, pdfUrl, fileSizeKB };
+}
+
+/**
+ * Generates an exact 8-Page PDF from the live .quotation-print-container element.
+ * Uses optimized canvas rendering and unblocks event loop for 0-lag ultra-fast generation.
+ */
+export async function generateQuotationDocumentPDF(
+  container: HTMLElement,
+  fileName: string = 'Solar_Quotation.pdf'
+): Promise<Blob> {
+  const pageElements = Array.from(container.querySelectorAll('.quotation-document-page')) as HTMLElement[];
+  const targets = pageElements.length > 0 ? pageElements : [container];
+
+  const pdf = new jsPDF({
+    orientation: 'portrait',
+    unit: 'mm',
+    format: 'a4',
+    compress: true
+  });
+
+  for (let i = 0; i < targets.length; i++) {
+    // Unblock browser UI main thread between pages so UI stays 100% fluid without freezing
+    await new Promise(resolve => setTimeout(resolve, 0));
+
+    const pageEl = targets[i];
+    const canvas = await html2canvas(pageEl, {
+      scale: 1.25, // Ultra-fast scale for sub-second crisp PDF creation
+      useCORS: true,
+      allowTaint: true,
+      backgroundColor: '#ffffff',
+      logging: false,
+      imageTimeout: 5000,
+      onclone: (clonedDoc) => {
+        sanitizeClonedDocumentForHtml2Canvas(clonedDoc);
+
+        // Target container visibility in cloned document
+        const containers = clonedDoc.querySelectorAll('.quotation-print-container, .quotation-document-page');
+        containers.forEach((el) => {
+          const htmlEl = el as HTMLElement;
+          htmlEl.style.display = 'flex';
+          htmlEl.style.visibility = 'visible';
+          htmlEl.style.opacity = '1';
+          htmlEl.style.position = 'relative';
+          htmlEl.style.left = '0';
+          htmlEl.style.top = '0';
+          htmlEl.style.transform = 'none';
+          htmlEl.style.margin = '0';
+        });
+      }
+    });
+
+    // JPEG 0.85 — crisp text with ultra-fast encoding
+    const imgData = canvas.toDataURL('image/jpeg', 0.85);
+    if (i > 0) pdf.addPage();
+    pdf.addImage(imgData, 'JPEG', 0, 0, 210, 297, undefined, 'FAST');
+  }
+
+  const pdfBlob = pdf.output('blob');
+  console.log(`📄 FAST 8-Page Proposal PDF Generated: ${fileName} (${Math.round(pdfBlob.size / 1024)} KB)`);
+  return pdfBlob;
 }
 
 /**

@@ -1,5 +1,6 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import { leadService } from '../../services/leadService';
+import { orderService } from '../../services/orderService';
 import type { Lead } from '../../types';
 import {
   FileText,
@@ -11,14 +12,19 @@ import {
   User,
   Zap,
   Sun,
-  FileCheck
+  FileCheck,
+  Save
 } from 'lucide-react';
 import dayjs from 'dayjs';
+import { generateOptimizedPDF } from '../../services/pdfOptimizationService';
 
-export const AnnexureProformaDocument: React.FC<{ defaultLeadId?: string; isEmbedded?: boolean }> = ({
-  defaultLeadId,
-  isEmbedded
-}) => {
+export const AnnexureProformaDocument: React.FC<{
+  defaultLeadId?: string;
+  isEmbedded?: boolean;
+  initialData?: any;
+  onSaveSuccess?: () => void;
+}> = ({ defaultLeadId, isEmbedded, initialData, onSaveSuccess }) => {
+  const printContainerRef = useRef<HTMLDivElement>(null);
   const [leads, setLeads] = useState<Lead[]>([]);
   const [selectedLeadId, setSelectedLeadId] = useState('');
 
@@ -46,7 +52,7 @@ export const AnnexureProformaDocument: React.FC<{ defaultLeadId?: string; isEmbe
 
   // Proforma-A & Page 2 Details
   const [district, setDistrict] = useState('NAGPUR');
-  const [installedBy, setInstalledBy] = useState('M/S ARROW SALES CORPORATION');
+  const [installedBy, setInstalledBy] = useState('M/S GREEN ENERGY SOLUTION');
   const [spvCapacityKwp, setSpvCapacityKwp] = useState('5.0');
   const [preCommissioningDate, setPreCommissioningDate] = useState(dayjs().format('DD/MM/YYYY'));
 
@@ -87,6 +93,100 @@ export const AnnexureProformaDocument: React.FC<{ defaultLeadId?: string; isEmbe
       }
     }
   }, [leads, defaultLeadId]);
+
+  useEffect(() => {
+    if (initialData) {
+      if (initialData.consumerName) setConsumerName(initialData.consumerName);
+      if (initialData.consumerNumber) setConsumerNumber(initialData.consumerNumber);
+      if (initialData.mobileNumber) setMobileNumber(initialData.mobileNumber);
+      if (initialData.email) setEmail(initialData.email);
+      if (initialData.address) setAddress(initialData.address);
+      if (initialData.reArrangementType) setReArrangementType(initialData.reArrangementType);
+      if (initialData.reSource) setReSource(initialData.reSource);
+      if (initialData.sanctionedCapacity) setSanctionedCapacity(initialData.sanctionedCapacity);
+      if (initialData.capacityType) setCapacityType(initialData.capacityType);
+      if (initialData.projectModel) setProjectModel(initialData.projectModel);
+      if (initialData.reCapacityRooftop) setReCapacityRooftop(initialData.reCapacityRooftop);
+      if (initialData.reCapacityRooftopGround) setReCapacityRooftopGround(initialData.reCapacityRooftopGround);
+      if (initialData.reCapacityGround) setReCapacityGround(initialData.reCapacityGround);
+      if (initialData.installationDate) setInstallationDate(initialData.installationDate);
+      if (initialData.inverterCapacity) setInverterCapacity(initialData.inverterCapacity);
+      if (initialData.inverterMake) setInverterMake(initialData.inverterMake);
+      if (initialData.noOfPvModules) setNoOfPvModules(initialData.noOfPvModules);
+      if (initialData.moduleCapacity) setModuleCapacity(initialData.moduleCapacity);
+      if (initialData.district) setDistrict(initialData.district);
+      if (initialData.installedBy) setInstalledBy(initialData.installedBy);
+      if (initialData.spvCapacityKwp) setSpvCapacityKwp(initialData.spvCapacityKwp);
+    }
+  }, [initialData]);
+
+  const [isSaving, setIsSaving] = useState(false);
+
+  const handleSaveDocument = async () => {
+    const targetLeadId = selectedLeadId || defaultLeadId;
+    if (!targetLeadId) {
+      alert('Please select a customer lead first.');
+      return;
+    }
+
+    if (isSaving) return;
+    setIsSaving(true);
+
+    try {
+      const formData = {
+        consumerName,
+        consumerNumber,
+        mobileNumber,
+        email,
+        address,
+        reArrangementType,
+        reSource,
+        sanctionedCapacity,
+        capacityType,
+        projectModel,
+        reCapacityRooftop,
+        reCapacityRooftopGround,
+        reCapacityGround,
+        installationDate,
+        inverterCapacity,
+        inverterMake,
+        noOfPvModules,
+        moduleCapacity,
+        district,
+        installedBy,
+        spvCapacityKwp
+      };
+
+      let pdfUrl = '';
+      if (printContainerRef.current) {
+        const res = await generateOptimizedPDF(printContainerRef.current, {
+          uploadToFirebase: true,
+          firebasePath: `documents/${targetLeadId}/annexure_proforma_${Date.now()}.pdf`
+        });
+        if (res.pdfUrl) pdfUrl = res.pdfUrl;
+      }
+
+      if (!pdfUrl) {
+        throw new Error('PDF upload to Backblaze B2 failed.');
+      }
+
+      await orderService.uploadClientDocument({
+        leadId: targetLeadId,
+        docType: 'annexure_proforma',
+        fileBlob: pdfUrl,
+        uploadedBy: 'Admin',
+        formData
+      });
+
+      alert('✅ Annexure Proforma PDF saved & uploaded to Backblaze B2!');
+      if (onSaveSuccess) onSaveSuccess();
+    } catch (err: any) {
+      console.error('Error saving Annexure Proforma:', err);
+      alert(`❌ Failed to upload Annexure Proforma PDF to Backblaze B2: ${err.message || err}`);
+    } finally {
+      setIsSaving(false);
+    }
+  };
 
   const handleLeadChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
     const leadId = e.target.value;
@@ -265,11 +365,20 @@ ${stylesheets}
           </select>
 
           <button
+            type="button"
+            onClick={handleSaveDocument}
+            className="flex items-center space-x-1.5 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-black shadow-xs transition-colors cursor-pointer"
+          >
+            <Save className="w-3.5 h-3.5" />
+            <span>Save Document</span>
+          </button>
+          <button
+            type="button"
             onClick={handlePrint}
-            className="flex items-center space-x-1.5 px-4 py-1.5 bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white rounded-lg text-xs font-semibold shadow-xs transition-colors cursor-pointer"
+            className="flex items-center space-x-1.5 px-4 py-1.5 bg-slate-900 hover:bg-slate-800 text-white rounded-lg text-xs font-semibold shadow-xs transition-colors cursor-pointer"
           >
             <Printer className="w-4 h-4" />
-            <span>Print / Save PDF</span>
+            <span>Print PDF</span>
           </button>
         </div>
       </div>
@@ -674,7 +783,7 @@ ${stylesheets}
         </div>
 
         {/* Right Side: A4 Document Preview */}
-        <div className={`flex-1 overflow-y-auto overflow-x-auto bg-slate-100 p-2 sm:p-4 md:p-8 flex flex-col items-center space-y-6 select-none relative max-w-full ${
+        <div ref={printContainerRef} className={`flex-1 overflow-y-auto overflow-x-auto bg-slate-100 p-2 sm:p-4 md:p-8 flex flex-col items-center space-y-6 select-none relative max-w-full ${
           mobileTab === 'preview' ? 'block w-full' : 'hidden lg:flex'
         }`}>
           {isSidebarCollapsed && (
@@ -843,7 +952,7 @@ ${stylesheets}
                     <span className="font-semibold underline px-1">{spvCapacityKwp || '5.0'}</span> KWp capacity has been installed at the site{' '}
                     <span className="font-semibold underline px-1">{address || 'Applicant Site'}</span> District{' '}
                     <span className="font-semibold underline px-1">{district || 'NAGPUR'}</span> of MAHARASHTRA which has been installed by{' '}
-                    <span className="font-semibold underline px-1">{installedBy || 'M/S ARROW SALES CORPORATION'}</span> on{' '}
+                    <span className="font-semibold underline px-1">{installedBy || 'M/S GREEN ENERGY SOLUTION'}</span> on{' '}
                     <span className="font-semibold underline px-1">{installationDate}</span>. The system is as per BIS/MNRE specifications. The system has been checked for its performance and found in order for further commissioning.
                   </p>
                 </div>

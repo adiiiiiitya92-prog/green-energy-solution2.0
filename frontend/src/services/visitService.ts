@@ -33,5 +33,15 @@ export const visitService = {
     await db.fieldVisitReports.add(newVisit);
     saveRecordToFirestore('fieldVisitReports', id, newVisit);
     return id;
+  },
+
+  async deleteVisitReport(id: string): Promise<void> {
+    await db.fieldVisitReports.delete(id);
+    try {
+      const { deleteRecordFromFirestore } = await import('./firebase');
+      await deleteRecordFromFirestore('fieldVisitReports', id);
+    } catch (e) {
+      console.warn("Firestore delete visit note:", e);
+    }
   }
 };

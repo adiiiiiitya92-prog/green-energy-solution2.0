@@ -5,8 +5,7 @@ import { orderService } from '../../services/orderService';
 import { visitService } from '../../services/visitService';
 import { employeeService } from '../../services/employeeService';
 import dayjs from 'dayjs';
-import { LeafletMap } from '../Map/LeafletMap';
-import { Eye, Download, X } from 'lucide-react';
+import { Eye, Download, X, Trash2, Compass } from 'lucide-react';
 
 interface TimelineProps {
   lead: Lead;
@@ -55,7 +54,7 @@ export const Timeline: React.FC<TimelineProps> = ({ lead }) => {
 
   useEffect(() => {
     loadData();
-  }, [lead.id]);
+  }, [lead.id, lead.updatedAt]);
 
   const formatDate = (isoStr: string) => {
     return dayjs(isoStr).format('DD MMM YYYY, hh:mm A [IST]');
@@ -120,10 +119,26 @@ export const Timeline: React.FC<TimelineProps> = ({ lead }) => {
   const handleViewPreview = (fileOrBlobOrUrl: any, title: string) => {
     const url = renderBlobImage(fileOrBlobOrUrl);
     if (!url) {
-      alert(`The document preview for "${title}" is not available. Please re-upload the document.`);
+      alert(`The document preview for "${title}" is not available.`);
       return;
     }
-    setPreviewItem({ url, title });
+    if (url.startsWith('http') || url.startsWith('blob:')) {
+      window.open(url, '_blank');
+    } else {
+      setPreviewItem({ url, title });
+    }
+  };
+
+  const handleDeleteQuotation = async (quotation: Quotation) => {
+    if (!window.confirm(`Are you sure you want to delete Quotation "${quotation.quotationNumber}"?`)) return;
+    try {
+      await quotationService.deleteQuotation(quotation.id);
+      alert(`Quotation ${quotation.quotationNumber} deleted successfully.`);
+      await loadData();
+    } catch (err) {
+      console.error('Error deleting quotation:', err);
+      alert('Failed to delete quotation.');
+    }
   };
 
   return (
@@ -231,7 +246,7 @@ export const Timeline: React.FC<TimelineProps> = ({ lead }) => {
               ))}
             </div>
             {q.pdfBlob && (
-              <div className="flex gap-2 mt-3">
+              <div className="flex gap-2 mt-3 flex-wrap">
                 <button
                   type="button"
                   onClick={() => handleViewPreview(q.pdfBlob, `Quotation ${q.quotationNumber}`)}
@@ -248,6 +263,15 @@ export const Timeline: React.FC<TimelineProps> = ({ lead }) => {
                   <Download className="w-3.5 h-3.5" />
                   <span>Download PDF</span>
                 </button>
+                <button
+                  type="button"
+                  onClick={() => handleDeleteQuotation(q)}
+                  className="text-xs bg-rose-50 hover:bg-rose-100 text-rose-600 px-2.5 py-1 rounded-lg font-semibold flex items-center gap-1 transition-colors cursor-pointer"
+                  title="Delete Quotation"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                  <span>Delete</span>
+                </button>
               </div>
             )}
             <div className="flex justify-between items-center mt-3 pt-3 border-t border-slate-100 text-[10px] text-slate-400">
@@ -258,64 +282,109 @@ export const Timeline: React.FC<TimelineProps> = ({ lead }) => {
         </div>
       ))}
 
-      {/* 4. Booking Order Confirmation */}
-      {confirmation && (
-        <div className="relative">
-          <div className="absolute -left-[31px] top-1 bg-violet-600 text-white rounded-full p-1.5 shadow-sm border border-white">
-            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-            </svg>
-          </div>
-          <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-xs hover:shadow-sm transition-shadow">
-            <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-violet-100 text-violet-800 mb-2">
-              Order Confirmed & Booked
-            </span>
-            <h4 className="text-sm font-bold text-slate-800">Advance Collected: ₹{confirmation.advanceAmount.toLocaleString('en-IN')}</h4>
-            <p className="text-xs text-slate-600 mt-1">Payment Mode: <span className="font-semibold uppercase">{confirmation.paymentMode.replace('_', ' ')}</span></p>
-            {confirmation.paymentReference && (
-              <p className="text-xs text-slate-600">Reference No: <span className="font-semibold font-mono">{confirmation.paymentReference}</span></p>
-            )}
+      {/* 4. Booking Order Confirmation & Installments Stepper */}
+      {confirmation && (() => {
+        const paymentsList = (confirmation.payments && confirmation.payments.length > 0)
+          ? confirmation.payments
+          : (confirmation.advanceAmount && confirmation.advanceAmount > 0)
+          ? [{
+              id: 'pay_1',
+              installmentNo: 1,
+              label: '1st Advance Payment',
+              amount: confirmation.advanceAmount,
+              paymentMode: confirmation.paymentMode || 'utr',
+              paymentReference: confirmation.paymentReference,
+              paidAt: confirmation.createdAt
+            }]
+          : [];
 
-            {confirmation.clientSignatureBlob && (
-              <div className="mt-3">
-                <span className="text-[10px] uppercase font-bold text-slate-400 block mb-1">Signed Signature:</span>
-                <img
-                  src={renderBlobImage(confirmation.clientSignatureBlob)}
-                  alt="Client Signature preview"
-                  className="h-12 border border-slate-200 rounded p-1 bg-slate-50 cursor-pointer hover:border-slate-400"
-                  onClick={() => handleViewPreview(confirmation.clientSignatureBlob, `Signature - ${lead.name}`)}
-                />
+        const totalCollected = paymentsList.reduce((s, p) => s + p.amount, 0);
+
+        return (
+          <div className="relative">
+            <div className="absolute -left-[31px] top-1 bg-violet-600 text-white rounded-full p-1.5 shadow-sm border border-white">
+              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+            </div>
+            <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-xs hover:shadow-sm transition-shadow">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1.5 mb-2">
+                <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-extrabold bg-violet-100 text-violet-800 w-fit">
+                  Order Confirmed & Payments Recorded
+                </span>
+                <span className="text-xs font-black text-emerald-700 bg-emerald-50 px-2.5 py-0.5 rounded-full border border-emerald-200 w-fit">
+                  Total Collected: ₹{totalCollected.toLocaleString('en-IN')}
+                </span>
               </div>
-            )}
 
-            {confirmation.confirmationPdfBlob && (
-              <div className="flex gap-2 mt-3">
-                <button
-                  type="button"
-                  onClick={() => handleViewPreview(confirmation.confirmationPdfBlob, `Order Confirmation Receipt - ${lead.name}`)}
-                  className="text-xs bg-slate-100 hover:bg-slate-200 text-slate-700 px-2.5 py-1 rounded-lg font-semibold flex items-center gap-1 transition-colors cursor-pointer"
-                >
-                  <Eye className="w-3.5 h-3.5" />
-                  <span>Preview Receipt</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => handleDownloadFile(confirmation.confirmationPdfBlob, `Order_Confirmation_${lead.name.replace(/\s+/g, '_')}.pdf`)}
-                  className="text-xs bg-violet-50 hover:bg-violet-100 text-violet-700 px-2.5 py-1 rounded-lg font-semibold flex items-center gap-1 transition-colors cursor-pointer"
-                >
-                  <Download className="w-3.5 h-3.5" />
-                  <span>Download Receipt</span>
-                </button>
+              {/* Installment History Stepper List */}
+              {paymentsList.length > 0 ? (
+                <div className="space-y-2 mt-3 bg-slate-50 p-2.5 rounded-lg border border-slate-200/80">
+                  <span className="text-[10px] uppercase font-bold text-slate-500 block mb-1">
+                    Recorded Payment Installments ({paymentsList.length})
+                  </span>
+                  {paymentsList.map((p, idx) => (
+                    <div key={p.id || idx} className="flex items-center justify-between text-xs py-1 border-b border-slate-200/60 last:border-0">
+                      <div>
+                        <span className="font-bold text-slate-800">✓ {p.label || `${idx + 1}st Payment`}</span>
+                        <span className="text-[10px] text-slate-500 block">
+                          {p.paymentMode?.replace('_', ' ').toUpperCase()} {p.paymentReference ? `(Ref: ${p.paymentReference})` : ''}
+                        </span>
+                      </div>
+                      <div className="text-right">
+                        <span className="font-black text-emerald-700 block">₹{p.amount.toLocaleString('en-IN')}</span>
+                        <span className="text-[9px] text-slate-400 block">{dayjs(p.paidAt).format('DD MMM YYYY, hh:mm A')}</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-xs text-amber-700 bg-amber-50 p-2 rounded border border-amber-200 font-medium mt-2">
+                  ⏳ 1st Advance Payment pending deposit recording.
+                </p>
+              )}
+
+              {confirmation.clientSignatureBlob && (
+                <div className="mt-3">
+                  <span className="text-[10px] uppercase font-bold text-slate-400 block mb-1">Signed Signature:</span>
+                  <img
+                    src={renderBlobImage(confirmation.clientSignatureBlob)}
+                    alt="Client Signature preview"
+                    className="h-12 border border-slate-200 rounded p-1 bg-slate-50 cursor-pointer hover:border-slate-400"
+                    onClick={() => handleViewPreview(confirmation.clientSignatureBlob, `Signature - ${lead.name}`)}
+                  />
+                </div>
+              )}
+
+              {confirmation.confirmationPdfBlob && (
+                <div className="flex gap-2 mt-3">
+                  <button
+                    type="button"
+                    onClick={() => handleViewPreview(confirmation.confirmationPdfBlob, `Order Confirmation Receipt - ${lead.name}`)}
+                    className="text-xs bg-slate-100 hover:bg-slate-200 text-slate-700 px-2.5 py-1 rounded-lg font-semibold flex items-center gap-1 transition-colors cursor-pointer"
+                  >
+                    <Eye className="w-3.5 h-3.5" />
+                    <span>Preview Receipt</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleDownloadFile(confirmation.confirmationPdfBlob, `Order_Confirmation_${lead.name.replace(/\s+/g, '_')}.pdf`)}
+                    className="text-xs bg-violet-50 hover:bg-violet-100 text-violet-700 px-2.5 py-1 rounded-lg font-semibold flex items-center gap-1 transition-colors cursor-pointer"
+                  >
+                    <Download className="w-3.5 h-3.5" />
+                    <span>Download Receipt</span>
+                  </button>
+                </div>
+              )}
+
+              <div className="flex justify-between items-center mt-3 pt-3 border-t border-slate-100 text-[10px] text-slate-400">
+                <span>Confirmed By: {profiles[confirmation.createdBy] || confirmation.createdBy}</span>
+                <span>{formatDate(confirmation.createdAt)}</span>
               </div>
-            )}
-
-            <div className="flex justify-between items-center mt-3 pt-3 border-t border-slate-100 text-[10px] text-slate-400">
-              <span>Confirmed By: {profiles[confirmation.createdBy] || confirmation.createdBy}</span>
-              <span>{formatDate(confirmation.createdAt)}</span>
             </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
 
       {/* 5. Client Registration & Checklist */}
       {registration && (
@@ -465,8 +534,22 @@ export const Timeline: React.FC<TimelineProps> = ({ lead }) => {
                         </button>
                       </div>
                     </div>
-                    <div className="mt-2">
-                      <LeafletMap latitude={ph.location.latitude} longitude={ph.location.longitude} placeName={ph.location.placeName} />
+                    <div className="mt-2 pt-2 border-t border-slate-100 flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-1 min-w-0 text-slate-500 text-[10px]">
+                        <Compass className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                        <span className="truncate">{ph.location.placeName || `${ph.location.latitude.toFixed(4)}, ${ph.location.longitude.toFixed(4)}`}</span>
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          window.open(`https://www.google.com/maps/search/?api=1&query=${ph.location.latitude},${ph.location.longitude}`, '_blank');
+                        }}
+                        className="px-2 py-0.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded text-[9px] font-bold transition-all shadow-xs shrink-0 flex items-center gap-1 cursor-pointer"
+                      >
+                        <Compass className="w-3 h-3" />
+                        <span>Check Map</span>
+                      </button>
                     </div>
                     <div className="mt-1.5 flex justify-between items-center text-[9px] text-slate-400">
                       <span>Uploaded: {profiles[ph.uploadedBy] || ph.uploadedBy}</span>

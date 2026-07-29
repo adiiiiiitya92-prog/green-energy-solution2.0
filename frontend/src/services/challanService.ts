@@ -83,5 +83,29 @@ export const challanService = {
     });
 
     saveRecordToFirestore('challans', id, updatedChallan);
+  },
+
+  async deleteChallan(id: string): Promise<void> {
+    const challan = await db.challans.get(id);
+    if (!challan) return;
+
+    await db.transaction('rw', [db.challans, db.products], async () => {
+      for (const item of challan.items) {
+        const product = await db.products.get(item.productId);
+        if (product) {
+          const restoredStock = product.stockQuantity + item.qty;
+          await db.products.update(item.productId, { stockQuantity: restoredStock });
+          saveRecordToFirestore('products', item.productId, { ...product, stockQuantity: restoredStock });
+        }
+      }
+      await db.challans.delete(id);
+    });
+
+    try {
+      const { deleteRecordFromFirestore } = await import('./firebase');
+      await deleteRecordFromFirestore('challans', id);
+    } catch (e) {
+      console.warn("Firestore delete challan note:", e);
+    }
   }
 };

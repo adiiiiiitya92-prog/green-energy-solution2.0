@@ -659,7 +659,7 @@ export const ShadowAnalysisContainer: React.FC = () => {
             <div class="flex justify-between items-center border-b-2 border-emerald-500 pb-4">
               <div>
                 <h1 class="text-3xl font-black text-slate-900">SolarCRM</h1>
-                <p class="text-xs text-slate-550 font-bold">Arrow Sales Corporation - Site Proposal</p>
+                <p class="text-xs text-slate-550 font-bold">Green Energy Solution - Site Proposal</p>
               </div>
               <div class="text-right">
                 <span class="bg-emerald-100 text-emerald-800 text-xs font-extrabold px-3 py-1 rounded-full uppercase">Proposal Draft</span>

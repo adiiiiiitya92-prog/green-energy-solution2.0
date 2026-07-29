@@ -13,7 +13,7 @@ export const ProfileView: React.FC = () => {
     if (currentUser) {
       // Load their metrics
       leadService.getLeads().then(leads => {
-        const assigned = leads.filter(l => l.assignedEmployeeId === currentUser.id);
+        const assigned = leads.filter(l => l.assignedSalesPersonId === currentUser.id || l.assignedAdminId === currentUser.id || l.assignedEmployeeId === currentUser.id);
         setAssignedCount(assigned.length);
       });
 

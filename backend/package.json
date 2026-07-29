@@ -1,7 +1,7 @@
 {
-  "name": "arrow-sales-backend",
+  "name": "green-energy-backend",
   "version": "1.0.0",
-  "description": "Arrow Sales Corporation Solar CRM Production Node.js & Firebase Backend API",
+  "description": "Green Energy Solution Solar CRM Production Node.js & Firebase Backend API",
   "main": "server.js",
   "type": "module",
   "scripts": {

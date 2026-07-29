@@ -1,5 +1,6 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { leadService } from '../../services/leadService';
+import { orderService } from '../../services/orderService';
 import type { Lead } from '../../types';
 import {
   FileText,
@@ -14,16 +15,24 @@ import {
   ChevronRight,
   FileSignature,
   CheckCircle2,
-  Edit3
+  Edit3,
+  Save
 } from 'lucide-react';
 import dayjs from 'dayjs';
+import { generateOptimizedPDF } from '../../services/pdfOptimizationService';
 
-export const DcrDocument: React.FC<{ defaultLeadId?: string; isEmbedded?: boolean }> = ({ defaultLeadId, isEmbedded }) => {
+export const DcrDocument: React.FC<{
+  defaultLeadId?: string;
+  isEmbedded?: boolean;
+  initialData?: any;
+  onSaveSuccess?: () => void;
+}> = ({ defaultLeadId, isEmbedded, initialData, onSaveSuccess }) => {
+  const printContainerRef = useRef<HTMLDivElement>(null);
   const [leads, setLeads] = useState<Lead[]>([]);
   const [selectedLeadId, setSelectedLeadId] = useState('');
 
   // Form Fields
-  const [companyName, setCompanyName] = useState('Arrow Sales Corporation');
+  const [companyName, setCompanyName] = useState('Green Energy Solution');
   const [capacity, setCapacity] = useState('10');
   const [consumerName, setConsumerName] = useState('');
   const [address, setAddress] = useState('');
@@ -43,7 +52,7 @@ export const DcrDocument: React.FC<{ defaultLeadId?: string; isEmbedded?: boolea
   const [repName, setRepName] = useState('Rajesh Sharma');
   const [repDesignation, setRepDesignation] = useState('Project Manager');
   const [repPhone, setRepPhone] = useState('9876543210');
-  const [repEmail, setRepEmail] = useState('projects@arrowsolar.com');
+  const [repEmail, setRepEmail] = useState('projects@greenenergysolution.com');
 
   // Signature state
   const [signatureDataUrl, setSignatureDataUrl] = useState('');
@@ -93,6 +102,92 @@ export const DcrDocument: React.FC<{ defaultLeadId?: string; isEmbedded?: boolea
       }
     }
   }, [leads, defaultLeadId]);
+
+  useEffect(() => {
+    if (initialData) {
+      if (initialData.companyName) setCompanyName(initialData.companyName);
+      if (initialData.capacity) setCapacity(initialData.capacity);
+      if (initialData.consumerName) setConsumerName(initialData.consumerName);
+      if (initialData.address) setAddress(initialData.address);
+      if (initialData.appNumber) setAppNumber(initialData.appNumber);
+      if (initialData.appDate) setAppDate(initialData.appDate);
+      if (initialData.discomName) setDiscomName(initialData.discomName);
+      if (initialData.pvCapacity) setPvCapacity(initialData.pvCapacity);
+      if (initialData.pvCount) setPvCount(initialData.pvCount);
+      if (initialData.pvSerialNumbers) setPvSerialNumbers(initialData.pvSerialNumbers);
+      if (initialData.pvMake) setPvMake(initialData.pvMake);
+      if (initialData.cellManufacturer) setCellManufacturer(initialData.cellManufacturer);
+      if (initialData.cellGstInvoice) setCellGstInvoice(initialData.cellGstInvoice);
+      if (initialData.repName) setRepName(initialData.repName);
+      if (initialData.repDesignation) setRepDesignation(initialData.repDesignation);
+      if (initialData.repPhone) setRepPhone(initialData.repPhone);
+      if (initialData.repEmail) setRepEmail(initialData.repEmail);
+    }
+  }, [initialData]);
+
+  const [isSaving, setIsSaving] = useState(false);
+
+  const handleSaveDocument = async () => {
+    const targetLeadId = selectedLeadId || defaultLeadId;
+    if (!targetLeadId) {
+      alert('Please select a customer lead first.');
+      return;
+    }
+
+    if (isSaving) return;
+    setIsSaving(true);
+
+    try {
+      const formData = {
+        companyName,
+        capacity,
+        consumerName,
+        address,
+        appNumber,
+        appDate,
+        discomName,
+        pvCapacity,
+        pvCount,
+        pvSerialNumbers,
+        pvMake,
+        cellManufacturer,
+        cellGstInvoice,
+        repName,
+        repDesignation,
+        repPhone,
+        repEmail
+      };
+
+      let pdfUrl = '';
+      if (printContainerRef.current) {
+        const res = await generateOptimizedPDF(printContainerRef.current, {
+          uploadToFirebase: true,
+          firebasePath: `documents/${targetLeadId}/dcr_certificate_${Date.now()}.pdf`
+        });
+        if (res.pdfUrl) pdfUrl = res.pdfUrl;
+      }
+
+      if (!pdfUrl) {
+        throw new Error('PDF upload to Backblaze B2 failed.');
+      }
+
+      await orderService.uploadClientDocument({
+        leadId: targetLeadId,
+        docType: 'dcr_certificate',
+        fileBlob: pdfUrl,
+        uploadedBy: 'Admin',
+        formData
+      });
+
+      alert('✅ DCR Certificate PDF saved & uploaded to Backblaze B2!');
+      if (onSaveSuccess) onSaveSuccess();
+    } catch (err: any) {
+      console.error('Error saving DCR document:', err);
+      alert(`❌ Failed to upload DCR Certificate PDF to Backblaze B2: ${err.message || err}`);
+    } finally {
+      setIsSaving(false);
+    }
+  };
 
   // Autofill form when lead changes
   const handleLeadChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
@@ -218,13 +313,80 @@ export const DcrDocument: React.FC<{ defaultLeadId?: string; isEmbedded?: boolea
   };
 
   const handlePrint = () => {
-    window.print();
+    const dcrElement = document.querySelector('.dcr-page');
+    if (!dcrElement) {
+      window.print();
+      return;
+    }
+
+    const printWindow = window.open('', '_blank');
+    if (!printWindow) {
+      window.print();
+      return;
+    }
+
+    const htmlContent = dcrElement.innerHTML;
+
+    printWindow.document.write(`
+      <!DOCTYPE html>
+      <html>
+        <head>
+          <title>DCR Undertaking Certificate - ${consumerName || 'Solar Project'}</title>
+          <script src="https://cdn.tailwindcss.com"></script>
+          <style>
+            @page {
+              size: A4 portrait;
+              margin: 0 !important;
+            }
+            html, body {
+              margin: 0 !important;
+              padding: 0 !important;
+              background: #ffffff !important;
+              color: #0f172a !important;
+              font-family: Georgia, Cambria, "Times New Roman", Times, serif !important;
+              -webkit-print-color-adjust: exact !important;
+              print-color-adjust: exact !important;
+            }
+            .dcr-print-container {
+              width: 210mm;
+              height: 297mm;
+              max-height: 297mm;
+              padding: 10mm 14mm;
+              box-sizing: border-box;
+              display: flex;
+              flex-direction: column;
+              justify-content: space-between;
+              overflow: hidden;
+              page-break-after: avoid !important;
+              page-break-inside: avoid !important;
+            }
+            .border-dotted {
+              border-bottom-style: dotted !important;
+            }
+          </style>
+        </head>
+        <body>
+          <div class="dcr-print-container">
+            ${htmlContent}
+          </div>
+          <script>
+            window.onload = function() {
+              setTimeout(function() {
+                window.print();
+                window.close();
+              }, 350);
+            };
+          </script>
+        </body>
+      </html>
+    `);
+    printWindow.document.close();
   };
 
   const resetForm = () => {
     if (confirm('Are you sure you want to reset all DCR details to defaults?')) {
       setSelectedLeadId('');
-      setCompanyName('Arrow Sales Corporation');
+      setCompanyName('Green Energy Solution');
       setCapacity('10');
       setConsumerName('');
       setAddress('');
@@ -240,7 +402,7 @@ export const DcrDocument: React.FC<{ defaultLeadId?: string; isEmbedded?: boolea
       setRepName('Rajesh Sharma');
       setRepDesignation('Project Manager');
       setRepPhone('9876543210');
-      setRepEmail('projects@arrowsolar.com');
+      setRepEmail('projects@greenenergysolution.com');
       clearSignature();
     }
   };
@@ -260,76 +422,30 @@ export const DcrDocument: React.FC<{ defaultLeadId?: string; isEmbedded?: boolea
         }
 
         @page {
-          size: A4;
-          margin: 0 !important; /* Zero margin so that .dcr-page padding acts as page margin */
+          size: A4 portrait;
+          margin: 0 !important;
         }
 
         @media print {
-          /* Hide all UI containers & print-hidden annotated components */
-          header, 
-          aside, 
-          nav, 
-          .action-sidebar, 
-          .dcr-header-bar,
-          .bg-amber-500 {
-            display: none !important;
-          }
-
-          .print\\:hidden {
-            display: none !important;
-          }
-
-          /* Reset absolute positioning and layout rules of the app parent containers to allow normal printing flow */
-          html, 
-          body, 
-          #root, 
-          #root > div,
-          #root > div > div,
-          .h-screen,
-          main, 
-          main > div,
-          main > div > div,
-          main div.lg\\:flex-row,
-          .min-h-screen, 
-          .main-content-wrapper {
-            height: auto !important;
-            min-height: 0 !important;
-            overflow: visible !important;
-            display: block !important;
-            background: white !important;
-            margin: 0 !important;
-            padding: 0 !important;
-            box-shadow: none !important;
-            border: none !important;
-          }
-
-          /* Strip card/container wrapper paddings, borders, shadows & backgrounds on print */
-          main .rounded-2xl,
-          main .rounded-xl {
-            border: none !important;
-            box-shadow: none !important;
-            background: transparent !important;
-            padding: 0 !important;
-            margin: 0 !important;
-          }
-
           /* Style the A4 print container to print cleanly and match preview exactly */
           .dcr-page {
             width: 210mm !important;
-            height: 297mm !important; /* Matches preview dimensions exactly */
+            height: 297mm !important;
+            max-height: 297mm !important;
             margin: 0 auto !important;
-            padding: 20mm !important; /* Matches preview padding exactly */
+            padding: 10mm 14mm !important;
             box-shadow: none !important;
             border: none !important;
             background: white !important;
             box-sizing: border-box !important;
-            page-break-after: always !important;
+            page-break-after: avoid !important;
             page-break-inside: avoid !important;
             display: flex !important;
             flex-direction: column !important;
             justify-content: space-between !important;
             print-color-adjust: exact !important;
             -webkit-print-color-adjust: exact !important;
+            overflow: hidden !important;
           }
 
           .dcr-page:last-child {
@@ -470,15 +586,24 @@ export const DcrDocument: React.FC<{ defaultLeadId?: string; isEmbedded?: boolea
                 <button
                   type="button"
                   onClick={resetForm}
-                  className="flex-1 flex items-center justify-center space-x-1 py-1 border border-slate-200 rounded-lg text-slate-500 hover:bg-slate-50 hover:text-slate-700 text-[10px] font-bold transition-colors cursor-pointer bg-white"
+                  className="flex-1 flex items-center justify-center space-x-1 py-1.5 border border-slate-200 rounded-lg text-slate-500 hover:bg-slate-50 hover:text-slate-700 text-[10px] font-bold transition-colors cursor-pointer bg-white"
                 >
                   <RotateCcw className="w-3 h-3" />
-                  <span>Reset Form</span>
+                  <span>Reset</span>
+                </button>
+                <button
+                  type="button"
+                  disabled={isSaving}
+                  onClick={handleSaveDocument}
+                  className="flex-1 flex items-center justify-center space-x-1 py-1.5 bg-emerald-600 hover:bg-emerald-700 disabled:bg-emerald-400 text-white rounded-lg text-[10px] font-black shadow-sm transition-colors cursor-pointer"
+                >
+                  <Save className="w-3.5 h-3.5" />
+                  <span>{isSaving ? 'Saving PDF...' : 'Save Document'}</span>
                 </button>
                 <button
                   type="button"
                   onClick={handlePrint}
-                  className="flex-1 flex items-center justify-center space-x-1 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-[10px] font-extrabold shadow-sm transition-colors cursor-pointer"
+                  className="flex-1 flex items-center justify-center space-x-1 py-1.5 bg-slate-900 hover:bg-slate-800 text-white rounded-lg text-[10px] font-extrabold shadow-sm transition-colors cursor-pointer"
                 >
                   <Printer className="w-3 h-3" />
                   <span>Print PDF</span>
@@ -811,7 +936,7 @@ export const DcrDocument: React.FC<{ defaultLeadId?: string; isEmbedded?: boolea
           };
 
           return (
-            <div className={`flex-1 overflow-y-auto overflow-x-auto bg-slate-100 p-2 sm:p-4 md:p-8 flex flex-col items-center space-y-6 main-content-wrapper select-none relative max-w-full ${
+            <div ref={printContainerRef} className={`flex-1 overflow-y-auto overflow-x-auto bg-slate-100 p-2 sm:p-4 md:p-8 flex flex-col items-center space-y-6 main-content-wrapper select-none relative max-w-full ${
               mobileTab === 'preview' ? 'block w-full' : 'hidden lg:flex'
             }`}>
               {isSidebarCollapsed && (
@@ -827,8 +952,8 @@ export const DcrDocument: React.FC<{ defaultLeadId?: string; isEmbedded?: boolea
               )}
               
               {/* PAGE 1: Copy 1 (Complete) */}
-              <div className="dcr-page bg-white shadow-xl w-[210mm] h-[297mm] p-[20mm] text-slate-800 flex flex-col justify-between font-serif relative box-border border border-slate-300 print:shadow-none print:border-none print:m-0 text-sm leading-relaxed">
-                <div className="space-y-4">
+              <div className="dcr-page bg-white shadow-xl w-[210mm] h-[297mm] p-[12mm_16mm] text-slate-800 flex flex-col justify-between font-serif relative box-border border border-slate-300 print:shadow-none print:border-none print:m-0 text-[12.5px] leading-normal">
+                <div className="space-y-3">
                   <div 
                     className="text-center font-bold text-base leading-snug underline uppercase font-serif"
                     contentEditable={isEditable}
@@ -837,7 +962,7 @@ export const DcrDocument: React.FC<{ defaultLeadId?: string; isEmbedded?: boolea
                     Undertaking/Self- Declaration for Domestic Content Requirement fulfillment
                   </div>
                   <div 
-                    className="text-center font-semibold text-sm italic font-serif"
+                    className="text-center font-semibold text-xs italic font-serif"
                     contentEditable={isEditable}
                     suppressContentEditableWarning={true}
                   >
@@ -846,13 +971,13 @@ export const DcrDocument: React.FC<{ defaultLeadId?: string; isEmbedded?: boolea
 
                   {/* Numbered List Structure */}
                   <div 
-                    className="space-y-4 pt-3 text-[13px] text-slate-900 font-serif"
+                    className="space-y-2.5 pt-2 text-[12.5px] text-slate-900 font-serif"
                     contentEditable={isEditable}
                     suppressContentEditableWarning={true}
                   >
                     <div className="flex items-start">
                       <span className="mr-1.5 font-bold">1.</span>
-                      <p className="text-justify leading-relaxed">
+                      <p className="text-justify leading-snug">
                         This is to certify that M/S {renderUnderlinedField(companyName, '....................................................', 'min-w-[200px]')} [Company Name] has
                         Installed {renderUnderlinedField(capacity, '..................', 'min-w-[80px]')}KW [Capacity] Grid Connected Rooftop Solar Plant
                         for {renderUnderlinedField(consumerName, '....................................................', 'min-w-[250px]')} [Consumer Name] at
@@ -864,11 +989,11 @@ export const DcrDocument: React.FC<{ defaultLeadId?: string; isEmbedded?: boolea
 
                     <div className="flex items-start">
                       <span className="mr-1.5 font-bold">2.</span>
-                      <div className="space-y-3 flex-1">
-                        <p className="text-justify leading-relaxed">
+                      <div className="space-y-1.5 flex-1">
+                        <p className="text-justify leading-snug">
                           It is hereby undertaken that the PV modules installed for the above-mentioned project are domestically manufactured using domestic manufactured solar cells. The details of installed PV Modules are follows:
                         </p>
-                        <div className="pl-6 space-y-2">
+                        <div className="pl-6 space-y-1">
                           <div>
                             1. PV Module Capacity: {renderUnderlinedField(pvCapacity ? `${pvCapacity} Wp` : null, '..................', 'min-w-[120px]', 'text-left')}
                           </div>
@@ -882,9 +1007,6 @@ export const DcrDocument: React.FC<{ defaultLeadId?: string; isEmbedded?: boolea
                               {renderUnderlinedField(pvSerialNumbers, '................................................................................', 'min-w-[250px] ml-1', 'text-left')}
                             </div>
                           </div>
-                          
-                          {/* Blank spacing as shown in Word file between 3 and 4 */}
-                          <div className="h-6"></div>
                           
                           <div>
                             4. PV Module Make: {renderUnderlinedField(pvMake, '....................................................', 'min-w-[200px]', 'text-left')}
@@ -901,14 +1023,14 @@ export const DcrDocument: React.FC<{ defaultLeadId?: string; isEmbedded?: boolea
 
                     <div className="flex items-start">
                       <span className="mr-1.5 font-bold">3.</span>
-                      <p className="text-justify leading-relaxed">
+                      <p className="text-justify leading-snug">
                         The above undertaking is based on the certificate issued by PV Module manufacturer/supplier while supplying the above mentioned order.
                       </p>
                     </div>
 
                     <div className="flex items-start">
                       <span className="mr-1.5 font-bold">4.</span>
-                      <p className="text-justify leading-relaxed">
+                      <p className="text-justify leading-snug">
                         I, {renderUnderlinedField(repName, '....................................................', 'min-w-[150px]')} on behalf of M/S {renderUnderlinedField(companyName, '....................................................', 'min-w-[200px]')} [Company Name] further declare that the information given above is true and correct and nothing has been concealed therein. If anything is found incorrect at any stage, then REC/ MNRE may take any appropriate action against my company for wrong declaration. Supporting documents and proof of the above information will be provided as and when requested by MNRE.
                       </p>
                     </div>
@@ -916,29 +1038,31 @@ export const DcrDocument: React.FC<{ defaultLeadId?: string; isEmbedded?: boolea
                 </div>
 
                 {/* Bottom Footer Section */}
-                <div className="pt-4 flex justify-between items-end">
-                  {/* Spacer to align signature on the right */}
-                  <div className="w-40 h-24"></div>
+                <div className="pt-2 flex justify-between items-end">
+                  {/* Spacer */}
+                  <div className="w-20"></div>
 
                   {/* Signature Info Panel */}
                   <div 
-                    className="space-y-1 text-[13px] max-w-sm text-slate-950 w-80 relative font-serif"
+                    className="space-y-0.5 text-[12.5px] max-w-sm text-slate-950 w-80 font-serif"
                     contentEditable={isEditable}
                     suppressContentEditableWarning={true}
                   >
-                    {signatureDataUrl ? (
-                      <div className="absolute -top-16 left-12 w-32 h-14 select-none pointer-events-none">
-                        <img
-                          src={signatureDataUrl}
-                          alt="Representative Signature"
-                          className="w-full h-full object-contain mix-blend-multiply"
-                        />
-                      </div>
-                    ) : (
-                      <div className="h-10"></div>
-                    )}
-                    
-                    <div className="font-bold text-right pr-12 mb-3 italic">
+                    <div className="flex flex-col items-center justify-end h-14 mb-1">
+                      {signatureDataUrl ? (
+                        <div className="w-36 h-12 select-none pointer-events-none">
+                          <img
+                            src={signatureDataUrl}
+                            alt="Representative Signature"
+                            className="w-full h-full object-contain mix-blend-multiply"
+                          />
+                        </div>
+                      ) : (
+                        <div className="h-6"></div>
+                      )}
+                    </div>
+
+                    <div className="font-bold text-center mb-2 italic text-xs">
                       (Signature With official Seal)
                     </div>
                     <div className="font-bold">

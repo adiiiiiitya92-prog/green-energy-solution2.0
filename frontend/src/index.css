@@ -7,6 +7,27 @@
   }
 }
 
+/* Mobile Ultra-Speed & Touch Responsiveness Rules */
+html, body {
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+  -webkit-touch-callout: none;
+  scroll-behavior: smooth;
+  overscroll-behavior-y: contain;
+}
+
+/* 60fps GPU Hardware Acceleration for Mobile Buttons, Modals, Cards & Lists */
+button, a, input, select, textarea, .quotation-document-page, .animate-scale-in {
+  -webkit-backface-visibility: hidden;
+  backface-visibility: hidden;
+  transform: translateZ(0);
+}
+
+/* Fast 60fps Smooth Mobile Scrolling Containers */
+.overflow-y-auto, .overflow-x-auto, .overflow-auto {
+  -webkit-overflow-scrolling: touch;
+}
+
 /* Custom Scrollbar for sleek modern UI */
 ::-webkit-scrollbar {
   width: 6px;
@@ -43,4 +64,28 @@
 }
 .star-btn:hover {
   transform: scale(1.2);
+}
+
+/* Quotation Document 8-Page Preview Styles */
+.quotation-print-container {
+  display: flex !important;
+  flex-direction: column !important;
+  align-items: center !important;
+  gap: 28px !important;
+  width: 100% !important;
+}
+
+.quotation-document-page {
+  width: 210mm !important;
+  height: 297mm !important;
+  min-width: 210mm !important;
+  min-height: 297mm !important;
+  max-width: 210mm !important;
+  max-height: 297mm !important;
+  box-sizing: border-box !important;
+  overflow: hidden !important;
+  flex-shrink: 0 !important;
+  box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.3), 0 8px 10px -6px rgba(0, 0, 0, 0.3) !important;
+  border-radius: 4px !important;
+  margin-bottom: 8px !important;
 }

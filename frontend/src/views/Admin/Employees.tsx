@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import type { Profile } from '../../types';
 import { employeeService } from '../../services/employeeService';
-import { Plus, Search, UserCheck, UserX, User } from 'lucide-react';
+import { Plus, Search, UserCheck, UserX, User, Trash2, ShieldOff, ShieldCheck } from 'lucide-react';
 import { useAuthStore } from '../../store/authStore';
 import { useNavigate } from 'react-router-dom';
 
@@ -23,7 +23,7 @@ export const Employees: React.FC = () => {
   // Form states
   const [fullName, setFullName] = useState('');
   const [phone, setPhone] = useState('');
-  const [role, setRole] = useState<'admin' | 'field_employee'>('field_employee');
+  const [role, setRole] = useState<'admin' | 'field_employee' | 'inventory_manager'>('field_employee');
   const [email, setEmail] = useState('');
   const [aadhaarNumber, setAadhaarNumber] = useState('');
   const [panNumber, setPanNumber] = useState('');
@@ -39,12 +39,22 @@ export const Employees: React.FC = () => {
     loadEmployees();
   }, []);
 
-  const handleToggleStatus = async (id: string) => {
-    if (confirm('Are you sure you want to change this employee status?')) {
-      await employeeService.toggleEmployeeStatus(id);
+  const handleToggleStatus = async (emp: Profile) => {
+    const action = emp.isActive ? 'BLOCK / DEACTIVATE' : 'ACTIVATE / UNBLOCK';
+    if (confirm(`Are you sure you want to ${action} access for employee "${emp.fullName}"?\n\nIf blocked, this user will NOT be able to log in to the application.`)) {
+      await employeeService.toggleEmployeeStatus(emp.id);
       loadEmployees();
     }
   };
+
+  const handleDeleteEmployee = async (emp: Profile) => {
+    if (confirm(`⚠️ PERMANENT DELETE WARNING:\n\nAre you sure you want to PERMANENTLY DELETE employee account "${emp.fullName}" (${emp.email || emp.phone})?\n\nThis will completely remove their account from both Local Storage & Cloud Database.`)) {
+      await employeeService.deleteEmployee(emp.id);
+      loadEmployees();
+    }
+  };
+
+  const [initialPassword, setInitialPassword] = useState('');
 
   const handleAddEmployee = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -61,8 +71,10 @@ export const Employees: React.FC = () => {
       aadhaarNumber: aadhaarNumber || undefined,
       panNumber: panNumber || undefined,
       joiningDate: joiningDate || undefined,
-      designation: designation || undefined
-    });
+      designation: designation || undefined,
+      password: initialPassword.trim() || undefined,
+      isActivated: !!initialPassword.trim()
+    } as any);
 
     // Reset states
     setFullName('');
@@ -73,13 +85,15 @@ export const Employees: React.FC = () => {
     setPanNumber('');
     setJoiningDate('');
     setDesignation('');
+    setInitialPassword('');
     setShowAddModal(false);
     loadEmployees();
   };
 
   const filteredEmployees = employees.filter(emp =>
     emp.fullName.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    emp.phone.includes(searchTerm)
+    emp.phone.includes(searchTerm) ||
+    (emp.email && emp.email.toLowerCase().includes(searchTerm.toLowerCase()))
   );
 
   return (
@@ -87,8 +101,8 @@ export const Employees: React.FC = () => {
       {/* Top Header */}
       <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-4">
         <div>
-          <h1 className="text-2xl font-black text-slate-900 tracking-tight">Employee Directory</h1>
-          <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Manage your administrators and field representatives.</p>
+          <h1 className="text-2xl font-black text-slate-900 tracking-tight">Employee Directory & Access Control</h1>
+          <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Manage system users, block/unblock login access, or delete employee profiles.</p>
         </div>
         <button
           onClick={() => setShowAddModal(true)}
@@ -104,7 +118,7 @@ export const Employees: React.FC = () => {
         <Search className="w-4 h-4 text-slate-400 shrink-0" />
         <input
           type="text"
-          placeholder="Search by employee name or phone number..."
+          placeholder="Search by name, phone number, or official email address..."
           value={searchTerm}
           onChange={(e) => setSearchTerm(e.target.value)}
           className="text-xs font-medium text-slate-800 focus:outline-none w-full bg-transparent"
@@ -114,22 +128,19 @@ export const Employees: React.FC = () => {
       {/* Employees Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
         {filteredEmployees.map((emp) => (
-          <div key={emp.id} className="bg-white border border-slate-200 rounded-2xl p-5 hover:shadow-md transition-shadow relative">
+          <div key={emp.id} className={`bg-white border rounded-2xl p-5 hover:shadow-md transition-shadow relative ${!emp.isActive ? 'border-red-200 bg-red-50/20' : 'border-slate-200'}`}>
             <div className="flex items-center space-x-3">
               <div className={`w-10 h-10 rounded-full flex items-center justify-center font-extrabold ${
-                emp.role === 'admin' ? 'bg-emerald-100 text-emerald-700' : 'bg-sky-100 text-sky-700'
+                !emp.isActive ? 'bg-rose-100 text-rose-700' : emp.role === 'admin' ? 'bg-emerald-100 text-emerald-700' : emp.role === 'inventory_manager' ? 'bg-amber-100 text-amber-700' : 'bg-sky-100 text-sky-700'
               }`}>
-                {emp.fullName[0].toUpperCase()}
+                {emp.fullName ? emp.fullName[0].toUpperCase() : 'U'}
               </div>
-              <div className="truncate max-w-[70%]">
+              <div className="truncate max-w-[65%]">
                 <h4 className="text-sm font-bold text-slate-900 truncate">{emp.fullName}</h4>
-                <div className="flex items-center gap-1 flex-wrap">
-                  <span className="text-[9px] text-slate-400 font-bold uppercase">{emp.role.replace('_', ' ')}</span>
+                <div className="flex items-center gap-1 flex-wrap mt-0.5">
+                  <span className="text-[9px] text-slate-500 font-extrabold uppercase bg-slate-100 px-1.5 py-0.5 rounded">{emp.role.replace('_', ' ')}</span>
                   {emp.designation && (
-                    <>
-                      <span className="text-slate-300 text-[8px]">•</span>
-                      <span className="text-[8px] text-emerald-700 bg-emerald-50 border border-emerald-100/60 font-black px-1 rounded uppercase tracking-wider truncate max-w-[90px]">{emp.designation}</span>
-                    </>
+                    <span className="text-[8px] text-emerald-700 bg-emerald-50 border border-emerald-100/60 font-black px-1 rounded uppercase tracking-wider truncate max-w-[80px]">{emp.designation}</span>
                   )}
                 </div>
               </div>
@@ -141,9 +152,18 @@ export const Employees: React.FC = () => {
               {emp.aadhaarNumber && <p>💳 Aadhaar: <span className="font-bold text-slate-700">{emp.aadhaarNumber}</span></p>}
               {emp.panNumber && <p>📁 PAN Card: <span className="font-bold text-slate-700">{emp.panNumber}</span></p>}
               {emp.joiningDate && <p>📅 Joined: <span className="font-bold text-slate-700">{emp.joiningDate}</span></p>}
-              <p>🕒 Active: <span className={`font-bold ${emp.isActive ? 'text-emerald-600' : 'text-slate-400'}`}>
-                {emp.isActive ? 'Active' : 'Inactive'}
-              </span></p>
+              <p className="flex items-center gap-1 mt-1">
+                <span>Status:</span>
+                {emp.isActive ? (
+                  <span className="inline-flex items-center gap-1 text-[10px] font-black text-emerald-700 bg-emerald-100/80 px-2 py-0.5 rounded-md">
+                    <ShieldCheck className="w-3 h-3" /> Active (Login Allowed)
+                  </span>
+                ) : (
+                  <span className="inline-flex items-center gap-1 text-[10px] font-black text-rose-700 bg-rose-100 px-2 py-0.5 rounded-md">
+                    <ShieldOff className="w-3 h-3" /> BLOCKED (Login Denied)
+                  </span>
+                )}
+              </p>
             </div>
 
             {/* Impersonate Option - Super Admin Only */}
@@ -156,14 +176,39 @@ export const Employees: React.FC = () => {
               </button>
             )}
 
-            {/* Toggle Status button */}
-            <button
-              onClick={() => handleToggleStatus(emp.id)}
-              className="absolute top-4 right-4 text-slate-400 hover:text-slate-900 transition-colors cursor-pointer"
-              title="Toggle Active Status"
-            >
-              {emp.isActive ? <UserCheck className="w-5 h-5 text-emerald-600" /> : <UserX className="w-5 h-5 text-slate-300" />}
-            </button>
+            {/* Access Control Action Buttons (Block/Unblock & Delete) */}
+            <div className="mt-3 pt-3 border-t border-slate-100 flex items-center justify-between gap-2">
+              <button
+                onClick={() => handleToggleStatus(emp)}
+                className={`flex-1 py-1.5 px-2 rounded-lg font-extrabold text-[11px] flex items-center justify-center gap-1 transition-all cursor-pointer ${
+                  emp.isActive
+                    ? 'bg-rose-50 text-rose-700 border border-rose-200 hover:bg-rose-100'
+                    : 'bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100'
+                }`}
+                title={emp.isActive ? 'Block this account from logging in' : 'Unblock login access'}
+              >
+                {emp.isActive ? (
+                  <>
+                    <UserX className="w-3.5 h-3.5" />
+                    <span>Block Account</span>
+                  </>
+                ) : (
+                  <>
+                    <UserCheck className="w-3.5 h-3.5" />
+                    <span>Unblock Access</span>
+                  </>
+                )}
+              </button>
+
+              <button
+                onClick={() => handleDeleteEmployee(emp)}
+                className="py-1.5 px-2.5 bg-slate-100 hover:bg-rose-600 hover:text-white text-slate-600 rounded-lg font-bold text-[11px] transition-all cursor-pointer flex items-center justify-center gap-1 border border-slate-200"
+                title="Permanently delete employee profile"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                <span>Delete</span>
+              </button>
+            </div>
           </div>
         ))}
 
@@ -213,7 +258,11 @@ export const Employees: React.FC = () => {
                   className="w-full border border-slate-200 rounded-xl px-3 py-2.5 bg-slate-50 focus:outline-none focus:ring-1 focus:ring-emerald-500 cursor-pointer"
                 >
                   <option value="field_employee">Field Employee</option>
+                  <option value="inventory_manager">Inventory Manager (Store & Stock Only)</option>
                   <option value="admin">Administrator</option>
+                  {(currentRole === 'super_admin' || originalUser?.role === 'super_admin') && (
+                    <option value="super_admin">Super Admin (System Managing Director)</option>
+                  )}
                 </select>
               </div>
 
@@ -229,14 +278,25 @@ export const Employees: React.FC = () => {
               </div>
 
               <div>
-                <label className="block text-slate-500 mb-1">Official Email Address (Required for User Sign In)</label>
+                <label className="block text-slate-500 mb-1">Official Email Address (Required for Pre-Approved Sign In)</label>
                 <input
                   type="email"
                   required
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
-                  placeholder="e.g. employee@arrowsales.com"
+                  placeholder="e.g. employee@greenenergysolution.com"
                   className="w-full border border-slate-200 rounded-xl px-3 py-2 bg-slate-50 focus:outline-none focus:ring-1 focus:ring-emerald-500 font-semibold"
+                />
+              </div>
+
+              <div>
+                <label className="block text-slate-500 mb-1">Initial Account Password (Optional - Or let user set via Create Account)</label>
+                <input
+                  type="text"
+                  value={initialPassword}
+                  onChange={(e) => setInitialPassword(e.target.value)}
+                  placeholder="e.g. Pass@1234 (Leave blank if user will activate password)"
+                  className="w-full border border-slate-200 rounded-xl px-3 py-2 bg-slate-50 focus:outline-none focus:ring-1 focus:ring-emerald-500 text-xs font-mono"
                 />
               </div>
 

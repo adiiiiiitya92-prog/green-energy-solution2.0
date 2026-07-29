@@ -7,7 +7,7 @@ import { productService } from '../../services/productService';
 import { pdfService } from '../../services/pdfService';
 import { Plus, Search, Truck, Trash2, ClipboardList, X } from 'lucide-react';
 import dayjs from 'dayjs';
-import logoImg from '../../assets/Arrow-sales-corporation_logo-300x84.png';
+import logoImg from '../../assets/Green-Energy-Solution.png';
 
 export const Challans: React.FC = () => {
   const [challans, setChallans] = useState<Challan[]>([]);
@@ -189,7 +189,7 @@ export const Challans: React.FC = () => {
       a.click();
       URL.revokeObjectURL(url);
 
-      const msg = `*ARROW SOLAR CORP - DELIVERY CHALLAN DISPATCH*\n\n` +
+      const msg = `*GREEN ENERGY SOLUTION - DELIVERY CHALLAN DISPATCH*\n\n` +
         `Challan No: ${ch.challanNumber}\n` +
         `Vehicle No: ${ch.vehicleNumber}\n` +
         `Customer: ${ch.leadName}\n` +
@@ -217,6 +217,13 @@ export const Challans: React.FC = () => {
     setEditNotes(ch.notes || '');
     setCurrentEditProductId('');
     setCurrentEditQty(1);
+  };
+
+  const handleDeleteChallan = async (ch: Challan) => {
+    if (confirm(`⚠️ DELETE WARNING:\n\nAre you sure you want to delete Delivery Challan "${ch.challanNumber}" for ${ch.leadName}?\n\nDeleting this challan will also restore all dispatched item quantities back into product inventory stock.`)) {
+      await challanService.deleteChallan(ch.id);
+      loadData();
+    }
   };
 
   const handleEditAddItem = () => {
@@ -431,9 +438,9 @@ export const Challans: React.FC = () => {
                   {/* Company Logo & Official White Header Banner */}
                   <div className="bg-white text-slate-900 rounded-xl p-4 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 shadow-xs border border-slate-200">
                     <div className="flex items-center gap-3">
-                      <img src={logoImg} alt="Arrow Sales Corporation Logo" className="h-9 w-auto object-contain shrink-0" />
+                      <img src={logoImg} alt="Green Energy Solution Logo" className="h-9 w-auto object-contain shrink-0" />
                       <div>
-                        <p className="text-[10px] font-black text-emerald-600 uppercase tracking-widest">Arrow Sales Corporation</p>
+                        <p className="text-[10px] font-black text-emerald-600 uppercase tracking-widest">Green Energy Solution</p>
                         <p className="text-xs font-bold text-slate-700">Materials Delivery Challan & Dispatch Note</p>
                       </div>
                     </div>
@@ -483,7 +490,7 @@ export const Challans: React.FC = () => {
                     </div>
                   )}
 
-                  {/* Actions (Download, WhatsApp, Edit) */}
+                  {/* Actions (Download, WhatsApp, Edit, Delete) */}
                   <div className="pt-4 border-t border-slate-100 flex flex-wrap gap-2">
                     <button
                       type="button"
@@ -514,6 +521,17 @@ export const Challans: React.FC = () => {
                       className="px-3 py-1.5 bg-amber-50 hover:bg-amber-100 text-amber-700 text-[10px] font-bold uppercase rounded-lg border border-amber-200/80 transition-colors cursor-pointer"
                     >
                       Edit Challan
+                    </button>
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleDeleteChallan(ch);
+                      }}
+                      className="px-3 py-1.5 bg-rose-50 hover:bg-rose-600 hover:text-white text-rose-700 text-[10px] font-bold uppercase rounded-lg border border-rose-200/80 transition-colors cursor-pointer flex items-center gap-1"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                      <span>Delete Challan</span>
                     </button>
                   </div>
                 </div>

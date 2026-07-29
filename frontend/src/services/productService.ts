@@ -2,31 +2,42 @@ import { db } from './db';
 import type { Product } from '../types';
 import { saveRecordToFirestore, deleteRecordFromFirestore, fetchCollectionFromFirestore } from './firebase';
 
-const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || 'http://localhost:5000';
+const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || '';
 
 export const productService = {
   async getProducts(): Promise<Product[]> {
     try {
-      const remoteProds = await fetchCollectionFromFirestore<Product>('products');
-      if (remoteProds && remoteProds.length > 0) {
-        await db.products.bulkPut(remoteProds);
-      } else {
-        // Fallback to Express backend API if Firestore returned empty
+      let remoteProds = await fetchCollectionFromFirestore<Product>('products');
+      if (!Array.isArray(remoteProds) || remoteProds.length === 0) {
         try {
           const res = await fetch(`${BACKEND_URL}/api/products`);
           if (res.ok) {
             const apiProds = await res.json();
-            if (Array.isArray(apiProds) && apiProds.length > 0) {
-              await db.products.bulkPut(apiProds);
+            if (Array.isArray(apiProds)) {
+              remoteProds = apiProds;
             }
           }
-        } catch (e) {
-          // Backend API offline fallback
+        } catch (_) {}
+      }
+
+      if (Array.isArray(remoteProds)) {
+        const remoteIds = new Set(remoteProds.map(p => p.id));
+        const localProds = await db.products.toArray();
+        const deletedIds = localProds.filter(p => !remoteIds.has(p.id)).map(p => p.id);
+
+        if (remoteProds.length > 0) {
+          await db.products.bulkPut(remoteProds);
         }
+        if (deletedIds.length > 0) {
+          await db.products.bulkDelete(deletedIds);
+        }
+
+        return await db.products.orderBy('name').toArray();
       }
     } catch (err) {
-      console.warn("Firestore products sync note:", err);
+      console.warn("Firestore products sync note, returning local cache:", err);
     }
+
     return db.products.orderBy('name').toArray();
   },
 

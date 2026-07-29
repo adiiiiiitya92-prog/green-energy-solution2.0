@@ -1,5 +1,6 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { leadService } from '../../services/leadService';
+import { orderService } from '../../services/orderService';
 import type { Lead } from '../../types';
 import {
   FileText,
@@ -10,10 +11,18 @@ import {
   ChevronLeft,
   ChevronRight,
   Edit3,
-  Sliders
+  Sliders,
+  Save
 } from 'lucide-react';
+import { generateOptimizedPDF } from '../../services/pdfOptimizationService';
 
-export const ModelAgreementDocument: React.FC<{ defaultLeadId?: string; isEmbedded?: boolean }> = ({ defaultLeadId, isEmbedded }) => {
+export const ModelAgreementDocument: React.FC<{
+  defaultLeadId?: string;
+  isEmbedded?: boolean;
+  initialData?: any;
+  onSaveSuccess?: () => void;
+}> = ({ defaultLeadId, isEmbedded, initialData, onSaveSuccess }) => {
+  const printContainerRef = useRef<HTMLDivElement>(null);
   const [leads, setLeads] = useState<Lead[]>([]);
   const [selectedLeadId, setSelectedLeadId] = useState('');
 
@@ -22,7 +31,7 @@ export const ModelAgreementDocument: React.FC<{ defaultLeadId?: string; isEmbedd
   const [consumerName, setConsumerName] = useState('SHRI SANDIP RAMAJI LAHAMGE');
   const [consumerNumber, setConsumerNumber] = useState('396013606014');
   const [subDivision, setSubDivision] = useState('HINGANGHAT Sub division NAGPUR');
-  const [companyName, setCompanyName] = useState('ARROW SALES CORPORATION');
+  const [companyName, setCompanyName] = useState('GREEN ENERGY SOLUTION');
   const [discomName, setDiscomName] = useState('MSEDCL');
   const [vendorAddress, setVendorAddress] = useState('SUYOG NAGAR NAGAPUR 440027');
   const [systemCapacity, setSystemCapacity] = useState('5.0');
@@ -81,6 +90,86 @@ export const ModelAgreementDocument: React.FC<{ defaultLeadId?: string; isEmbedd
       }
     }
   }, [leads, defaultLeadId]);
+
+  useEffect(() => {
+    if (initialData) {
+      if (initialData.agreementDate) setAgreementDate(initialData.agreementDate);
+      if (initialData.consumerName) setConsumerName(initialData.consumerName);
+      if (initialData.consumerNumber) setConsumerNumber(initialData.consumerNumber);
+      if (initialData.subDivision) setSubDivision(initialData.subDivision);
+      if (initialData.companyName) setCompanyName(initialData.companyName);
+      if (initialData.discomName) setDiscomName(initialData.discomName);
+      if (initialData.vendorAddress) setVendorAddress(initialData.vendorAddress);
+      if (initialData.systemCapacity) setSystemCapacity(initialData.systemCapacity);
+      if (initialData.moduleMake) setModuleMake(initialData.moduleMake);
+      if (initialData.moduleCapacity) setModuleCapacity(initialData.moduleCapacity);
+      if (initialData.moduleEfficiency) setModuleEfficiency(initialData.moduleEfficiency);
+      if (initialData.inverterMake) setInverterMake(initialData.inverterMake);
+      if (initialData.inverterCapacity) setInverterCapacity(initialData.inverterCapacity);
+      if (initialData.totalRtsCost) setTotalRtsCost(initialData.totalRtsCost);
+    }
+  }, [initialData]);
+
+  const [isSaving, setIsSaving] = useState(false);
+
+  const handleSaveDocument = async () => {
+    const targetLeadId = selectedLeadId || defaultLeadId;
+    if (!targetLeadId) {
+      alert('Please select a customer lead first.');
+      return;
+    }
+
+    if (isSaving) return;
+    setIsSaving(true);
+
+    try {
+      const formData = {
+        agreementDate,
+        consumerName,
+        consumerNumber,
+        subDivision,
+        companyName,
+        discomName,
+        vendorAddress,
+        systemCapacity,
+        moduleMake,
+        moduleCapacity,
+        moduleEfficiency,
+        inverterMake,
+        inverterCapacity,
+        totalRtsCost
+      };
+
+      let pdfUrl = '';
+      if (printContainerRef.current) {
+        const res = await generateOptimizedPDF(printContainerRef.current, {
+          uploadToFirebase: true,
+          firebasePath: `documents/${targetLeadId}/model_agreement_${Date.now()}.pdf`
+        });
+        if (res.pdfUrl) pdfUrl = res.pdfUrl;
+      }
+
+      if (!pdfUrl) {
+        throw new Error('PDF upload to Backblaze B2 failed.');
+      }
+
+      await orderService.uploadClientDocument({
+        leadId: targetLeadId,
+        docType: 'model_agreement',
+        fileBlob: pdfUrl,
+        uploadedBy: 'Admin',
+        formData
+      });
+
+      alert('✅ Model Agreement PDF saved & uploaded to Backblaze B2!');
+      if (onSaveSuccess) onSaveSuccess();
+    } catch (err: any) {
+      console.error('Error saving Model Agreement:', err);
+      alert(`❌ Failed to upload Model Agreement PDF to Backblaze B2: ${err.message || err}`);
+    } finally {
+      setIsSaving(false);
+    }
+  };
 
   const handleLeadChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
     const leadId = e.target.value;
@@ -181,18 +270,20 @@ export const ModelAgreementDocument: React.FC<{ defaultLeadId?: string; isEmbedd
     }
   };
 
-  const clearSignature = () => {
-    if (activeCanvas === 'vendor') {
-      setVendorSignatureUrl('');
-      if (vendorCanvasRef.current) {
-        vendorCanvasRef.current.getContext('2d')?.clearRect(0, 0, 320, 112);
-      }
-    } else {
-      setConsumerSignatureUrl('');
-      if (consumerCanvasRef.current) {
-        consumerCanvasRef.current.getContext('2d')?.clearRect(0, 0, 320, 112);
-      }
+  const clearVendorSignature = () => {
+    if (vendorCanvasRef.current) {
+      const ctx = vendorCanvasRef.current.getContext('2d');
+      ctx?.clearRect(0, 0, vendorCanvasRef.current.width, vendorCanvasRef.current.height);
     }
+    setVendorSignatureUrl('');
+  };
+
+  const clearConsumerSignature = () => {
+    if (consumerCanvasRef.current) {
+      const ctx = consumerCanvasRef.current.getContext('2d');
+      ctx?.clearRect(0, 0, consumerCanvasRef.current.width, consumerCanvasRef.current.height);
+    }
+    setConsumerSignatureUrl('');
   };
 
   const toggleSection = (section: string) => {
@@ -338,14 +429,22 @@ ${stylesheets}
           </div>
         </div>
 
-        <div className="flex items-center space-x-3">
+        <div className="flex items-center space-x-2">
+          <button
+            type="button"
+            onClick={handleSaveDocument}
+            className="flex items-center space-x-1.5 px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-black shadow-sm transition-colors cursor-pointer"
+          >
+            <Save className="w-4 h-4" />
+            <span>Save Document</span>
+          </button>
           <button
             type="button"
             onClick={handlePrint}
-            className="flex items-center space-x-1.5 px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-extrabold shadow-sm transition-colors cursor-pointer"
+            className="flex items-center space-x-1.5 px-4 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-lg text-xs font-extrabold shadow-sm transition-colors cursor-pointer"
           >
             <Printer className="w-4 h-4" />
-            <span>Print / Save PDF</span>
+            <span>Print PDF</span>
           </button>
         </div>
       </div>
@@ -655,7 +754,7 @@ ${stylesheets}
             )}
           </div>
 
-          {/* Section 4: Signature Pad */}
+          {/* Section 4: Signature Pads */}
           <div className="border border-slate-100 rounded-xl overflow-hidden shadow-xs">
             <button
               onClick={() => toggleSection('signatures')}
@@ -663,7 +762,7 @@ ${stylesheets}
             >
               <div className="flex items-center space-x-2">
                 <FileSignature className="w-4 h-4 text-emerald-600" />
-                <span>Draw Signatures</span>
+                <span>Draw Signatures (Vendor & Applicant)</span>
               </div>
               {expandedSection === 'signatures' ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
             </button>
@@ -672,38 +771,43 @@ ${stylesheets}
                 <div className="flex bg-slate-50 p-1 rounded-lg border border-slate-200 gap-1 select-none">
                   <button
                     type="button"
-                    onClick={() => { setActiveCanvas('vendor'); clearSignature(); }}
-                    className={`flex-1 py-1 text-center font-bold text-[10px] rounded transition-colors ${
-                      activeCanvas === 'vendor' ? 'bg-emerald-600 text-white shadow-xs' : 'text-slate-500 hover:bg-slate-100'
+                    onClick={() => setActiveCanvas('vendor')}
+                    className={`flex-1 py-1.5 text-center font-bold text-[11px] rounded transition-colors flex items-center justify-center gap-1 cursor-pointer ${
+                      activeCanvas === 'vendor' ? 'bg-emerald-600 text-white shadow-xs' : 'text-slate-600 hover:bg-slate-100'
                     }`}
                   >
-                    Vendor Sign
+                    <span>Vendor Sign</span>
+                    {vendorSignatureUrl && <span className="text-emerald-200 font-extrabold text-[10px]">✓</span>}
                   </button>
                   <button
                     type="button"
-                    onClick={() => { setActiveCanvas('consumer'); clearSignature(); }}
-                    className={`flex-1 py-1 text-center font-bold text-[10px] rounded transition-colors ${
-                      activeCanvas === 'consumer' ? 'bg-emerald-600 text-white shadow-xs' : 'text-slate-500 hover:bg-slate-100'
+                    onClick={() => setActiveCanvas('consumer')}
+                    className={`flex-1 py-1.5 text-center font-bold text-[11px] rounded transition-colors flex items-center justify-center gap-1 cursor-pointer ${
+                      activeCanvas === 'consumer' ? 'bg-emerald-600 text-white shadow-xs' : 'text-slate-600 hover:bg-slate-100'
                     }`}
                   >
-                    Applicant Sign
+                    <span>Applicant Sign</span>
+                    {consumerSignatureUrl && <span className="text-emerald-200 font-extrabold text-[10px]">✓</span>}
                   </button>
                 </div>
 
-                <div className="flex justify-between items-center mb-1 pt-1.5">
-                  <label className="block text-[10px] font-bold text-slate-400 uppercase">Draw {activeCanvas === 'vendor' ? 'Vendor' : 'Applicant'} Sign</label>
+                <div className="flex justify-between items-center mb-1 pt-1">
+                  <label className="block text-[10px] font-bold text-slate-500 uppercase">
+                    Drawing: <span className="text-emerald-700 font-extrabold">{activeCanvas === 'vendor' ? 'Vendor Signature' : 'Applicant Signature'}</span>
+                  </label>
                   <button
                     type="button"
-                    onClick={clearSignature}
+                    onClick={activeCanvas === 'vendor' ? clearVendorSignature : clearConsumerSignature}
                     className="text-[10px] text-rose-500 hover:text-rose-600 font-bold transition-colors cursor-pointer"
                   >
-                    Clear
+                    Clear {activeCanvas === 'vendor' ? 'Vendor' : 'Applicant'}
                   </button>
                 </div>
 
                 <div className="border border-dashed border-slate-300 rounded-lg overflow-hidden bg-slate-50 h-28 relative">
+                  {/* Vendor Canvas */}
                   <canvas
-                    ref={activeCanvas === 'vendor' ? vendorCanvasRef : consumerCanvasRef}
+                    ref={vendorCanvasRef}
                     width={320}
                     height={112}
                     onMouseDown={startDrawing}
@@ -713,8 +817,37 @@ ${stylesheets}
                     onTouchStart={startTouchDrawing}
                     onTouchMove={drawTouch}
                     onTouchEnd={stopDrawing}
-                    className="w-full h-full cursor-crosshair bg-slate-50 touch-none"
+                    className={`w-full h-full cursor-crosshair bg-slate-50 touch-none ${
+                      activeCanvas === 'vendor' ? 'block' : 'hidden'
+                    }`}
                   />
+
+                  {/* Applicant / Consumer Canvas */}
+                  <canvas
+                    ref={consumerCanvasRef}
+                    width={320}
+                    height={112}
+                    onMouseDown={startDrawing}
+                    onMouseMove={draw}
+                    onMouseUp={stopDrawing}
+                    onMouseLeave={stopDrawing}
+                    onTouchStart={startTouchDrawing}
+                    onTouchMove={drawTouch}
+                    onTouchEnd={stopDrawing}
+                    className={`w-full h-full cursor-crosshair bg-slate-50 touch-none ${
+                      activeCanvas === 'consumer' ? 'block' : 'hidden'
+                    }`}
+                  />
+                </div>
+
+                {/* Status Badges */}
+                <div className="flex items-center justify-between text-[10px] pt-1 border-t border-slate-100">
+                  <span className={vendorSignatureUrl ? 'text-emerald-600 font-bold' : 'text-slate-400'}>
+                    {vendorSignatureUrl ? '✓ Vendor Sign Saved' : '• Vendor Sign Pending'}
+                  </span>
+                  <span className={consumerSignatureUrl ? 'text-emerald-600 font-bold' : 'text-slate-400'}>
+                    {consumerSignatureUrl ? '✓ Applicant Sign Saved' : '• Applicant Sign Pending'}
+                  </span>
                 </div>
               </div>
             )}
@@ -723,7 +856,7 @@ ${stylesheets}
         </div>
 
         {/* Right Side: Model Agreement A4 Preview */}
-        <div className={`flex-1 overflow-y-auto overflow-x-auto bg-slate-100 p-2 sm:p-4 md:p-8 flex flex-col items-center space-y-6 main-content-wrapper select-none relative max-w-full ${
+        <div ref={printContainerRef} className={`flex-1 overflow-y-auto overflow-x-auto bg-slate-100 p-2 sm:p-4 md:p-8 flex flex-col items-center space-y-6 main-content-wrapper select-none relative max-w-full ${
           mobileTab === 'preview' ? 'block w-full' : 'hidden lg:flex'
         }`}>
           {isSidebarCollapsed && (

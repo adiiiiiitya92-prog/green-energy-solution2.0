@@ -45,6 +45,11 @@ export const orderService = {
     return id;
   },
 
+  async updateOrderConfirmation(oc: OrderConfirmation): Promise<void> {
+    await db.orderConfirmations.put(oc);
+    saveRecordToFirestore('orderConfirmations', oc.id, oc);
+  },
+
   // Client Registrations Checklist
   async getClientRegistrationByLeadId(leadId: string): Promise<ClientRegistration | undefined> {
     return db.clientRegistrations.get(leadId);
@@ -69,15 +74,18 @@ export const orderService = {
 
   // Client Documents (Slots: PAN, Aadhar, Bill, Tax, Bank etc)
   async getClientDocumentsByLeadId(leadId: string): Promise<ClientDocument[]> {
-    try {
-      const remoteDocs = await fetchCollectionFromFirestore<ClientDocument>('clientDocuments');
-      if (remoteDocs && remoteDocs.length > 0) {
-        await db.clientDocuments.bulkPut(remoteDocs);
+    const localDocs = await db.clientDocuments.where({ leadId }).toArray();
+    (async () => {
+      try {
+        const remoteDocs = await fetchCollectionFromFirestore<ClientDocument>('clientDocuments');
+        if (remoteDocs && remoteDocs.length > 0) {
+          await db.clientDocuments.bulkPut(remoteDocs);
+        }
+      } catch (err) {
+        console.warn("Firestore documents sync note:", err);
       }
-    } catch (err) {
-      console.warn("Firestore documents sync note:", err);
-    }
-    return db.clientDocuments.where({ leadId }).toArray();
+    })();
+    return localDocs;
   },
 
   async uploadClientDocument(docData: Omit<ClientDocument, 'id' | 'uploadedAt'>): Promise<string> {
@@ -132,7 +140,18 @@ export const orderService = {
 
   // Installation Photos
   async getInstallationPhotosByLeadId(leadId: string): Promise<InstallationPhoto[]> {
-    return db.installationPhotos.where({ leadId }).toArray();
+    const localPhotos = await db.installationPhotos.where({ leadId }).toArray();
+    (async () => {
+      try {
+        const remotePhotos = await fetchCollectionFromFirestore<InstallationPhoto>('installationPhotos');
+        if (remotePhotos && remotePhotos.length > 0) {
+          await db.installationPhotos.bulkPut(remotePhotos);
+        }
+      } catch (err) {
+        console.warn("Firestore installation photos sync note:", err);
+      }
+    })();
+    return localPhotos;
   },
 
   async uploadInstallationPhoto(photoData: Omit<InstallationPhoto, 'id'>): Promise<string> {
@@ -168,7 +187,18 @@ export const orderService = {
 
   // Release Documents
   async getReleaseDocumentsByLeadId(leadId: string): Promise<ReleaseDocument[]> {
-    return db.releaseDocuments.where({ leadId }).toArray();
+    const localReleases = await db.releaseDocuments.where({ leadId }).toArray();
+    (async () => {
+      try {
+        const remoteReleases = await fetchCollectionFromFirestore<ReleaseDocument>('releaseDocuments');
+        if (remoteReleases && remoteReleases.length > 0) {
+          await db.releaseDocuments.bulkPut(remoteReleases);
+        }
+      } catch (err) {
+        console.warn("Firestore release documents sync note:", err);
+      }
+    })();
+    return localReleases;
   },
 
   async uploadReleaseDocument(relData: Omit<ReleaseDocument, 'id' | 'uploadedAt'>): Promise<string> {
@@ -179,10 +209,17 @@ export const orderService = {
       uploadedAt: new Date().toISOString()
     };
     await db.transaction('rw', [db.releaseDocuments, db.leads], async () => {
+      // Clear any existing release docs for this lead so only 1 single file is kept
+      const existing = await db.releaseDocuments.where({ leadId: relData.leadId }).toArray();
+      for (const item of existing) {
+        await db.releaseDocuments.delete(item.id);
+        deleteRecordFromFirestore('releaseDocuments', item.id);
+      }
+
       await db.releaseDocuments.add(newRel);
 
       const lead = await db.leads.get(relData.leadId);
-      if (lead && lead.status === 'installed') {
+      if (lead) {
         lead.status = 'closed';
         lead.updatedAt = new Date().toISOString();
         await db.leads.put(lead);
@@ -192,5 +229,10 @@ export const orderService = {
 
     saveRecordToFirestore('releaseDocuments', id, newRel);
     return id;
+  },
+
+  async deleteReleaseDocument(id: string): Promise<void> {
+    await db.releaseDocuments.delete(id);
+    deleteRecordFromFirestore('releaseDocuments', id);
   }
 };

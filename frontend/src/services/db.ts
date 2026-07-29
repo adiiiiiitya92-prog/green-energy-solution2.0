@@ -29,7 +29,7 @@ export class SolarCRMDatabase extends Dexie {
   shadowAnalyses!: Table<ShadowAnalysisRecord>;
 
   constructor() {
-    super('SolarCRMDatabase');
+    super('GreenEnergyCRMDatabase');
     this.version(3).stores({
       profiles: 'id, role, isActive',
       leads: 'id, assignedEmployeeId, status, createdAt',
@@ -49,10 +49,106 @@ export class SolarCRMDatabase extends Dexie {
 
 export const db = new SolarCRMDatabase();
 
+export const DEFAULT_DEMO_PROFILES: Profile[] = [
+  {
+    id: 'admin_super',
+    fullName: 'System Administrator',
+    phone: '9876543210',
+    role: 'super_admin',
+    email: 'admin@greenenergysolution.com',
+    aadhaarNumber: '123456789012',
+    panNumber: 'ABCDE1234F',
+    joiningDate: new Date().toISOString().split('T')[0],
+    designation: 'Managing Director',
+    isActive: true,
+    isActivated: true,
+    password: 'admin123',
+    createdAt: new Date().toISOString()
+  },
+  {
+    id: 'admin_ops',
+    fullName: 'Operations Admin',
+    phone: '9876543211',
+    role: 'admin',
+    email: 'admin@greenenergy.com',
+    aadhaarNumber: '123456789013',
+    panNumber: 'ABCDE1234G',
+    joiningDate: new Date().toISOString().split('T')[0],
+    designation: 'Operations Manager',
+    isActive: true,
+    isActivated: true,
+    password: 'admin123',
+    createdAt: new Date().toISOString()
+  },
+  {
+    id: 'emp_field',
+    fullName: 'Field Executive',
+    phone: '9876543220',
+    role: 'field_employee',
+    email: 'field@greenenergy.com',
+    aadhaarNumber: '123456789014',
+    panNumber: 'ABCDE1234H',
+    joiningDate: new Date().toISOString().split('T')[0],
+    designation: 'Field Inspector',
+    isActive: true,
+    isActivated: true,
+    password: 'field123',
+    createdAt: new Date().toISOString()
+  },
+  {
+    id: 'mgr_inventory',
+    fullName: 'Inventory Manager',
+    phone: '9876543230',
+    role: 'inventory_manager',
+    email: 'inventory@greenenergy.com',
+    aadhaarNumber: '123456789015',
+    panNumber: 'ABCDE1234I',
+    joiningDate: new Date().toISOString().split('T')[0],
+    designation: 'Store & Stock Manager',
+    isActive: true,
+    isActivated: true,
+    password: 'inv123',
+    createdAt: new Date().toISOString()
+  }
+];
+
+export async function ensureDemoProfilesExist() {
+  try {
+    for (const p of DEFAULT_DEMO_PROFILES) {
+      const existing = await db.profiles.get(p.id);
+      if (!existing) {
+        await db.profiles.put(p);
+      }
+    }
+  } catch (err) {
+    console.warn("ensureDemoProfilesExist error:", err);
+  }
+}
+
 /**
  * Clears all local mock data across all tables and seeds only clean initial role accounts.
  */
-export async function seedDemoData(_force = true) {
+export async function seedDemoData(_force = false) {
+  const profileCount = await db.profiles.count();
+  if (!_force && profileCount > 0) {
+    await ensureDemoProfilesExist();
+    return; // Preserve user data, leads & quotations across normal reloads
+  }
+
+  // Clear quotation & session cache in localStorage when force-resetting
+  if (_force) {
+    try {
+      const keysToRemove: string[] = [];
+      for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i);
+        if (key && (key.startsWith('quotation_') || key.startsWith('ges_'))) {
+          keysToRemove.push(key);
+        }
+      }
+      keysToRemove.forEach(k => localStorage.removeItem(k));
+    } catch (_) {}
+  }
+
   await db.transaction('rw', [
     db.profiles,
     db.leads,
@@ -64,10 +160,9 @@ export async function seedDemoData(_force = true) {
     db.releaseDocuments,
     db.fieldVisitReports,
     db.products,
-    db.challans
+    db.challans,
+    db.shadowAnalyses
   ], async () => {
-    // Clear all tables
-    await db.profiles.clear();
     await db.leads.clear();
     await db.quotations.clear();
     await db.orderConfirmations.clear();
@@ -78,54 +173,12 @@ export async function seedDemoData(_force = true) {
     await db.fieldVisitReports.clear();
     await db.products.clear();
     await db.challans.clear();
+    await db.shadowAnalyses.clear();
 
-    // Clean initial System Role Profiles (Super Admin, Admin, Field Employee)
-    const initialProfiles: Profile[] = [
-      {
-        id: 'admin_super',
-        fullName: 'System Administrator',
-        phone: '9876543210',
-        role: 'super_admin',
-        email: 'admin@arrowsales.com',
-        aadhaarNumber: '123456789012',
-        panNumber: 'ABCDE1234F',
-        joiningDate: new Date().toISOString().split('T')[0],
-        designation: 'Managing Director',
-        isActive: true,
-        createdAt: new Date().toISOString()
-      },
-      {
-        id: 'admin_ops',
-        fullName: 'Operations Admin',
-        phone: '9876543211',
-        role: 'admin',
-        email: 'admin@arrow.com',
-        aadhaarNumber: '123456789013',
-        panNumber: 'ABCDE1234G',
-        joiningDate: new Date().toISOString().split('T')[0],
-        designation: 'Operations Manager',
-        isActive: true,
-        createdAt: new Date().toISOString()
-      },
-      {
-        id: 'emp_field',
-        fullName: 'Field Executive',
-        phone: '9876543220',
-        role: 'field_employee',
-        email: 'field@arrow.com',
-        aadhaarNumber: '123456789014',
-        panNumber: 'ABCDE1234H',
-        joiningDate: new Date().toISOString().split('T')[0],
-        designation: 'Field Inspector',
-        isActive: true,
-        createdAt: new Date().toISOString()
-      }
-    ];
-
-    await db.profiles.bulkAdd(initialProfiles);
+    await db.profiles.bulkPut(DEFAULT_DEMO_PROFILES);
   });
 
-  console.log("🧹 Database clean initialized with production Super Admin, Admin, and Field Employee roles!");
+  console.log("🧹 Database clean initialized with production Super Admin, Admin, Field Employee, and Inventory Manager roles!");
 }
 
 /**
@@ -134,3 +187,4 @@ export async function seedDemoData(_force = true) {
 export async function resetDatabaseToClean() {
   await seedDemoData(true);
 }
+

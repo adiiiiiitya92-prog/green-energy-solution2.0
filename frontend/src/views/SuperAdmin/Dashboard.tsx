@@ -1,11 +1,13 @@
 import React, { useEffect, useState } from 'react';
+import { db } from '../../services/db';
 import { leadService } from '../../services/leadService';
 import { quotationService } from '../../services/quotationService';
 import { orderService } from '../../services/orderService';
 import { visitService } from '../../services/visitService';
 import { employeeService } from '../../services/employeeService';
 import { productService } from '../../services/productService';
-import type { Lead, Quotation, OrderConfirmation, Profile, Product } from '../../types';
+import { FollowUpReminders } from '../../components/Common/FollowUpReminders';
+import type { Lead, Quotation, OrderConfirmation, Profile, Product, PaymentInstallment } from '../../types';
 import { TrendingUp, DollarSign, Award, ClipboardList, PackageCheck, ShieldAlert } from 'lucide-react';
 
 export const Dashboard: React.FC = () => {
@@ -16,20 +18,47 @@ export const Dashboard: React.FC = () => {
   const [visitsCount, setVisitsCount] = useState(0);
   const [lowStockProducts, setLowStockProducts] = useState<Product[]>([]);
 
+  const getPaymentsList = (c: OrderConfirmation): PaymentInstallment[] => {
+    if (c.payments && c.payments.length > 0) return c.payments;
+    return [{ id: 'p1', installmentNo: 1, label: '1st Advance', amount: c.advanceAmount || 0, paymentMode: c.paymentMode || 'utr', paidAt: c.createdAt }];
+  };
+
   const loadData = async () => {
     const lList = await leadService.getLeads();
-    setLeads(lList);
+    let qList = await quotationService.getQuotations();
 
-    const qList = await quotationService.getQuotations();
+    const activeLeadIds = new Set(lList.map(l => l.id));
+    // Filter quotations to only include those belonging to active leads
+    qList = qList.filter(q => !q.leadId || activeLeadIds.has(q.leadId));
+
+    // If no leads exist, automatically purge any remaining stale quotes/confirmations
+    if (lList.length === 0) {
+      await db.quotations.clear();
+      await db.orderConfirmations.clear();
+      qList = [];
+    }
+
     setQuotations(qList);
 
-    // Get order confirmations
+    // Get order confirmations & auto-sync fully paid leads to closed (Release Complete) status
     const allOc: OrderConfirmation[] = [];
-    for (const lead of lList) {
+    const syncedLeads = [...lList];
+
+    for (const lead of syncedLeads) {
       const oc = await orderService.getOrderConfirmationByLeadId(lead.id);
-      if (oc) allOc.push(oc);
+      if (oc) {
+        allOc.push(oc);
+        const pList = getPaymentsList(oc);
+        const paidTotal = pList.reduce((sum, p) => sum + p.amount, 0);
+        if (paidTotal >= (oc.subtotal || 1) && lead.status !== 'closed') {
+          lead.status = 'closed';
+          await leadService.updateLeadStatus(lead.id, 'closed');
+        }
+      }
     }
-    setConfirmations(allOc);
+
+    setLeads(syncedLeads);
+    setConfirmations(lList.length === 0 ? [] : allOc);
 
     const empList = await employeeService.getEmployees();
     setEmployees(empList);
@@ -57,15 +86,18 @@ export const Dashboard: React.FC = () => {
     lost: leads.filter(l => l.status === 'lost').length,
   };
 
-  // 2. Revenue calculation
+  // 2. Revenue calculation with multi-installment support
   const totalQuotedValue = quotations.reduce((sum, q) => sum + q.grandTotal, 0);
   const totalConfirmedValue = confirmations.reduce((sum, c) => sum + c.subtotal, 0);
-  const totalAdvanceCollected = confirmations.reduce((sum, c) => sum + c.advanceAmount, 0);
-  const outstandingBalance = totalConfirmedValue - totalAdvanceCollected;
+  const totalPaymentsCollected = confirmations.reduce((sum, c) => {
+    const pList = getPaymentsList(c);
+    return sum + pList.reduce((s, p) => s + p.amount, 0);
+  }, 0);
+  const outstandingBalance = Math.max(0, totalConfirmedValue - totalPaymentsCollected);
 
   // 3. Employee performance metrics
   const employeePerformance = employees.map(emp => {
-    const assignedLeads = leads.filter(l => l.assignedEmployeeId === emp.id);
+    const assignedLeads = leads.filter(l => l.assignedSalesPersonId === emp.id || l.assignedAdminId === emp.id || l.assignedEmployeeId === emp.id);
     const convertedLeads = assignedLeads.filter(l => ['confirmed', 'registered', 'installed', 'closed'].includes(l.status));
     const rate = assignedLeads.length > 0 ? (convertedLeads.length / assignedLeads.length) * 100 : 0;
     
@@ -81,7 +113,7 @@ export const Dashboard: React.FC = () => {
     <div className="space-y-8 animate-fade-in">
       {/* Page Header */}
       <div className="flex flex-col space-y-1">
-        <h1 className="text-2xl font-black tracking-tight text-slate-900 md:text-3xl">Executive Analytics</h1>
+        <h1 className="text-2xl font-black tracking-tight text-slate-900 md:text-3xl font-sans">Executive Analytics</h1>
         <p className="text-sm text-slate-500 font-medium">Real-time installation pipeline metrics & revenue insights.</p>
       </div>
 
@@ -127,11 +159,11 @@ export const Dashboard: React.FC = () => {
           </div>
         </div>
 
-        {/* Advance Collected - Orange */}
+        {/* Advance & Payments Collected - Orange */}
         <div className="bg-orange-50/40 p-5 rounded-2xl border-l-4 border-orange-500 border-y border-r border-orange-100 shadow-xs flex items-center justify-between hover:shadow-md transition-shadow">
           <div>
-            <p className="text-xs text-orange-600/80 font-bold uppercase tracking-wider">Advance Collected</p>
-            <h3 className="text-xl font-extrabold text-orange-700 mt-1">₹{totalAdvanceCollected.toLocaleString('en-IN')}</h3>
+            <p className="text-xs text-orange-600/80 font-bold uppercase tracking-wider">Total Payments Collected</p>
+            <h3 className="text-xl font-extrabold text-orange-700 mt-1">₹{totalPaymentsCollected.toLocaleString('en-IN')}</h3>
           </div>
           <div className="bg-orange-100 text-orange-700 rounded-xl p-3">
             <TrendingUp className="w-6 h-6" />
@@ -256,6 +288,8 @@ export const Dashboard: React.FC = () => {
       </div>
 
       {/* Employee Performance Rankings */}
+      <FollowUpReminders />
+
       <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-xs">
         <h3 className="font-bold text-slate-800 text-sm uppercase tracking-wider mb-4 border-b border-slate-100 pb-4">
           Sales Representative Leaderboard

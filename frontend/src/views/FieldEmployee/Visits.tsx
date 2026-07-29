@@ -7,7 +7,7 @@ import { mapService } from '../../services/mapService';
 import type { Coordinates } from '../../services/mapService';
 import type { FieldVisitReport, Lead, Profile } from '../../types';
 import { LeafletMap } from '../../components/Map/LeafletMap';
-import { Plus, MapPin, User, Compass, Upload, Search, ChevronDown, ChevronUp } from 'lucide-react';
+import { Plus, MapPin, User, Compass, Upload, Search, ChevronDown, ChevronUp, Trash2 } from 'lucide-react';
 import { compressImage } from '../../services/imageCompressionService';
 import { uploadImageToFirebase } from '../../services/firebase';
 import dayjs from 'dayjs';
@@ -106,16 +106,24 @@ export const Visits: React.FC = () => {
       const filesArray = Array.from(e.target.files);
       setIsCompressing(true);
       try {
-        const compressedBlobs: Blob[] = [];
-        for (const file of filesArray) {
-          const compFile = await compressImage(file, { maxSizeKB: 55 });
-          const storagePath = `visits/${Date.now()}_${compFile.name}`;
-          await uploadImageToFirebase(compFile, storagePath);
-          compressedBlobs.push(compFile);
-        }
-        setUploadedPhotos(prev => [...prev, ...compressedBlobs]);
+        // Parallel compression
+        const compressedBlobs = await Promise.all(
+          filesArray.map(file => compressImage(file, { maxSizeKB: 55 }))
+        );
+
+        // Upload directly to Backblaze B2 Storage
+        const b2Urls = await Promise.all(
+          compressedBlobs.map((compFile, idx) => {
+            const fileName = compFile.name || `photo_${idx}.webp`;
+            const storagePath = `visits/${Date.now()}_${idx}_${fileName}`;
+            return uploadImageToFirebase(compFile, storagePath);
+          })
+        );
+
+        const validUrls = b2Urls.filter(Boolean);
+        setUploadedPhotos(prev => [...prev, ...validUrls]);
       } catch (err) {
-        console.error("Compression / Firebase upload note:", err);
+        console.error("Upload note:", err);
       } finally {
         setIsCompressing(false);
       }
@@ -171,6 +179,13 @@ export const Visits: React.FC = () => {
       ...prev,
       [id]: !prev[id]
     }));
+  };
+
+  const handleDeleteVisit = async (visit: FieldVisitReport) => {
+    if (confirm(`⚠️ DELETE VISIT REPORT WARNING:\n\nAre you sure you want to delete the field visit report for "${visit.personMetName}" logged on ${dayjs(visit.visitedAt).format('DD MMM YYYY')}?\n\nThis will permanently delete this visit record and its attached photos.`)) {
+      await visitService.deleteVisitReport(visit.id);
+      loadData();
+    }
   };
 
   // Filter visit lists
@@ -362,9 +377,24 @@ export const Visits: React.FC = () => {
                       </div>
                     )}
 
-                    <div className="pt-2 text-[9px] text-slate-400 font-bold flex items-center gap-1">
-                      <User className="w-3.5 h-3.5" />
-                      <span>Uploaded By: {employeeNames[visit.employeeId] || visit.employeeId}</span>
+                    <div className="pt-3 border-t border-slate-100 flex items-center justify-between gap-2">
+                      <div className="text-[9px] text-slate-400 font-bold flex items-center gap-1">
+                        <User className="w-3.5 h-3.5" />
+                        <span>Uploaded By: {employeeNames[visit.employeeId] || visit.employeeId}</span>
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleDeleteVisit(visit);
+                        }}
+                        className="px-2.5 py-1 bg-rose-50 hover:bg-rose-600 hover:text-white text-rose-700 text-[10px] font-bold rounded-lg border border-rose-200/80 transition-all cursor-pointer flex items-center gap-1"
+                        title="Delete visit report"
+                      >
+                        <Trash2 className="w-3 h-3" />
+                        <span>Delete Visit</span>
+                      </button>
                     </div>
                   </div>
 
@@ -425,7 +455,7 @@ export const Visits: React.FC = () => {
                   className="w-full border border-slate-200 rounded-xl px-3 py-2.5 bg-slate-50 focus:outline-none cursor-pointer"
                 >
                   <option value="">-- None (Cold Visit / General inquiry) --</option>
-                  {leads.filter(l => l.assignedEmployeeId === currentUser?.id).map(l => (
+                  {leads.filter(l => l.assignedSalesPersonId === currentUser?.id || l.assignedAdminId === currentUser?.id || l.assignedEmployeeId === currentUser?.id).map(l => (
                     <option key={l.id} value={l.id}>{l.name} ({l.requirement})</option>
                   ))}
                 </select>

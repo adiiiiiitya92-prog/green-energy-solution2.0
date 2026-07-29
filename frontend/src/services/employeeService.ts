@@ -6,19 +6,19 @@ export const employeeService = {
   async getEmployees(): Promise<Profile[]> {
     try {
       const remoteProfiles = await fetchCollectionFromFirestore<Profile>('profiles');
-      if (remoteProfiles && remoteProfiles.length > 0) {
+      if (Array.isArray(remoteProfiles) && remoteProfiles.length > 0) {
         await db.profiles.bulkPut(remoteProfiles);
       }
     } catch (err) {
       console.warn("Firestore profiles sync note:", err);
     }
-    return db.profiles.where('role').anyOf(['admin', 'field_employee']).toArray();
+    return db.profiles.where('role').anyOf(['admin', 'field_employee', 'inventory_manager']).toArray();
   },
 
   async getAllProfiles(): Promise<Profile[]> {
     try {
       const remoteProfiles = await fetchCollectionFromFirestore<Profile>('profiles');
-      if (remoteProfiles && remoteProfiles.length > 0) {
+      if (Array.isArray(remoteProfiles) && remoteProfiles.length > 0) {
         await db.profiles.bulkPut(remoteProfiles);
       }
     } catch (err) {
@@ -46,6 +46,16 @@ export const employeeService = {
       profile.isActive = !profile.isActive;
       await db.profiles.put(profile);
       saveRecordToFirestore('profiles', id, profile);
+    }
+  },
+
+  async deleteEmployee(id: string): Promise<void> {
+    await db.profiles.delete(id);
+    try {
+      const { deleteRecordFromFirestore } = await import('./firebase');
+      await deleteRecordFromFirestore('profiles', id);
+    } catch (e) {
+      console.warn("Firestore delete profile note:", e);
     }
   }
 };

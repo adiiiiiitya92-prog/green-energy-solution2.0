@@ -7,6 +7,6 @@ export default async function handler(req, res) {
     return res.status(200).end();
   }
 
-  // Gracefully acknowledge any quotations sync request on Vercel
+  // Gracefully acknowledge any quotations sync request on Vercel Serverless Function
   return res.status(200).json({ success: true, message: 'Quotation synchronized via Firestore & IndexedDB' });
 }

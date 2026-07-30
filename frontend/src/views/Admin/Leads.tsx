@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { useAuthStore } from '../../store/authStore';
 import { leadService } from '../../services/leadService';
 import { quotationService, getCleanWhatsAppPhone } from '../../services/quotationService';
+import { shareQuotationViaWhatsapp } from '../../services/quotationShareService';
 import { orderService } from '../../services/orderService';
 import { employeeService } from '../../services/employeeService';
 import { mapService } from '../../services/mapService';
@@ -393,53 +394,23 @@ export const Leads: React.FC = () => {
     }
   };
 
-  // WhatsApp share PDF document
-  const handleWhatsappShare = (q: Quotation) => {
-    const leadMatch = leads.find(l => l.id === q.leadId);
-    const rawPhone = (q as any).consumerMobile || (q as any).consumerNo || (q as any).mobile || (q as any).phone || selectedLead?.phoneNumber || leadMatch?.phoneNumber || '';
-    const targetPhone = getCleanWhatsAppPhone(rawPhone);
-    const waUrl = targetPhone 
-      ? `https://api.whatsapp.com/send?phone=${targetPhone}`
-      : `https://api.whatsapp.com/send`;
-
-    const propNo = q.quotationNumber || (q as any).proposalId || 'EST-001';
-    const sanitizedPropNo = (propNo || q.id).replace(/\//g, '_');
-    const pdfFileName = `Solar_Quotation_${sanitizedPropNo}.pdf`;
-
-    // 1. Open WhatsApp Web directly in a new tab (no blank page!)
-    const win = window.open(waUrl, '_blank');
-    if (!win || win.closed || typeof win.closed === 'undefined') {
-      window.location.href = waUrl;
+  // WhatsApp share PDF document via dual-strategy
+  const handleWhatsappShare = async (q: Quotation) => {
+    const leadMatch = leads.find(l => l.id === q.leadId) || selectedLead;
+    let pdfBlob: Blob | undefined;
+    try {
+      pdfBlob = await resolvePdfBlob(q);
+    } catch (err) {
+      console.warn('Could not resolve PDF blob for share:', err);
     }
 
-    // 2. Background PDF generation & local auto-download
-    quotationService.markQuotationAsSent(q.id);
+    await shareQuotationViaWhatsapp({
+      quotation: q,
+      pdfBlob,
+      lead: leadMatch
+    });
+
     if (selectedLead) handleSelectLead(selectedLead);
-
-    resolvePdfBlob(q)
-      .then(pdfBlob => {
-        if (pdfBlob) {
-          const blobUrl = URL.createObjectURL(pdfBlob);
-          const a = document.createElement('a');
-          a.href = blobUrl;
-          a.download = pdfFileName;
-          document.body.appendChild(a);
-          a.click();
-          document.body.removeChild(a);
-          setTimeout(() => URL.revokeObjectURL(blobUrl), 10000);
-
-          if (!q.pdfUrl) {
-            uploadPdfToFirebase(pdfBlob, `quotations/pdf_${sanitizedPropNo}.pdf`)
-              .then(url => {
-                if (url && (url.startsWith('http://') || url.startsWith('https://'))) {
-                  quotationService.updateQuotation({ ...q, pdfUrl: url });
-                }
-              })
-              .catch(e => console.warn('Background upload note:', e));
-          }
-        }
-      })
-      .catch(e => console.warn('Background PDF resolve note:', e));
   };
 
   // 2. Booking order confirmation

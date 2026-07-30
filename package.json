@@ -4,9 +4,9 @@
   "private": true,
   "description": "Green Energy Solution Solar CRM (Frontend + Backblaze B2 Backend)",
   "scripts": {
-    "dev": "node backend/server.js & npm --prefix frontend dev",
+    "dev": "npm --prefix frontend run dev",
     "start": "node backend/server.js",
     "backend": "node backend/server.js",
-    "frontend": "npm --prefix frontend dev"
+    "frontend": "npm --prefix frontend run dev"
   }
 }

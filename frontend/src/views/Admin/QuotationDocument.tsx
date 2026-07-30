@@ -142,6 +142,7 @@ export const QuotationDocument: React.FC<{
   };
 
   const [isGenerating, setIsGenerating] = useState(false);
+  const lastPdfBlobRef = useRef<Blob | null>(null);
 
   useEffect(() => {
     leadService.getLeads().then((list) => {
@@ -536,13 +537,14 @@ export const QuotationDocument: React.FC<{
 
         // Render 8-Page PDF Proposal & upload directly to Backblaze B2 Storage Bucket
         const pdfBlob = await pdfService.generateQuotationPDF(fullQuotation, mockLead, preparedBy);
+        lastPdfBlobRef.current = pdfBlob;
         b2Url = await uploadPdfToFirebase(pdfBlob, storagePath);
 
-        if (b2Url) {
+        if (b2Url && (b2Url.startsWith('http://') || b2Url.startsWith('https://'))) {
           await quotationService.updateQuotation({ ...fullQuotation, pdfUrl: b2Url });
           console.log(`📦 Quotation 8-Page PDF saved & uploaded to Backblaze B2: ${b2Url}`);
         } else {
-          throw new Error('Backblaze B2 upload returned an empty URL.');
+          throw new Error('Backblaze B2 upload returned an empty or invalid URL.');
         }
       }
 
@@ -558,79 +560,97 @@ export const QuotationDocument: React.FC<{
     }
   };
 
-  // Share Quotation via WhatsApp directly to customer's phone number
+  // Share Quotation PDF via WhatsApp
   const handleShareQuotation = async () => {
-    const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
-    
-    // 1. Immediately open popup tab synchronously on user click to bypass browser popup blockers
-    let waWindow: Window | null = null;
-    if (!isMobile) {
+    const pdfBlob = lastPdfBlobRef.current;
+    if (!pdfBlob) {
+      alert('Pehle Save karein taaki PDF ban sake.');
+      return;
+    }
+
+    const sanitizedProposalId = proposalId.replace(/\//g, '_');
+    const pdfFileName = `Solar_Quotation_${sanitizedProposalId}.pdf`;
+    const pdfFile = new File([pdfBlob], pdfFileName, { type: 'application/pdf' });
+
+    // 1. Share IMMEDIATELY (within user gesture context — must be first async call)
+    if (navigator.share) {
       try {
-        waWindow = window.open('', '_blank');
-      } catch (e) {
-        console.warn("Window open note:", e);
+        await navigator.share({ files: [pdfFile] });
+        // 2. Silent background save (NO setIsGenerating — page won't freeze)
+        silentBackgroundSave();
+        return;
+      } catch (e: any) {
+        if (e.name === 'AbortError') return;
+        // share failed, fall through to download
       }
     }
 
-    setIsGenerating(true);
+    // Fallback: download PDF + open WhatsApp
+    const blobUrl = URL.createObjectURL(pdfBlob);
+    const a = document.createElement('a');
+    a.href = blobUrl;
+    a.download = pdfFileName;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(blobUrl), 10000);
+    window.open('https://wa.me/', '_blank');
 
+    // Silent background save
+    silentBackgroundSave();
+  };
+
+  // Silent save without loading spinner (used after WhatsApp share)
+  const silentBackgroundSave = async () => {
     try {
-      // 2. Save quotation record & upload PDF to Backblaze B2
-      const qId = await handleSaveQuotation();
-      if (!qId) {
-        if (waWindow && !waWindow.closed) waWindow.close();
-        setIsGenerating(false);
-        return;
+      const targetLeadId = selectedLeadId || readOnlyQuotation?.leadId;
+      if (!targetLeadId) return;
+
+      const quotationRecord: Omit<Quotation, 'id' | 'createdAt'> & { id?: string } = {
+        id: readOnlyQuotation?.id,
+        leadId: targetLeadId,
+        quotationNumber: proposalId,
+        items,
+        bomItems,
+        subtotal,
+        grandTotal,
+        followUpDate: dayjs().add(7, 'day').format('YYYY-MM-DD'),
+        consumerName: consumerName || selectedLead?.name || 'Valued Customer',
+        consumerMobile: consumerMobile || selectedLead?.phoneNumber || '',
+        consumerEmail: consumerEmail || selectedLead?.email || '',
+        consumerNo,
+        sanctionLoad,
+        city,
+        statePin,
+        proposalId,
+        proposalDate,
+        preparedBy,
+        systemCapacity: `${systemCapacity} kW`,
+        subsidyAmount,
+        gstRate,
+        pvModuleMake,
+        inverterMake,
+        structureType,
+        createdBy: preparedBy,
+        sentViaWhatsapp: true
+      };
+
+      const qId = await quotationService.createQuotation(quotationRecord);
+      if (qId) {
+        await quotationService.markQuotationAsSent(qId);
+        const pdfBlob = lastPdfBlobRef.current;
+        if (pdfBlob) {
+          const sanitizedProposalId = proposalId.replace(/\//g, '_');
+          const storagePath = `quotations/pdf_${sanitizedProposalId}.pdf`;
+          const b2Url = await uploadPdfToFirebase(pdfBlob, storagePath);
+          if (b2Url && (b2Url.startsWith('http://') || b2Url.startsWith('https://'))) {
+            const fullQ = await quotationService.getQuotationById(qId);
+            if (fullQ) await quotationService.updateQuotation({ ...fullQ, pdfUrl: b2Url });
+          }
+        }
       }
-
-      quotationService.markQuotationAsSent(qId);
-      const fullQuotation = await quotationService.getQuotationById(qId);
-      if (!fullQuotation) {
-        if (waWindow && !waWindow.closed) waWindow.close();
-        setIsGenerating(false);
-        return;
-      }
-
-      const sanitizedProposalId = proposalId.replace(/\//g, '_');
-      const storagePath = `quotations/pdf_${sanitizedProposalId}.pdf`;
-      const backendUrl = import.meta.env.VITE_BACKEND_URL || (window.location.hostname === 'localhost' ? 'http://localhost:5050' : '');
-      const constructedPdfUrl = `${backendUrl}/api/files/${storagePath}`;
-      const publicPdfUrl = (fullQuotation.pdfUrl && !fullQuotation.pdfUrl.includes('firebasestorage')) ? fullQuotation.pdfUrl : constructedPdfUrl;
-
-      const rawPhone = consumerMobile || readOnlyQuotation?.consumerMobile || selectedLead?.phoneNumber || '';
-      const targetPhone = getCleanWhatsAppPhone(rawPhone);
-
-      const sysCap = systemCapacity ? (systemCapacity.toLowerCase().includes('kw') ? systemCapacity : `${systemCapacity} kW`) : 'Solar Rooftop';
-      const totalCostStr = Number(grandTotal || 0).toLocaleString('en-IN');
-      const custName = consumerName || selectedLead?.name || 'Valued Customer';
-
-      const msg = `Dear ${custName},\n\n` +
-        `Greetings from Green Energy Solutions Pvt. Ltd.\n\n` +
-        `Go green and save energy with clean solar power. We have generated your customized Solar Rooftop Quotation. Here are the key details:\n\n` +
-        `📌 *Proposal No:* ${proposalId}\n` +
-        `⚡ *System Capacity:* ${sysCap}\n` +
-        `💰 *Total Cost:* ₹${totalCostStr} (Subsidy benefits applicable)\n\n` +
-        `📄 *Download Complete Proposal (PDF):*\n${publicPdfUrl}\n\n` +
-        `Let us know a convenient time to discuss this further.`;
-
-      const waUrl = targetPhone 
-        ? `https://api.whatsapp.com/send?phone=${targetPhone}&text=${encodeURIComponent(msg)}`
-        : `https://api.whatsapp.com/send?text=${encodeURIComponent(msg)}`;
-
-      // 3. Open WhatsApp link
-      if (isMobile) {
-        window.location.href = waUrl;
-      } else if (waWindow && !waWindow.closed) {
-        waWindow.location.href = waUrl;
-      } else {
-        window.open(waUrl, '_blank');
-      }
-    } catch (err) {
-      console.error('Error sharing quotation:', err);
-      if (waWindow && !waWindow.closed) waWindow.close();
-      alert('Error generating or sharing 8-Page quotation proposal.');
-    } finally {
-      setIsGenerating(false);
+    } catch (e) {
+      console.warn('Silent background save note:', e);
     }
   };
 

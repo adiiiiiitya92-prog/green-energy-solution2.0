@@ -125,9 +125,9 @@ async function uploadViaBackend(base64Data: string, storagePath: string, content
   const backendUrl = import.meta.env.VITE_BACKEND_URL || (window.location.hostname === 'localhost' ? 'http://localhost:5050' : '');
   
   const uploadEndpoints = Array.from(new Set([
+    '/api/upload',
     `${backendUrl}/api/upload`.replace(/^\/api/, '/api'),
-    '/.netlify/functions/upload',
-    '/api/upload'
+    '/.netlify/functions/upload'
   ])).filter(Boolean);
 
   // 1. Try Backend & Netlify Function Upload Endpoints
@@ -140,7 +140,7 @@ async function uploadViaBackend(base64Data: string, storagePath: string, content
       });
       if (res.ok) {
         const data = await res.json();
-        if (data.url) {
+        if (data.url && (data.url.startsWith('http://') || data.url.startsWith('https://'))) {
           console.log(`📦 Uploaded to Backblaze B2 Storage via ${apiUrl}: ${data.url}`);
           return data.url;
         }
@@ -152,9 +152,9 @@ async function uploadViaBackend(base64Data: string, storagePath: string, content
 
   // 2. Fallback: Try Client Direct B2 Upload using Upload URL Endpoints
   const authEndpoints = Array.from(new Set([
+    '/api/b2-upload-url',
     `${backendUrl}/api/b2-upload-url`,
-    '/.netlify/functions/b2-upload-url',
-    '/api/b2-upload-url'
+    '/.netlify/functions/b2-upload-url'
   ])).filter(Boolean);
 
   for (const authUrl of authEndpoints) {
@@ -195,6 +195,17 @@ async function uploadViaBackend(base64Data: string, storagePath: string, content
     }
   }
 
+  // 3. Direct Client B2 Upload using frontend environment credentials
+  try {
+    const directUrl = await uploadViaClientDirectB2(base64Data, storagePath, contentType);
+    if (directUrl && (directUrl.startsWith('http://') || directUrl.startsWith('https://'))) {
+      console.log(`📦 Directly Uploaded from Client to Backblaze B2 Storage: ${directUrl}`);
+      return directUrl;
+    }
+  } catch (err3) {
+    console.warn("Direct Client B2 Upload note:", err3);
+  }
+
   return null;
 }
 
@@ -220,7 +231,7 @@ export async function uploadImageToFirebase(
   });
 
   const b2Url = await uploadViaBackend(base64Data, storagePath, compressedFile.type);
-  if (b2Url) return b2Url;
+  if (b2Url && (b2Url.startsWith('http://') || b2Url.startsWith('https://'))) return b2Url;
 
   return base64Data;
 }
@@ -235,7 +246,7 @@ export async function uploadDataUrlToFirebase(
   const storagePath = rawPath.replace(/^green-energy-solution\//, '');
 
   const b2Url = await uploadViaBackend(dataUrl, storagePath, compressedFile.type);
-  if (b2Url) return b2Url;
+  if (b2Url && (b2Url.startsWith('http://') || b2Url.startsWith('https://'))) return b2Url;
 
   return dataUrl;
 }
@@ -256,9 +267,11 @@ export async function uploadPdfToFirebase(
   });
 
   const b2Url = await uploadViaBackend(base64Data, storagePath, 'application/pdf');
-  if (b2Url) return b2Url;
+  if (b2Url && (b2Url.startsWith('http://') || b2Url.startsWith('https://'))) {
+    return b2Url;
+  }
 
-  return base64Data;
+  throw new Error('Backblaze B2 PDF upload failed: Could not obtain a valid cloud storage URL.');
 }
 
 /**

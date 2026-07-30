@@ -10,7 +10,7 @@ import type { Lead, Quotation, OrderConfirmation, Profile, ClientDocument, Clien
 import { Timeline } from '../../components/Pipeline/Timeline';
 import { SignatureCapture } from '../../components/Signature/SignatureCapture';
 import { compressImage } from '../../services/imageCompressionService';
-import { uploadImageToFirebase } from '../../services/firebase';
+import { uploadImageToFirebase, uploadPdfToFirebase } from '../../services/firebase';
 import { DcrDocument } from './DcrDocument';
 import { WcrDocument } from './WcrDocument';
 import { ModelAgreementDocument } from './ModelAgreementDocument';
@@ -396,117 +396,72 @@ export const Leads: React.FC = () => {
     }
   };
 
-
-
-  // WhatsApp share PDF document helper directly to customer WhatsApp number
+  // WhatsApp share PDF document
   const handleWhatsappShare = async (q: Quotation) => {
-    const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
-    let waWindow: Window | null = null;
-    
-    // Synchronously open blank window on click to bypass popup blockers on desktop
-    if (!isMobile) {
+    const propNo = q.quotationNumber || (q as any).proposalId || 'EST-001';
+    const sanitizedPropNo = (propNo || q.id).replace(/\//g, '_');
+    const pdfFileName = `Solar_Quotation_${sanitizedPropNo}.pdf`;
+
+    // Try to get existing PDF blob first (from cache/previous render)
+    let pdfBlob: Blob | null = null;
+    try {
+      pdfBlob = await resolvePdfBlob(q);
+    } catch (e) {
+      console.warn('PDF resolve note:', e);
+    }
+
+    if (!pdfBlob) {
+      alert('PDF generate nahi ho paya.');
+      return;
+    }
+
+    const pdfFile = new File([pdfBlob], pdfFileName, { type: 'application/pdf' });
+
+    // 1. Share IMMEDIATELY (within user gesture context)
+    if (navigator.share) {
       try {
-        waWindow = window.open('', '_blank');
-        if (waWindow) {
-          waWindow.document.write(`
-            <html>
-              <head><title>Opening WhatsApp...</title></head>
-              <body style="font-family: system-ui, -apple-system, sans-serif; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0; background-color: #f8fafc;">
-                <div style="text-align: center; padding: 24px; background: white; border-radius: 16px; box-shadow: 0 10px 25px -5px rgba(0,0,0,0.1); border: 1px solid #e2e8f0; max-width: 360px;">
-                  <div style="font-size: 36px; margin-bottom: 8px;">☀️</div>
-                  <h3 style="color: #059669; margin: 0 0 8px 0; font-size: 18px;">Green Energy Solutions</h3>
-                  <p style="color: #475569; font-size: 13px; margin: 0 0 16px 0;">Preparing 8-Page Proposal PDF & opening WhatsApp chat...</p>
-                  <div style="display: inline-block; width: 28px; height: 28px; border: 3px solid #e2e8f0; border-top-color: #059669; border-radius: 50%; animation: spin 0.8s linear infinite;"></div>
-                  <style>@keyframes spin { to { transform: rotate(360deg); } }</style>
-                </div>
-              </body>
-            </html>
-          `);
+        await navigator.share({ files: [pdfFile] });
+        // Background: mark as sent + upload
+        quotationService.markQuotationAsSent(q.id);
+        if (selectedLead) handleSelectLead(selectedLead);
+        if (!q.pdfUrl) {
+          uploadPdfToFirebase(pdfBlob, `quotations/pdf_${sanitizedPropNo}.pdf`)
+            .then(url => {
+              if (url && (url.startsWith('http://') || url.startsWith('https://'))) {
+                quotationService.updateQuotation({ ...q, pdfUrl: url });
+              }
+            })
+            .catch(e => console.warn('Background upload note:', e));
         }
-      } catch (e) {
-        console.warn("Failed to pre-open popup tab:", e);
+        return;
+      } catch (e: any) {
+        if (e.name === 'AbortError') return;
+        // share failed, fall through to download
       }
     }
 
-    try {
-      // 1. Generate/resolve 8-Page PDF Blob instantly
-      const pdfBlob = await resolvePdfBlob(q);
-      const fileName = `Solar_Quotation_${q.quotationNumber || (q as any).proposalId || 'EST'}.pdf`;
-      const file = new File([pdfBlob], fileName, { type: 'application/pdf' });
+    // Fallback: download PDF + open WhatsApp
+    const blobUrl = URL.createObjectURL(pdfBlob);
+    const a = document.createElement('a');
+    a.href = blobUrl;
+    a.download = pdfFileName;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(blobUrl), 10000);
+    window.open('https://wa.me/', '_blank');
 
-      // 2. Resolve Customer Phone Number
-      const leadMatch = leads.find(l => l.id === q.leadId);
-      const rawPhone = (q as any).consumerMobile || (q as any).consumerNo || (q as any).mobile || (q as any).phone || selectedLead?.phoneNumber || leadMatch?.phoneNumber || '';
-      const targetPhone = getCleanWhatsAppPhone(rawPhone);
-
-      // 3. Non-blocking Cloud Storage Upload (runs in background so loading is sub-second)
-      let publicPdfUrl = q.pdfUrl || '';
-      if (!publicPdfUrl && pdfBlob) {
-        uploadImageToFirebase(pdfBlob, `quotations/pdf_${(q.quotationNumber || q.id).replace(/\//g, '_')}.pdf`, { isDocument: true })
-          .then(url => {
-            if (url) quotationService.updateQuotation({ ...q, pdfUrl: url });
-          })
-          .catch(e => console.warn("Cloud PDF upload background note:", e));
-      }
-
-      // Non-blocking mark as sent
-      quotationService.markQuotationAsSent(q.id);
-      if (selectedLead) handleSelectLead(selectedLead);
-
-      const customerName = (q as any).consumerName || selectedLead?.name || leadMatch?.name || 'Valued Customer';
-      const propNo = q.quotationNumber || (q as any).proposalId || 'EST-001';
-      const totalAmount = Number(q.grandTotal || 0).toLocaleString('en-IN');
-      const sysCapacity = q.systemCapacity ? (q.systemCapacity.toLowerCase().includes('kw') ? q.systemCapacity : `${q.systemCapacity} kW`) : 'Solar Rooftop';
-
-      const msg = `Dear ${customerName},\n\n` +
-        `Greetings from Green Energy Solutions Pvt. Ltd.\n\n` +
-        `Go green and save energy with clean solar power. We have generated your customized Solar Rooftop Quotation. Here are the key details:\n\n` +
-        `📌 *Proposal No:* ${propNo}\n` +
-        `⚡ *System Capacity:* ${sysCapacity}\n` +
-        `💰 *Total Cost:* ₹${totalAmount} (Subsidy benefits applicable)\n\n` +
-        (publicPdfUrl ? `📄 *Download Complete Proposal (PDF):*\n${publicPdfUrl}\n\n` : '') +
-        `_(Note: The proposal PDF has also been saved to your downloads for easy sharing)_\n\n` +
-        `Let us know a convenient time to discuss this further.`;
-
-      // 4. Mobile Native Web Share API (Attaches PDF file natively into WhatsApp)
-      if (isMobile && navigator.canShare && navigator.canShare({ files: [file] })) {
-        try {
-          await navigator.share({
-            files: [file],
-            title: `Solar Quotation ${propNo}`,
-            text: msg
-          });
-          return;
-        } catch (err) {
-          console.log('Mobile web share cancelled or unsupported, falling back to direct redirect...', err);
-        }
-      }
-
-      // 5. Desktop/Fallback: Auto-download PDF file to device locally
-      if (pdfBlob) {
-        const url = URL.createObjectURL(pdfBlob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = fileName;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        setTimeout(() => URL.revokeObjectURL(url), 10000);
-      }
-
-      const waUrl = targetPhone 
-        ? `https://api.whatsapp.com/send?phone=${targetPhone}&text=${encodeURIComponent(msg)}`
-        : `https://api.whatsapp.com/send?text=${encodeURIComponent(msg)}`;
-
-      if (waWindow && !waWindow.closed) {
-        waWindow.location.href = waUrl;
-      } else {
-        window.location.href = waUrl;
-      }
-    } catch (err) {
-      console.error('Error sharing quotation PDF:', err);
-      if (waWindow && !waWindow.closed) waWindow.close();
-      alert('Error generating 8-Page PDF proposal for WhatsApp share.');
+    // Background: mark as sent + upload
+    quotationService.markQuotationAsSent(q.id);
+    if (selectedLead) handleSelectLead(selectedLead);
+    if (!q.pdfUrl) {
+      uploadPdfToFirebase(pdfBlob, `quotations/pdf_${sanitizedPropNo}.pdf`)
+        .then(url => {
+          if (url && (url.startsWith('http://') || url.startsWith('https://'))) {
+            quotationService.updateQuotation({ ...q, pdfUrl: url });
+          }
+        })
+        .catch(e => console.warn('Background upload note:', e));
     }
   };
 

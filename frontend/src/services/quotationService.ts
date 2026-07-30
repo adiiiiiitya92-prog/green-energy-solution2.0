@@ -121,20 +121,6 @@ export const quotationService = {
     });
 
     saveRecordToFirestore('quotations', id, finalQuotation);
-
-    try {
-      const res = await fetch('/api/quotations', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(finalQuotation)
-      });
-      if (!res.ok && res.status !== 405 && res.status !== 404) {
-        console.warn(`Backend API quotations sync status: ${res.status}`);
-      }
-    } catch (err) {
-      // Ignore static host sync errors
-    }
-
     return id;
   },
 
@@ -142,19 +128,6 @@ export const quotationService = {
     const finalQuotation = sanitizeQuotationRecord(quotation);
     await db.quotations.put(finalQuotation);
     saveRecordToFirestore('quotations', finalQuotation.id, finalQuotation);
-
-    try {
-      const res = await fetch('/api/quotations', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(finalQuotation)
-      });
-      if (!res.ok && res.status !== 405 && res.status !== 404) {
-        console.warn(`Backend API quotations update status: ${res.status}`);
-      }
-    } catch (err) {
-      // Ignore static host sync errors
-    }
   },
 
   async deleteQuotation(id: string): Promise<void> {

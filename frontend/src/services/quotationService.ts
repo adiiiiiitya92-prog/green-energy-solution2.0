@@ -128,11 +128,11 @@ export const quotationService = {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(finalQuotation)
       });
-      if (!res.ok) {
+      if (!res.ok && res.status !== 405 && res.status !== 404) {
         console.warn(`Backend API quotations sync status: ${res.status}`);
       }
     } catch (err) {
-      console.warn("Backend API quotations sync offline note:", err);
+      // Ignore static host sync errors
     }
 
     return id;
@@ -149,11 +149,11 @@ export const quotationService = {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(finalQuotation)
       });
-      if (!res.ok) {
+      if (!res.ok && res.status !== 405 && res.status !== 404) {
         console.warn(`Backend API quotations update status: ${res.status}`);
       }
     } catch (err) {
-      console.warn("Backend API quotations sync offline note:", err);
+      // Ignore static host sync errors
     }
   },
 

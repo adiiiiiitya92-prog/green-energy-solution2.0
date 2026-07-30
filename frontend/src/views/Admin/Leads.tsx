@@ -398,70 +398,90 @@ export const Leads: React.FC = () => {
 
   // WhatsApp share PDF document
   const handleWhatsappShare = async (q: Quotation) => {
+    const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+    let waWindow: Window | null = null;
+    if (!isMobile) {
+      try {
+        waWindow = window.open('about:blank', '_blank');
+        if (waWindow) {
+          waWindow.document.write(`
+            <!DOCTYPE html>
+            <html>
+              <head><title>Opening WhatsApp...</title></head>
+              <body style="font-family: system-ui, sans-serif; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0; background: #0f172a; color: #fff;">
+                <div style="text-align: center; padding: 20px;">
+                  <div style="font-size: 32px; margin-bottom: 10px;">📄</div>
+                  <p style="margin: 0; font-size: 15px; color: #22c55e;">Preparing Quotation PDF & Redirecting to WhatsApp...</p>
+                </div>
+              </body>
+            </html>
+          `);
+        }
+      } catch (e) {
+        console.warn("Popup pre-open note:", e);
+      }
+    }
+
+    const leadMatch = leads.find(l => l.id === q.leadId);
+    const rawPhone = (q as any).consumerMobile || (q as any).consumerNo || (q as any).mobile || (q as any).phone || selectedLead?.phoneNumber || leadMatch?.phoneNumber || '';
+    const targetPhone = getCleanWhatsAppPhone(rawPhone);
+
     const propNo = q.quotationNumber || (q as any).proposalId || 'EST-001';
     const sanitizedPropNo = (propNo || q.id).replace(/\//g, '_');
     const pdfFileName = `Solar_Quotation_${sanitizedPropNo}.pdf`;
 
-    // Try to get existing PDF blob first (from cache/previous render)
-    let pdfBlob: Blob | null = null;
     try {
-      pdfBlob = await resolvePdfBlob(q);
-    } catch (e) {
-      console.warn('PDF resolve note:', e);
-    }
-
-    if (!pdfBlob) {
-      alert('PDF generate nahi ho paya.');
-      return;
-    }
-
-    const pdfFile = new File([pdfBlob], pdfFileName, { type: 'application/pdf' });
-
-    // 1. Share IMMEDIATELY (within user gesture context)
-    if (navigator.share) {
-      try {
-        await navigator.share({ files: [pdfFile] });
-        // Background: mark as sent + upload
-        quotationService.markQuotationAsSent(q.id);
-        if (selectedLead) handleSelectLead(selectedLead);
-        if (!q.pdfUrl) {
-          uploadPdfToFirebase(pdfBlob, `quotations/pdf_${sanitizedPropNo}.pdf`)
-            .then(url => {
-              if (url && (url.startsWith('http://') || url.startsWith('https://'))) {
-                quotationService.updateQuotation({ ...q, pdfUrl: url });
-              }
-            })
-            .catch(e => console.warn('Background upload note:', e));
-        }
+      const pdfBlob = await resolvePdfBlob(q);
+      if (!pdfBlob) {
+        if (waWindow && !waWindow.closed) waWindow.close();
+        alert('PDF generate nahi ho paya.');
         return;
-      } catch (e: any) {
-        if (e.name === 'AbortError') return;
-        // share failed, fall through to download
       }
-    }
 
-    // Fallback: download PDF + open WhatsApp
-    const blobUrl = URL.createObjectURL(pdfBlob);
-    const a = document.createElement('a');
-    a.href = blobUrl;
-    a.download = pdfFileName;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    setTimeout(() => URL.revokeObjectURL(blobUrl), 10000);
-    window.open('https://wa.me/', '_blank');
+      const pdfFile = new File([pdfBlob], pdfFileName, { type: 'application/pdf' });
 
-    // Background: mark as sent + upload
-    quotationService.markQuotationAsSent(q.id);
-    if (selectedLead) handleSelectLead(selectedLead);
-    if (!q.pdfUrl) {
-      uploadPdfToFirebase(pdfBlob, `quotations/pdf_${sanitizedPropNo}.pdf`)
-        .then(url => {
-          if (url && (url.startsWith('http://') || url.startsWith('https://'))) {
-            quotationService.updateQuotation({ ...q, pdfUrl: url });
+      // 1. Native Web Share API (Mobile & Supported Browsers)
+      if (typeof navigator !== 'undefined' && (navigator as any).canShare && (navigator as any).canShare({ files: [pdfFile] })) {
+        try {
+          if (waWindow && !waWindow.closed) waWindow.close();
+          await (navigator as any).share({ files: [pdfFile] });
+          quotationService.markQuotationAsSent(q.id);
+          if (selectedLead) handleSelectLead(selectedLead);
+          return;
+        } catch (e: any) {
+          if (e.name === 'AbortError') {
+            if (waWindow && !waWindow.closed) waWindow.close();
+            return;
           }
-        })
-        .catch(e => console.warn('Background upload note:', e));
+        }
+      }
+
+      // 2. Desktop Fallback: download PDF + open WhatsApp
+      const blobUrl = URL.createObjectURL(pdfBlob);
+      const a = document.createElement('a');
+      a.href = blobUrl;
+      a.download = pdfFileName;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(blobUrl), 10000);
+
+      const waUrl = targetPhone 
+        ? `https://api.whatsapp.com/send?phone=${targetPhone}`
+        : `https://api.whatsapp.com/send`;
+
+      if (waWindow && !waWindow.closed) {
+        waWindow.location.href = waUrl;
+      } else {
+        window.location.href = waUrl;
+      }
+
+      quotationService.markQuotationAsSent(q.id);
+      if (selectedLead) handleSelectLead(selectedLead);
+    } catch (err) {
+      console.error('Error sharing quotation PDF:', err);
+      if (waWindow && !waWindow.closed) waWindow.close();
+      alert('PDF share me error aaya.');
     }
   };
 

@@ -562,6 +562,30 @@ export const QuotationDocument: React.FC<{
 
   // Share Quotation PDF via WhatsApp
   const handleShareQuotation = async () => {
+    let waWindow: Window | null = null;
+    const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+    if (!isMobile) {
+      try {
+        waWindow = window.open('about:blank', '_blank');
+        if (waWindow) {
+          waWindow.document.write(`
+            <!DOCTYPE html>
+            <html>
+              <head><title>Opening WhatsApp...</title></head>
+              <body style="font-family: system-ui, sans-serif; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0; background: #0f172a; color: #fff;">
+                <div style="text-align: center; padding: 20px;">
+                  <div style="font-size: 32px; margin-bottom: 10px;">📄</div>
+                  <p style="margin: 0; font-size: 15px; color: #22c55e;">Preparing Quotation PDF & Redirecting to WhatsApp...</p>
+                </div>
+              </body>
+            </html>
+          `);
+        }
+      } catch (e) {
+        console.warn("Popup pre-open note:", e);
+      }
+    }
+
     setIsGenerating(true);
     try {
       let pdfBlob = lastPdfBlobRef.current;
@@ -598,6 +622,7 @@ export const QuotationDocument: React.FC<{
       }
 
       if (!pdfBlob) {
+        if (waWindow && !waWindow.closed) waWindow.close();
         alert('PDF generate nahi ho paya.');
         return;
       }
@@ -607,13 +632,17 @@ export const QuotationDocument: React.FC<{
       const pdfFile = new File([pdfBlob], pdfFileName, { type: 'application/pdf' });
 
       // 1. Native Web Share API (Mobile & Supported Browsers)
-      if (typeof navigator !== 'undefined' && navigator.share) {
+      if (typeof navigator !== 'undefined' && (navigator as any).canShare && (navigator as any).canShare({ files: [pdfFile] })) {
         try {
-          await navigator.share({ files: [pdfFile] });
+          if (waWindow && !waWindow.closed) waWindow.close();
+          await (navigator as any).share({ files: [pdfFile] });
           silentBackgroundSave();
           return;
         } catch (e: any) {
-          if (e.name === 'AbortError') return;
+          if (e.name === 'AbortError') {
+            if (waWindow && !waWindow.closed) waWindow.close();
+            return;
+          }
         }
       }
 
@@ -633,10 +662,16 @@ export const QuotationDocument: React.FC<{
         ? `https://api.whatsapp.com/send?phone=${targetPhone}`
         : `https://api.whatsapp.com/send`;
 
-      window.open(waUrl, '_blank');
+      if (waWindow && !waWindow.closed) {
+        waWindow.location.href = waUrl;
+      } else {
+        window.location.href = waUrl;
+      }
+
       silentBackgroundSave();
     } catch (err) {
       console.error('Error sharing quotation PDF:', err);
+      if (waWindow && !waWindow.closed) waWindow.close();
       alert('PDF share me error aaya.');
     } finally {
       setIsGenerating(false);

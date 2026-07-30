@@ -162,6 +162,8 @@ export default defineConfig({
         'robots.txt'
       ],
       workbox: {
+        skipWaiting: true,
+        clientsClaim: true,
         maximumFileSizeToCacheInBytes: 5 * 1024 * 1024,
         globPatterns: [],
         runtimeCaching: [

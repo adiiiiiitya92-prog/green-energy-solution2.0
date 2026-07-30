@@ -143,6 +143,54 @@ export const QuotationDocument: React.FC<{
 
   const [isGenerating, setIsGenerating] = useState(false);
   const lastPdfBlobRef = useRef<Blob | null>(null);
+  const pdfPreGenInProgress = useRef(false);
+
+  // Pre-generate PDF in background so Share WhatsApp works instantly
+  useEffect(() => {
+    if (!items.length || !grandTotal || pdfPreGenInProgress.current) return;
+    lastPdfBlobRef.current = null; // invalidate stale blob
+
+    const timer = setTimeout(async () => {
+      if (pdfPreGenInProgress.current) return;
+      pdfPreGenInProgress.current = true;
+      try {
+        const targetLeadId = selectedLeadId || readOnlyQuotation?.leadId;
+        const mockLead: Lead = selectedLead || {
+          id: targetLeadId || '',
+          name: consumerName || 'Valued Customer',
+          phoneNumber: consumerMobile,
+          email: consumerEmail,
+          requirement: `${systemCapacity} kW Solar Rooftop`,
+          description: city,
+          createdBy: preparedBy,
+          status: 'quotation_sent',
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
+        };
+        const tempQ = {
+          id: readOnlyQuotation?.id || 'temp',
+          leadId: targetLeadId || '',
+          quotationNumber: proposalId,
+          items, bomItems, subtotal, grandTotal,
+          consumerName: consumerName || selectedLead?.name || 'Valued Customer',
+          consumerMobile: consumerMobile || selectedLead?.phoneNumber || '',
+          consumerEmail: consumerEmail || selectedLead?.email || '',
+          consumerNo, sanctionLoad, city, statePin, proposalId, proposalDate, preparedBy,
+          systemCapacity: `${systemCapacity} kW`,
+          subsidyAmount, gstRate, pvModuleMake, inverterMake, structureType,
+          createdBy: preparedBy, createdAt: new Date().toISOString()
+        };
+        const blob = await pdfService.generateQuotationPDF(tempQ as any, mockLead, preparedBy);
+        lastPdfBlobRef.current = blob;
+      } catch (e) {
+        console.warn('PDF pre-gen note:', e);
+      } finally {
+        pdfPreGenInProgress.current = false;
+      }
+    }, 1500);
+    return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [items.length, grandTotal, consumerName, systemCapacity, proposalId]);
 
   useEffect(() => {
     leadService.getLeads().then((list) => {
@@ -562,54 +610,42 @@ export const QuotationDocument: React.FC<{
 
   // Share Quotation PDF via WhatsApp
   const handleShareQuotation = async () => {
-    // Generate PDF blob if not already available
     let pdfBlob = lastPdfBlobRef.current;
+
+    // If pre-gen is still running, wait briefly for it
+    if (!pdfBlob && pdfPreGenInProgress.current) {
+      for (let i = 0; i < 20; i++) {
+        await new Promise(r => setTimeout(r, 250));
+        pdfBlob = lastPdfBlobRef.current;
+        if (pdfBlob) break;
+      }
+    }
+
+    // If still no blob, generate on the spot
     if (!pdfBlob) {
       try {
         const targetLeadId = selectedLeadId || readOnlyQuotation?.leadId;
         const mockLead: Lead = selectedLead || {
-          id: targetLeadId || '',
-          name: consumerName || 'Valued Customer',
-          phoneNumber: consumerMobile,
-          email: consumerEmail,
-          requirement: `${systemCapacity} kW Solar Rooftop`,
-          description: city,
-          createdBy: preparedBy,
-          status: 'quotation_sent',
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString()
+          id: targetLeadId || '', name: consumerName || 'Valued Customer',
+          phoneNumber: consumerMobile, email: consumerEmail,
+          requirement: `${systemCapacity} kW Solar Rooftop`, description: city,
+          createdBy: preparedBy, status: 'quotation_sent',
+          createdAt: new Date().toISOString(), updatedAt: new Date().toISOString()
         };
-        const tempQuotation = {
-          id: readOnlyQuotation?.id || 'temp',
-          leadId: targetLeadId || '',
-          quotationNumber: proposalId,
-          items,
-          bomItems,
-          subtotal,
-          grandTotal,
+        const tempQ = {
+          id: readOnlyQuotation?.id || 'temp', leadId: targetLeadId || '',
+          quotationNumber: proposalId, items, bomItems, subtotal, grandTotal,
           consumerName: consumerName || selectedLead?.name || 'Valued Customer',
           consumerMobile: consumerMobile || selectedLead?.phoneNumber || '',
           consumerEmail: consumerEmail || selectedLead?.email || '',
-          consumerNo,
-          sanctionLoad,
-          city,
-          statePin,
-          proposalId,
-          proposalDate,
-          preparedBy,
-          systemCapacity: `${systemCapacity} kW`,
-          subsidyAmount,
-          gstRate,
-          pvModuleMake,
-          inverterMake,
-          structureType,
-          createdBy: preparedBy,
-          createdAt: new Date().toISOString()
+          consumerNo, sanctionLoad, city, statePin, proposalId, proposalDate, preparedBy,
+          systemCapacity: `${systemCapacity} kW`, subsidyAmount, gstRate,
+          pvModuleMake, inverterMake, structureType,
+          createdBy: preparedBy, createdAt: new Date().toISOString()
         };
-        pdfBlob = await pdfService.generateQuotationPDF(tempQuotation as any, mockLead, preparedBy);
+        pdfBlob = await pdfService.generateQuotationPDF(tempQ as any, mockLead, preparedBy);
         lastPdfBlobRef.current = pdfBlob;
       } catch (e) {
-        console.error('PDF generation error:', e);
         alert('PDF generate nahi ho paya.');
         return;
       }
@@ -619,7 +655,7 @@ export const QuotationDocument: React.FC<{
     const pdfFileName = `Solar_Quotation_${sanitizedProposalId}.pdf`;
     const pdfFile = new File([pdfBlob], pdfFileName, { type: 'application/pdf' });
 
-    // 1. Share IMMEDIATELY (within user gesture context)
+    // Try native share (works when blob was pre-generated — gesture still valid)
     if (navigator.share) {
       try {
         await navigator.share({ files: [pdfFile] });
@@ -627,7 +663,6 @@ export const QuotationDocument: React.FC<{
         return;
       } catch (e: any) {
         if (e.name === 'AbortError') return;
-        // share failed, fall through to download
       }
     }
 
@@ -641,7 +676,6 @@ export const QuotationDocument: React.FC<{
     document.body.removeChild(a);
     setTimeout(() => URL.revokeObjectURL(blobUrl), 10000);
     window.open('https://wa.me/', '_blank');
-
     silentBackgroundSave();
   };
 

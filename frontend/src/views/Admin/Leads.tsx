@@ -154,9 +154,6 @@ export const Leads: React.FC = () => {
     if (!confirmed) return;
     try {
       await quotationService.deleteQuotation(q.id);
-      try {
-        await fetch(`/api/quotations/${q.id}`, { method: 'DELETE' });
-      } catch (_) {}
       localStorage.removeItem(`quotation_${q.leadId}`);
       alert(`✅ Quotation ${q.quotationNumber} deleted successfully.`);
     } catch (err) {

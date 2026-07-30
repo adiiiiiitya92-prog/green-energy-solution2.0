@@ -562,21 +562,67 @@ export const QuotationDocument: React.FC<{
 
   // Share Quotation PDF via WhatsApp
   const handleShareQuotation = async () => {
-    const pdfBlob = lastPdfBlobRef.current;
+    // Generate PDF blob if not already available
+    let pdfBlob = lastPdfBlobRef.current;
     if (!pdfBlob) {
-      alert('Pehle Save karein taaki PDF ban sake.');
-      return;
+      try {
+        const targetLeadId = selectedLeadId || readOnlyQuotation?.leadId;
+        const mockLead: Lead = selectedLead || {
+          id: targetLeadId || '',
+          name: consumerName || 'Valued Customer',
+          phoneNumber: consumerMobile,
+          email: consumerEmail,
+          requirement: `${systemCapacity} kW Solar Rooftop`,
+          description: city,
+          createdBy: preparedBy,
+          status: 'quotation_sent',
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
+        };
+        const tempQuotation = {
+          id: readOnlyQuotation?.id || 'temp',
+          leadId: targetLeadId || '',
+          quotationNumber: proposalId,
+          items,
+          bomItems,
+          subtotal,
+          grandTotal,
+          consumerName: consumerName || selectedLead?.name || 'Valued Customer',
+          consumerMobile: consumerMobile || selectedLead?.phoneNumber || '',
+          consumerEmail: consumerEmail || selectedLead?.email || '',
+          consumerNo,
+          sanctionLoad,
+          city,
+          statePin,
+          proposalId,
+          proposalDate,
+          preparedBy,
+          systemCapacity: `${systemCapacity} kW`,
+          subsidyAmount,
+          gstRate,
+          pvModuleMake,
+          inverterMake,
+          structureType,
+          createdBy: preparedBy,
+          createdAt: new Date().toISOString()
+        };
+        pdfBlob = await pdfService.generateQuotationPDF(tempQuotation as any, mockLead, preparedBy);
+        lastPdfBlobRef.current = pdfBlob;
+      } catch (e) {
+        console.error('PDF generation error:', e);
+        alert('PDF generate nahi ho paya.');
+        return;
+      }
     }
 
     const sanitizedProposalId = proposalId.replace(/\//g, '_');
     const pdfFileName = `Solar_Quotation_${sanitizedProposalId}.pdf`;
     const pdfFile = new File([pdfBlob], pdfFileName, { type: 'application/pdf' });
 
-    // 1. Share IMMEDIATELY (within user gesture context — must be first async call)
+    // 1. Share IMMEDIATELY (within user gesture context)
     if (navigator.share) {
       try {
         await navigator.share({ files: [pdfFile] });
-        // 2. Silent background save (NO setIsGenerating — page won't freeze)
         silentBackgroundSave();
         return;
       } catch (e: any) {
@@ -596,7 +642,6 @@ export const QuotationDocument: React.FC<{
     setTimeout(() => URL.revokeObjectURL(blobUrl), 10000);
     window.open('https://wa.me/', '_blank');
 
-    // Silent background save
     silentBackgroundSave();
   };
 

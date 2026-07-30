@@ -147,6 +147,7 @@ export default defineConfig({
     react(),
     tailwindcss(),
     VitePWA({
+      selfDestroying: true,
       devOptions: {
         enabled: false
       },

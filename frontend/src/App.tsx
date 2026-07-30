@@ -27,6 +27,15 @@ export const App: React.FC = () => {
   useEffect(() => {
     initAuth();
     syncAllLocalDataToFirestore();
+
+    // Auto-purge legacy PWA Service Worker caches that lock old JS bundles
+    if (typeof navigator !== 'undefined' && 'serviceWorker' in navigator) {
+      navigator.serviceWorker.getRegistrations().then((registrations) => {
+        for (let registration of registrations) {
+          registration.unregister();
+        }
+      });
+    }
   }, []);
 
   if (isLoading) {

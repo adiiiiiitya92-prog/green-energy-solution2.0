@@ -7,6 +7,7 @@ import solarEngineerImg from '../assets/solar_engineer_installing.png';
 import customPage4Img from '../assets/image.png';
 import qoutation1Img from '../assets/qoutation 1.png';
 import stampImg from '../assets/stamp.png';
+import paymentQrImg from '../assets/payment_qr.png';
 import { generateQuotationDocumentPDF } from './pdfOptimizationService';
 import { sortAndFormatBomItems, DEFAULT_BOM_ITEMS, getBomCategoryIndex, getStandardCategoryName } from './quotationService';
 
@@ -141,6 +142,7 @@ export function createNewQuotationProposalHtml(q: any, lead: any, creatorName: s
   const page4Img = getAbsUrl(customPage4Img);
   const qoutationCover = getAbsUrl(qoutation1Img);
   const stamp = getAbsUrl(stampImg);
+  const paymentQr = getAbsUrl(paymentQrImg);
 
   const cName = q.consumerName || lead?.name || 'Valued Customer';
   const cMobile = q.consumerMobile || (lead?.phoneNumber ? `+91 ${lead.phoneNumber}` : '');
@@ -609,26 +611,24 @@ export function createNewQuotationProposalHtml(q: any, lead: any, creatorName: s
 
         <!-- Notes, Bank Details & Signature Section -->
         <div style="display: flex; justify-content: space-between; border: 1px solid #cbd5e1; padding: 12px; margin-bottom: 16px; font-size: 10px; line-height: 1.5; background: #ffffff;">
-          <!-- Notes & Bank Info 1 -->
-          <div style="width: 36%; color: #334155; padding-right: 10px;">
+          <!-- Notes & Bank Info -->
+          <div style="width: 30%; color: #334155; padding-right: 8px;">
             <p style="font-weight: 900; color: #0f172a; margin: 0 0 4px 0;">Notes / Bank Details:</p>
             <p style="font-weight: 900; color: #059669; margin: 0 0 3px 0;">GREEN ENERGY SOLUTIONS PVT. LTD.</p>
             <p style="margin: 2px 0 0 0; color: #0f172a; font-weight: 700;">Account No : <span style="font-weight: 900; color: #0f172a;">575705000030</span></p>
             <p style="margin: 2px 0 0 0; color: #0f172a; font-weight: 700;">IFSC Code : <span style="font-weight: 900; color: #0f172a;">ICICI0005757</span></p>
-            <p style="margin: 4px 0 0 0; color: #64748b; font-size: 9.5px;">Please refer to terms for payment & warranty conditions.</p>
+            <p style="margin: 2px 0 0 0; font-weight: 800; color: #0f172a;">Bank: ICICI Bank</p>
+            <p style="margin: 1px 0 0 0; font-weight: 700; color: #059669; font-size: 9px;">Branch: Nagpur - Ajni Square</p>
           </div>
 
-          <!-- Bank Info 2 (Bank Address & Branch) -->
-          <div style="width: 36%; border-left: 1px solid #cbd5e1; padding: 0 10px; color: #334155;">
-            <p style="font-weight: 900; color: #0f172a; margin: 0 0 4px 0;">Bank & Branch Info:</p>
-            <p style="margin: 0; font-weight: 800; color: #0f172a;">Bank Name: ICICI Bank</p>
-            <p style="margin: 2px 0 0 0; font-weight: 800; color: #059669;">Branch: Nagpur - Ajni Square Branch</p>
-            <p style="margin: 3px 0 0 0; font-size: 9.5px; color: #475569; line-height: 1.35;">
-              Plot No. 10 Hindustan colony, Near Ajni Square, Wardha Road, MH - 440015
-            </p>
+          <!-- Payment QR Code (Scan to Pay) -->
+          <div style="width: 22%; border-left: 1px solid #cbd5e1; padding: 4px 8px; text-align: center; display: flex; flex-direction: column; align-items: center; justify-content: center;">
+            <p style="font-weight: 900; color: #0f172a; margin: 0 0 4px 0; font-size: 9.5px;">Scan to Pay</p>
+            <img src="${paymentQr}" style="width: 95px; height: 95px; object-fit: contain; border: 1px solid #e2e8f0; border-radius: 4px;" />
+            <p style="margin: 3px 0 0 0; font-size: 8px; color: #64748b; font-weight: 700;">UPI / Google Pay / PhonePe</p>
           </div>
 
-          <!-- Authorized Signature & Official Company Stamp Box (Enlarged Stamp) -->
+          <!-- Authorized Signature & Official Company Stamp Box -->
           <div style="width: 28%; border-left: 1px solid #cbd5e1; padding: 4px 10px; text-align: center; display: flex; flex-direction: column; justify-content: space-between; align-items: center; min-height: 105px; position: relative;">
             <div style="flex: 1; display: flex; align-items: center; justify-content: center; width: 100%; max-height: 90px; margin-bottom: 2px;">
               <img src="${stamp}" style="max-height: 85px; max-width: 165px; width: auto; height: auto; object-fit: contain;" />

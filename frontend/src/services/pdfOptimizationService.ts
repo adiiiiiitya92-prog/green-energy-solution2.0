@@ -179,44 +179,44 @@ export async function generateQuotationDocumentPDF(
   });
 
   for (let i = 0; i < targets.length; i++) {
-    // Unblock browser UI main thread between pages so UI stays 100% fluid without freezing
-    await new Promise(resolve => setTimeout(resolve, 0));
+    if (i > 0) await new Promise(resolve => setTimeout(resolve, 0));
 
     const pageEl = targets[i];
+    pageEl.style.transform = 'none';
+
     const canvas = await html2canvas(pageEl, {
-      scale: 1.25, // Ultra-fast scale for sub-second crisp PDF creation
+      scale: 1.35, // High resolution crisp text scale
       useCORS: true,
       allowTaint: true,
       backgroundColor: '#ffffff',
       logging: false,
-      imageTimeout: 5000,
+      imageTimeout: 3000,
+      windowWidth: 794,   // Exact A4 width at 96 DPI for 1:1 pixel precision
+      windowHeight: 1123, // Exact A4 height at 96 DPI for 1:1 pixel precision
       onclone: (clonedDoc) => {
         sanitizeClonedDocumentForHtml2Canvas(clonedDoc);
-
-        // Target container visibility in cloned document
-        const containers = clonedDoc.querySelectorAll('.quotation-print-container, .quotation-document-page');
-        containers.forEach((el) => {
-          const htmlEl = el as HTMLElement;
-          htmlEl.style.display = 'flex';
-          htmlEl.style.visibility = 'visible';
-          htmlEl.style.opacity = '1';
-          htmlEl.style.position = 'relative';
-          htmlEl.style.left = '0';
-          htmlEl.style.top = '0';
-          htmlEl.style.transform = 'none';
-          htmlEl.style.margin = '0';
+        const pages = clonedDoc.querySelectorAll('.quotation-document-page');
+        pages.forEach((p) => {
+          const pageHtml = p as HTMLElement;
+          pageHtml.style.transform = 'none';
+          pageHtml.style.margin = '0';
+          pageHtml.style.padding = '0';
+          pageHtml.style.boxShadow = 'none';
+          pageHtml.style.border = 'none';
+          pageHtml.style.position = 'relative';
+          pageHtml.style.left = '0';
+          pageHtml.style.top = '0';
         });
       }
     });
 
-    // JPEG 0.85 — crisp text with ultra-fast encoding
-    const imgData = canvas.toDataURL('image/jpeg', 0.85);
+    const imgData = canvas.toDataURL('image/jpeg', 0.82);
     if (i > 0) pdf.addPage();
     pdf.addImage(imgData, 'JPEG', 0, 0, 210, 297, undefined, 'FAST');
   }
 
   const pdfBlob = pdf.output('blob');
-  console.log(`📄 FAST 8-Page Proposal PDF Generated: ${fileName} (${Math.round(pdfBlob.size / 1024)} KB)`);
+  console.log(`📄 High-Speed 8-Page Proposal PDF Generated: ${fileName} (${Math.round(pdfBlob.size / 1024)} KB)`);
   return pdfBlob;
 }
 

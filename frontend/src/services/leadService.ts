@@ -4,27 +4,32 @@ import { saveRecordToFirestore, deleteRecordFromFirestore, fetchCollectionFromFi
 
 export const leadService = {
   async getLeads(): Promise<Lead[]> {
-    try {
-      const remoteLeads = await fetchCollectionFromFirestore<Lead>('leads');
-      if (Array.isArray(remoteLeads)) {
-        // Sync local Dexie DB with latest remote state
-        const remoteIds = new Set(remoteLeads.map(l => l.id));
-        const localLeads = await db.leads.toArray();
-        const deletedIds = localLeads.filter(l => !remoteIds.has(l.id)).map(l => l.id);
-        
-        if (remoteLeads.length > 0) {
+    const localLeads = await db.leads.orderBy('createdAt').reverse().toArray();
+
+    const syncRemote = async () => {
+      try {
+        const remoteLeads = await fetchCollectionFromFirestore<Lead>('leads');
+        if (Array.isArray(remoteLeads) && remoteLeads.length > 0) {
+          const remoteIds = new Set(remoteLeads.map(l => l.id));
+          const currentLocal = await db.leads.toArray();
+          const deletedIds = currentLocal.filter(l => !remoteIds.has(l.id)).map(l => l.id);
+          
           await db.leads.bulkPut(remoteLeads);
+          if (deletedIds.length > 0) {
+            await db.leads.bulkDelete(deletedIds);
+          }
         }
-        if (deletedIds.length > 0) {
-          await db.leads.bulkDelete(deletedIds);
-        }
-        
-        return await db.leads.orderBy('createdAt').reverse().toArray();
+      } catch (err) {
+        console.warn("Background lead sync note:", err);
       }
-    } catch (err) {
-      console.warn("Firestore leads sync note, returning local cache:", err);
+    };
+
+    if (localLeads.length > 0) {
+      syncRemote();
+      return localLeads;
     }
 
+    await syncRemote();
     return db.leads.orderBy('createdAt').reverse().toArray();
   },
 

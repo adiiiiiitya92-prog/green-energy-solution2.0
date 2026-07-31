@@ -29,6 +29,7 @@ export const Challans: React.FC = () => {
   // Row selection states
   const [currentProductId, setCurrentProductId] = useState('');
   const [currentQty, setCurrentQty] = useState(1);
+  const [selectedSerials, setSelectedSerials] = useState<string[]>([]);
 
   // Edit Form States
   const [editingChallan, setEditingChallan] = useState<Challan | null>(null);
@@ -39,6 +40,7 @@ export const Challans: React.FC = () => {
   const [editNotes, setEditNotes] = useState('');
   const [currentEditProductId, setCurrentEditProductId] = useState('');
   const [currentEditQty, setCurrentEditQty] = useState(1);
+  const [selectedEditSerials, setSelectedEditSerials] = useState<string[]>([]);
 
   // Date Filters & Collapsible card State
   const [startDate, setStartDate] = useState('');
@@ -62,6 +64,76 @@ export const Challans: React.FC = () => {
   useEffect(() => {
     loadData();
   }, []);
+
+  const getAvailableSerialsForProduct = (prodId: string, currentChallan?: Challan | null) => {
+    const p = products.find(prod => prod.id === prodId);
+    if (!p) return [];
+
+    const existingInChallan = currentChallan?.items.find(i => i.productId === prodId)?.serialNumbers || [];
+
+    const units = (p.productUnits || []).filter(u => 
+      u.status === 'available' || !u.status || existingInChallan.includes(u.serialNumber)
+    ).map(u => u.serialNumber);
+
+    const fallback = (p.serialNumbers || []).filter(sn => {
+      const matchUnit = p.productUnits?.find(u => u.serialNumber === sn);
+      return !matchUnit || matchUnit.status === 'available' || !matchUnit.status || existingInChallan.includes(sn);
+    });
+
+    return Array.from(new Set([...units, ...fallback]));
+  };
+
+  useEffect(() => {
+    if (!currentProductId) {
+      setSelectedSerials([]);
+      return;
+    }
+    const avail = getAvailableSerialsForProduct(currentProductId, null);
+    setSelectedSerials(avail.slice(0, currentQty));
+  }, [currentProductId, products]);
+
+  useEffect(() => {
+    if (!currentEditProductId) {
+      setSelectedEditSerials([]);
+      return;
+    }
+    const avail = getAvailableSerialsForProduct(currentEditProductId, editingChallan);
+    setSelectedEditSerials(avail.slice(0, currentEditQty));
+  }, [currentEditProductId, products, editingChallan]);
+
+  const handleQtyChange = (newQty: number) => {
+    const qty = Math.max(1, newQty);
+    setCurrentQty(qty);
+    if (currentProductId) {
+      const avail = getAvailableSerialsForProduct(currentProductId, null);
+      setSelectedSerials(avail.slice(0, qty));
+    }
+  };
+
+  const handleEditQtyChange = (newQty: number) => {
+    const qty = Math.max(1, newQty);
+    setCurrentEditQty(qty);
+    if (currentEditProductId) {
+      const avail = getAvailableSerialsForProduct(currentEditProductId, editingChallan);
+      setSelectedEditSerials(avail.slice(0, qty));
+    }
+  };
+
+  const toggleSerialSelection = (sn: string) => {
+    setSelectedSerials(prev => {
+      const next = prev.includes(sn) ? prev.filter(s => s !== sn) : [...prev, sn];
+      setCurrentQty(next.length > 0 ? next.length : 1);
+      return next;
+    });
+  };
+
+  const toggleEditSerialSelection = (sn: string) => {
+    setSelectedEditSerials(prev => {
+      const next = prev.includes(sn) ? prev.filter(s => s !== sn) : [...prev, sn];
+      setCurrentEditQty(next.length > 0 ? next.length : 1);
+      return next;
+    });
+  };
 
   const handleAddItem = () => {
     if (!currentProductId || currentQty <= 0) {
@@ -87,12 +159,14 @@ export const Challans: React.FC = () => {
     const newItem: ChallanItem = {
       productId: currentProductId,
       productName: targetProduct.name,
-      qty: currentQty
+      qty: currentQty,
+      serialNumbers: selectedSerials
     };
 
     setChallanItems([...challanItems, newItem]);
     setCurrentProductId('');
     setCurrentQty(1);
+    setSelectedSerials([]);
   };
 
   const handleRemoveItem = (index: number) => {
@@ -254,12 +328,14 @@ export const Challans: React.FC = () => {
     const newItem: ChallanItem = {
       productId: currentEditProductId,
       productName: targetProduct.name,
-      qty: currentEditQty
+      qty: currentEditQty,
+      serialNumbers: selectedEditSerials
     };
 
     setEditChallanItems([...editChallanItems, newItem]);
     setCurrentEditProductId('');
     setCurrentEditQty(1);
+    setSelectedEditSerials([]);
   };
 
   const handleEditRemoveItem = (index: number) => {
@@ -476,8 +552,20 @@ export const Challans: React.FC = () => {
                       <tbody>
                         {ch.items.map((item, idx) => (
                           <tr key={idx} className="border-b border-slate-100 last:border-0">
-                            <td className="py-2 text-slate-800 font-bold">{item.productName}</td>
-                            <td className="py-2 text-slate-900 font-extrabold text-right">{item.qty} units</td>
+                            <td className="py-2 text-slate-800 font-bold">
+                              <div>{item.productName}</div>
+                              {item.serialNumbers && item.serialNumbers.length > 0 && (
+                                <div className="text-[10px] text-emerald-700 font-semibold mt-1 flex flex-wrap items-center gap-1">
+                                  <span className="text-slate-400 font-sans">Serial Nos:</span>
+                                  {item.serialNumbers.map(sn => (
+                                    <span key={sn} className="bg-emerald-50 text-emerald-800 border border-emerald-200/80 px-1.5 py-0.5 rounded font-mono text-[9.5px]">
+                                      {sn}
+                                    </span>
+                                  ))}
+                                </div>
+                              )}
+                            </td>
+                            <td className="py-2 text-slate-900 font-extrabold text-right align-top">{item.qty} units</td>
                           </tr>
                         ))}
                       </tbody>
@@ -652,7 +740,7 @@ export const Challans: React.FC = () => {
                       type="number"
                       min={1}
                       value={currentQty}
-                      onChange={(e) => setCurrentQty(Math.max(1, Number(e.target.value)))}
+                      onChange={(e) => handleQtyChange(Number(e.target.value))}
                       className="w-full border border-slate-200 rounded-xl px-2.5 py-1.5 bg-white focus:outline-none"
                     />
                   </div>
@@ -665,6 +753,43 @@ export const Challans: React.FC = () => {
                     Add
                   </button>
                 </div>
+
+                {/* Serial Numbers Picker UI */}
+                {currentProductId && (
+                  <div className="bg-slate-100/80 p-3 rounded-xl border border-slate-200/80">
+                    <div className="flex justify-between items-center mb-1.5">
+                      <span className="text-[10px] font-bold text-slate-600 uppercase tracking-wider">
+                        Available Serial Numbers ({selectedSerials.length} selected)
+                      </span>
+                      {getAvailableSerialsForProduct(currentProductId, null).length === 0 && (
+                        <span className="text-[10px] text-amber-600 font-bold">No available unsold serial numbers</span>
+                      )}
+                    </div>
+                    {getAvailableSerialsForProduct(currentProductId, null).length > 0 ? (
+                      <div className="flex flex-wrap gap-1.5 max-h-32 overflow-y-auto p-1">
+                        {getAvailableSerialsForProduct(currentProductId, null).map(sn => {
+                          const isSelected = selectedSerials.includes(sn);
+                          return (
+                            <button
+                              key={sn}
+                              type="button"
+                              onClick={() => toggleSerialSelection(sn)}
+                              className={`px-2 py-1 rounded-md text-[10px] font-mono border font-bold transition-all cursor-pointer ${
+                                isSelected
+                                  ? 'bg-emerald-600 text-white border-emerald-700 shadow-xs scale-[1.02]'
+                                  : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-50'
+                              }`}
+                            >
+                              {isSelected ? '✓ ' : ''}{sn}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    ) : (
+                      <p className="text-[11px] text-slate-400 font-medium">Standard inventory item without pre-indexed serial numbers.</p>
+                    )}
+                  </div>
+                )}
 
                 {/* Items Added Table */}
                 {challanItems.length > 0 && (
@@ -680,8 +805,19 @@ export const Challans: React.FC = () => {
                       <tbody>
                         {challanItems.map((item, idx) => (
                           <tr key={idx} className="border-b border-slate-100 last:border-0 font-bold">
-                            <td className="px-3 py-2.5 text-slate-800">{item.productName}</td>
-                            <td className="px-3 py-2.5 text-slate-900 text-right">{item.qty} units</td>
+                            <td className="px-3 py-2.5 text-slate-800">
+                              <div>{item.productName}</div>
+                              {item.serialNumbers && item.serialNumbers.length > 0 && (
+                                <div className="text-[9.5px] font-mono text-emerald-700 font-semibold mt-1 flex flex-wrap gap-1">
+                                  {item.serialNumbers.map(sn => (
+                                    <span key={sn} className="bg-emerald-50 text-emerald-800 border border-emerald-200 px-1.5 py-0.2 rounded">
+                                      {sn}
+                                    </span>
+                                  ))}
+                                </div>
+                              )}
+                            </td>
+                            <td className="px-3 py-2.5 text-slate-900 text-right align-top">{item.qty} units</td>
                             <td className="px-3 py-2.5 text-center">
                               <button
                                 type="button"
@@ -829,7 +965,7 @@ export const Challans: React.FC = () => {
                       type="number"
                       min={1}
                       value={currentEditQty}
-                      onChange={(e) => setCurrentEditQty(Math.max(1, Number(e.target.value)))}
+                      onChange={(e) => handleEditQtyChange(Number(e.target.value))}
                       className="w-full border border-slate-200 rounded-xl px-2.5 py-1.5 bg-white focus:outline-none"
                     />
                   </div>
@@ -842,6 +978,43 @@ export const Challans: React.FC = () => {
                     Add
                   </button>
                 </div>
+
+                {/* Serial Numbers Picker UI */}
+                {currentEditProductId && (
+                  <div className="bg-slate-100/80 p-3 rounded-xl border border-slate-200/80">
+                    <div className="flex justify-between items-center mb-1.5">
+                      <span className="text-[10px] font-bold text-slate-600 uppercase tracking-wider">
+                        Available Serial Numbers ({selectedEditSerials.length} selected)
+                      </span>
+                      {getAvailableSerialsForProduct(currentEditProductId, editingChallan).length === 0 && (
+                        <span className="text-[10px] text-amber-600 font-bold">No available unsold serial numbers</span>
+                      )}
+                    </div>
+                    {getAvailableSerialsForProduct(currentEditProductId, editingChallan).length > 0 ? (
+                      <div className="flex flex-wrap gap-1.5 max-h-32 overflow-y-auto p-1">
+                        {getAvailableSerialsForProduct(currentEditProductId, editingChallan).map(sn => {
+                          const isSelected = selectedEditSerials.includes(sn);
+                          return (
+                            <button
+                              key={sn}
+                              type="button"
+                              onClick={() => toggleEditSerialSelection(sn)}
+                              className={`px-2 py-1 rounded-md text-[10px] font-mono border font-bold transition-all cursor-pointer ${
+                                isSelected
+                                  ? 'bg-emerald-600 text-white border-emerald-700 shadow-xs scale-[1.02]'
+                                  : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-50'
+                              }`}
+                            >
+                              {isSelected ? '✓ ' : ''}{sn}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    ) : (
+                      <p className="text-[11px] text-slate-400 font-medium">Standard inventory item without pre-indexed serial numbers.</p>
+                    )}
+                  </div>
+                )}
 
                 {/* Items Added Table */}
                 {editChallanItems.length > 0 && (
@@ -857,8 +1030,19 @@ export const Challans: React.FC = () => {
                       <tbody>
                         {editChallanItems.map((item, idx) => (
                           <tr key={idx} className="border-b border-slate-100 last:border-0 font-bold">
-                            <td className="px-3 py-2.5 text-slate-800">{item.productName}</td>
-                            <td className="px-3 py-2.5 text-slate-900 text-right">{item.qty} units</td>
+                            <td className="px-3 py-2.5 text-slate-800">
+                              <div>{item.productName}</div>
+                              {item.serialNumbers && item.serialNumbers.length > 0 && (
+                                <div className="text-[9.5px] font-mono text-emerald-700 font-semibold mt-1 flex flex-wrap gap-1">
+                                  {item.serialNumbers.map(sn => (
+                                    <span key={sn} className="bg-emerald-50 text-emerald-800 border border-emerald-200 px-1.5 py-0.2 rounded">
+                                      {sn}
+                                    </span>
+                                  ))}
+                                </div>
+                              )}
+                            </td>
+                            <td className="px-3 py-2.5 text-slate-900 text-right align-top">{item.qty} units</td>
                             <td className="px-3 py-2.5 text-center">
                               <button
                                 type="button"

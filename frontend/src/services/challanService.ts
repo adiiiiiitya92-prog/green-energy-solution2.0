@@ -4,14 +4,25 @@ import { saveRecordToFirestore, fetchCollectionFromFirestore } from './firebase'
 
 export const challanService = {
   async getChallans(): Promise<Challan[]> {
-    try {
-      const remoteChallans = await fetchCollectionFromFirestore<Challan>('challans');
-      if (remoteChallans && remoteChallans.length > 0) {
-        await db.challans.bulkPut(remoteChallans);
+    const localChallans = await db.challans.orderBy('createdAt').reverse().toArray();
+
+    const syncRemote = async () => {
+      try {
+        const remoteChallans = await fetchCollectionFromFirestore<Challan>('challans');
+        if (remoteChallans && remoteChallans.length > 0) {
+          await db.challans.bulkPut(remoteChallans);
+        }
+      } catch (err) {
+        console.warn("Background challans sync note:", err);
       }
-    } catch (err) {
-      console.warn("Firestore challans sync note:", err);
+    };
+
+    if (localChallans.length > 0) {
+      syncRemote();
+      return localChallans;
     }
+
+    await syncRemote();
     return db.challans.orderBy('createdAt').reverse().toArray();
   },
 
@@ -35,10 +46,22 @@ export const challanService = {
         const product = await db.products.get(item.productId);
         if (product) {
           const updatedStock = Math.max(0, product.stockQuantity - item.qty);
-          await db.products.update(item.productId, {
-            stockQuantity: updatedStock
-          });
-          saveRecordToFirestore('products', item.productId, { ...product, stockQuantity: updatedStock });
+          let updatedUnits = product.productUnits;
+
+          if (item.serialNumbers && item.serialNumbers.length > 0 && product.productUnits) {
+            updatedUnits = product.productUnits.map(u => {
+              if (item.serialNumbers?.includes(u.serialNumber)) {
+                return { ...u, status: 'sold' as const };
+              }
+              return u;
+            });
+          }
+
+          const updateObj: Partial<Product> = { stockQuantity: updatedStock };
+          if (updatedUnits) updateObj.productUnits = updatedUnits;
+
+          await db.products.update(item.productId, updateObj);
+          saveRecordToFirestore('products', item.productId, { ...product, ...updateObj });
         }
       }
     });
@@ -58,24 +81,45 @@ export const challanService = {
     }
 
     await db.transaction('rw', [db.challans, db.products], async () => {
+      // Step 1: Revert old items stock & serial statuses
       for (const oldItem of oldChallan.items) {
         const product = await db.products.get(oldItem.productId);
         if (product) {
           const revertedStock = product.stockQuantity + oldItem.qty;
-          await db.products.update(oldItem.productId, {
-            stockQuantity: revertedStock
-          });
+          let revertedUnits = product.productUnits;
+          if (oldItem.serialNumbers && oldItem.serialNumbers.length > 0 && product.productUnits) {
+            revertedUnits = product.productUnits.map(u => {
+              if (oldItem.serialNumbers?.includes(u.serialNumber)) {
+                return { ...u, status: 'available' as const };
+              }
+              return u;
+            });
+          }
+          const updateObj: Partial<Product> = { stockQuantity: revertedStock };
+          if (revertedUnits) updateObj.productUnits = revertedUnits;
+          await db.products.update(oldItem.productId, updateObj);
+          saveRecordToFirestore('products', oldItem.productId, { ...product, ...updateObj });
         }
       }
 
+      // Step 2: Apply new items stock & serial statuses
       for (const newItem of updatedChallan.items) {
         const product = await db.products.get(newItem.productId);
         if (product) {
           const finalStock = Math.max(0, product.stockQuantity - newItem.qty);
-          await db.products.update(newItem.productId, {
-            stockQuantity: finalStock
-          });
-          saveRecordToFirestore('products', newItem.productId, { ...product, stockQuantity: finalStock });
+          let finalUnits = product.productUnits;
+          if (newItem.serialNumbers && newItem.serialNumbers.length > 0 && product.productUnits) {
+            finalUnits = product.productUnits.map(u => {
+              if (newItem.serialNumbers?.includes(u.serialNumber)) {
+                return { ...u, status: 'sold' as const };
+              }
+              return u;
+            });
+          }
+          const updateObj: Partial<Product> = { stockQuantity: finalStock };
+          if (finalUnits) updateObj.productUnits = finalUnits;
+          await db.products.update(newItem.productId, updateObj);
+          saveRecordToFirestore('products', newItem.productId, { ...product, ...updateObj });
         }
       }
 
@@ -94,8 +138,19 @@ export const challanService = {
         const product = await db.products.get(item.productId);
         if (product) {
           const restoredStock = product.stockQuantity + item.qty;
-          await db.products.update(item.productId, { stockQuantity: restoredStock });
-          saveRecordToFirestore('products', item.productId, { ...product, stockQuantity: restoredStock });
+          let restoredUnits = product.productUnits;
+          if (item.serialNumbers && item.serialNumbers.length > 0 && product.productUnits) {
+            restoredUnits = product.productUnits.map(u => {
+              if (item.serialNumbers?.includes(u.serialNumber)) {
+                return { ...u, status: 'available' as const };
+              }
+              return u;
+            });
+          }
+          const updateObj: Partial<Product> = { stockQuantity: restoredStock };
+          if (restoredUnits) updateObj.productUnits = restoredUnits;
+          await db.products.update(item.productId, updateObj);
+          saveRecordToFirestore('products', item.productId, { ...product, ...updateObj });
         }
       }
       await db.challans.delete(id);

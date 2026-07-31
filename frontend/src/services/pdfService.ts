@@ -5,7 +5,10 @@ import logoImg from '../assets/Green-Energy-Solution.png';
 import solarCoverImg from '../assets/solar_rooftop_cover.png';
 import solarEngineerImg from '../assets/solar_engineer_installing.png';
 import customPage4Img from '../assets/image.png';
+import qoutation1Img from '../assets/qoutation 1.png';
+import stampImg from '../assets/stamp.png';
 import { generateQuotationDocumentPDF } from './pdfOptimizationService';
+import { sortAndFormatBomItems, DEFAULT_BOM_ITEMS, getBomCategoryIndex, getStandardCategoryName } from './quotationService';
 
 let cachedLogoDataUrl: string | null = null;
 
@@ -85,8 +88,8 @@ const getAbsUrl = (url: string): string => {
 
 function renderPageFooter(pageNum: number): string {
   return `
-    <div style="background: #FFC000; padding: 10px 24px; display: flex; justify-content: space-between; align-items: center; font-weight: 900; font-size: 12px; color: #0f172a; flex-shrink: 0; box-sizing: border-box; width: 100%;">
-      <span style="font-weight: 900; font-size: 12px; color: #0f172a; font-family: Arial, sans-serif;">Green Energy Solutions Pvt. Ltd.</span>
+    <div style="background: #16a34a; padding: 10px 24px; display: flex; justify-content: space-between; align-items: center; font-weight: 900; font-size: 12px; color: #ffffff; flex-shrink: 0; box-sizing: border-box; width: 100%;">
+      <span style="font-weight: 900; font-size: 12px; color: #ffffff; font-family: Arial, sans-serif;">Green Energy Solutions Pvt. Ltd.</span>
       
       <!-- Social Media Icons (Facebook, Instagram, LinkedIn, Twitter/X) -->
       <div style="display: flex; gap: 8px; align-items: center;">
@@ -108,7 +111,7 @@ function renderPageFooter(pageNum: number): string {
         </div>
       </div>
 
-      <span style="font-weight: 900; font-size: 12px; color: #0f172a; font-family: Arial, sans-serif;">${pageNum}/8</span>
+      <span style="font-weight: 900; font-size: 12px; color: #ffffff; font-family: Arial, sans-serif;">${pageNum}/8</span>
     </div>
   `;
 }
@@ -136,6 +139,8 @@ export function createNewQuotationProposalHtml(q: any, lead: any, creatorName: s
   const cover = getAbsUrl(solarCoverImg);
   const engineer = getAbsUrl(solarEngineerImg);
   const page4Img = getAbsUrl(customPage4Img);
+  const qoutationCover = getAbsUrl(qoutation1Img);
+  const stamp = getAbsUrl(stampImg);
 
   const cName = q.consumerName || lead?.name || 'Valued Customer';
   const cMobile = q.consumerMobile || (lead?.phoneNumber ? `+91 ${lead.phoneNumber}` : '');
@@ -222,97 +227,200 @@ export function createNewQuotationProposalHtml(q: any, lead: any, creatorName: s
     </tr>
   `;
 
-  // Dynamic Bill of Materials (BOM) Rows with Categorized Group Headers
-  let bomTableRowsHtml = '';
+  // Dynamic Bill of Materials (BOM) Rows with Categorized Group Headers (Strict Sequence)
+  const rawBomItems = (q.bomItems && q.bomItems.length > 0) ? q.bomItems : DEFAULT_BOM_ITEMS;
+  const sortedBomItems = sortAndFormatBomItems(rawBomItems);
 
-  if (q.bomItems && q.bomItems.length > 0) {
-    let currentCategory = '';
-    bomTableRowsHtml = q.bomItems.map((bItem: any, bIdx: number) => {
-      if (bItem.isHeader) {
-        return `
-          <tr style="background: #f1f5f9; font-weight: bold;">
-            <td style="padding: 4px 6px; border: 1px solid #cbd5e1; text-align: center;">${bItem.srNo || ''}</td>
-            <td style="padding: 4px 8px; border: 1px solid #cbd5e1; color: #0f172a;" colspan="4"><strong>${bItem.itemName}</strong></td>
-          </tr>
-        `;
-      }
-
-      let categoryHeaderHtml = '';
-      if (bItem.category && bItem.category !== currentCategory) {
-        currentCategory = bItem.category;
-        categoryHeaderHtml = `
-          <tr style="background: #f1f5f9; font-weight: bold;">
-            <td style="padding: 4px 6px; border: 1px solid #cbd5e1; text-align: center;">•</td>
-            <td style="padding: 4px 8px; border: 1px solid #cbd5e1; color: #0f172a;" colspan="4"><strong>${currentCategory}</strong></td>
-          </tr>
-        `;
-      }
-
+  let currentCategoryHeader = '';
+  const bomTableRowsHtml = sortedBomItems.map((bItem: any) => {
+    if (bItem.isHeader) {
       return `
-        ${categoryHeaderHtml}
-        <tr>
-          <td style="padding: 5px 6px; border: 1px solid #cbd5e1; text-align: center; font-weight: bold;">${bItem.srNo || (bIdx + 1)}</td>
-          <td style="padding: 5px 8px; border: 1px solid #cbd5e1; font-weight: bold; color: #0f172a;">
-            ${bItem.itemName}
-            ${bItem.description ? `<br/><span style="font-size: 9px; font-weight: normal; color: #475569;">${bItem.description}</span>` : ''}
-          </td>
-          <td style="padding: 5px 6px; border: 1px solid #cbd5e1; text-align: center; font-weight: bold;">${bItem.qty}</td>
-          <td style="padding: 5px 6px; border: 1px solid #cbd5e1; text-align: center;">${bItem.unit || 'Nos'}</td>
-          <td style="padding: 5px 8px; border: 1px solid #cbd5e1; font-weight: 600;">${bItem.brand || 'As specified'}</td>
+        <tr style="background: #e2e8f0; color: #0f172a; font-weight: 800; font-size: 10.5px;">
+          <td style="padding: 5px 6px; border: 1px solid #cbd5e1; text-align: center;">${bItem.srNo || ''}</td>
+          <td style="padding: 5px 8px; border: 1px solid #cbd5e1; color: #0f172a;" colspan="4"><strong>${bItem.itemName}</strong></td>
         </tr>
       `;
-    }).join('');
-  } else if (items && items.length > 0) {
-    bomTableRowsHtml = items.map((item: any, idx: number) => `
-      <tr>
-        <td style="padding: 6px; border: 1px solid #cbd5e1; text-align: center; font-weight: bold;">${idx + 1}</td>
-        <td style="padding: 6px 8px; border: 1px solid #cbd5e1; font-weight: bold; color: #0f172a;">${item.itemName || item.name}</td>
-        <td style="padding: 6px; border: 1px solid #cbd5e1; text-align: center; font-weight: bold;">${item.qty}</td>
-        <td style="padding: 6px; border: 1px solid #cbd5e1; text-align: center;">${item.unit || 'Nos'}</td>
-        <td style="padding: 6px 8px; border: 1px solid #cbd5e1;">${item.brand || 'As specified'}</td>
-      </tr>
-    `).join('');
-  } else {
-    bomTableRowsHtml = `
-      <tr>
-        <td colspan="5" style="padding: 16px; text-align: center; color: #64748b; font-style: italic; font-weight: 500;">
-          No Bill of Materials (BOM) items added yet. Click "+ Add Item Row" in proposal builder to add custom items.
+    }
+
+    let categoryHeaderHtml = '';
+    const catName = getStandardCategoryName(bItem.category, bItem.itemName);
+    const catIdx = getBomCategoryIndex(bItem.category, bItem.itemName);
+
+    if (catIdx >= 4 && catIdx <= 8 && catName !== currentCategoryHeader) {
+      currentCategoryHeader = catName;
+      categoryHeaderHtml = `
+        <tr style="background: #e2e8f0; color: #0f172a; font-weight: 900; font-size: 10.5px;">
+          <td style="padding: 4px 6px; border: 1px solid #cbd5e1; text-align: center; font-weight: 900;">${catIdx}</td>
+          <td style="padding: 4px 8px; border: 1px solid #cbd5e1; font-weight: 900; color: #0f172a;" colspan="4"><strong>${catName}</strong></td>
+        </tr>
+      `;
+    }
+
+    const itemDesc = bItem.description ? `<br/><span style="font-size: 9px; font-weight: normal; color: #475569; white-space: pre-line;">${bItem.description}</span>` : '';
+
+    return `
+      ${categoryHeaderHtml}
+      <tr style="vertical-align: top;">
+        <td style="padding: 5px 6px; border: 1px solid #cbd5e1; text-align: center; font-weight: bold;">${bItem.srNo}</td>
+        <td style="padding: 5px 8px; border: 1px solid #cbd5e1; font-weight: bold; color: #0f172a;">
+          ${bItem.itemName}
+          ${itemDesc}
         </td>
+        <td style="padding: 5px 6px; border: 1px solid #cbd5e1; text-align: center; font-weight: bold;">${bItem.qty}</td>
+        <td style="padding: 5px 6px; border: 1px solid #cbd5e1; text-align: center;">${bItem.unit || 'Nos'}</td>
+        <td style="padding: 5px 8px; border: 1px solid #cbd5e1; font-weight: 600;">${bItem.brand || 'As specified'}</td>
       </tr>
     `;
-  }
+  }).join('');
 
   return `
-    <!-- PAGE 1: COVER PAGE -->
-    <div class="quotation-document-page" style="width: 210mm; height: 297mm; min-width: 210mm; min-height: 297mm; max-width: 210mm; max-height: 297mm; background: #ffffff; display: flex; position: relative; box-sizing: border-box; font-family: Arial, sans-serif; overflow: hidden; flex-shrink: 0;">
-      <div style="width: 47%; height: 100%; position: relative; background: #0f172a url('${cover}') center center / cover no-repeat;">
+    <!-- PAGE 1: EXACT MATCH PROPOSAL COVER PAGE (TEMPLATE BASED WITH VECTOR SVGS) -->
+    <div class="quotation-document-page" style="width: 210mm; height: 297mm; min-width: 210mm; min-height: 297mm; max-width: 210mm; max-height: 297mm; background: #ffffff url('${qoutationCover}') center center / 100% 100% no-repeat; display: flex; flex-direction: column; justify-content: space-between; box-sizing: border-box; font-family: 'Segoe UI', Arial, sans-serif; position: relative; overflow: hidden; flex-shrink: 0; padding: 0;">
+      
+      <!-- Top Right Logo (Extra Large Logo for Page 1) -->
+      <div style="position: absolute; top: 32px; right: 36px; text-align: right;">
+        <img src="${logo}" style="height: 85px; max-width: 260px; width: auto; object-fit: contain;" />
       </div>
-      <div style="width: 53%; height: 100%; background: #FFC000; display: flex; flex-direction: column; justify-content: space-between; box-sizing: border-box;">
-        <div style="height: 31%; background: #FFC000; padding: 32px 24px; display: flex; flex-direction: column; justify-content: flex-start; align-items: flex-end; text-align: right; box-sizing: border-box;">
-          <h1 style="font-size: 32px; font-weight: 900; color: #0f172a; text-transform: uppercase; margin: 0; line-height: 1.1;">Roof Top Solar</h1>
-          <h2 style="font-size: 40px; font-weight: 900; color: #0f172a; text-transform: uppercase; margin: 4px 0 0 0; line-height: 1.1;">Proposal</h2>
-          <span style="font-size: 14px; font-weight: 800; color: #0f172a; background: #ffffff; padding: 4px 12px; border-radius: 4px; margin-top: 8px;">${capacity} kWp Grid-Tie System</span>
-        </div>
-        <div style="height: 31%; background: #193047; padding: 24px; display: flex; flex-direction: column; justify-content: center; align-items: center; text-align: center; color: #ffffff; box-sizing: border-box;">
-          <h2 style="font-size: 22px; font-weight: 900; text-transform: uppercase; margin: 0 0 8px 0; color: #ffffff;">${cName}</h2>
-          <p style="font-size: 13px; font-weight: 600; color: #e2e8f0; margin: 0;">${cMobile}${cEmail ? ' | ' + cEmail : ''}</p>
-          <p style="font-size: 13px; font-weight: 600; color: #cbd5e1; margin: 4px 0 0 0;">${city}, ${statePin}</p>
-          ${cNo !== 'N/A' ? `<p style="font-size: 11px; font-weight: 700; color: #fbbf24; margin: 6px 0 0 0;">Consumer No: ${cNo} | Sanction: ${sLoad}</p>` : ''}
-        </div>
-        <div style="height: 38%; background: #FFC000; padding: 28px 24px; display: flex; flex-direction: column; justify-content: space-between; color: #0f172a; box-sizing: border-box;">
-          <div style="text-align: center;">
-            <img src="${logo}" style="max-height: 52px; max-width: 180px; width: auto; height: auto; display: inline-block; object-fit: contain; margin-bottom: 8px;" />
-            <h3 style="font-size: 20px; font-weight: 900; margin: 0; color: #0f172a;">Green Energy Solutions</h3>
-            <p style="font-size: 12px; font-weight: 600; margin: 4px 0 0 0;">Maharashtra, India</p>
-            <div style="width: 120px; height: 3px; background: #193047; margin: 12px auto; border-radius: 2px;"></div>
-          </div>
-          <div style="text-align: right; font-size: 13px; font-weight: 800; color: #0f172a; line-height: 1.6;">
-            <div><span style="font-weight: 900;">Proposal ID :</span> ${propId}</div>
-            <div><span style="font-weight: 900;">Date :</span> ${propDate}</div>
-            <div><span style="font-weight: 900;">Prepared By :</span> ${byName}</div>
-          </div>
+
+      <!-- Proposal Title Block (Top Right White Section - Larger, Spacious & Positioned Down) -->
+      <div style="position: absolute; top: 235px; right: 36px; text-align: left; width: 46%;">
+        <span style="background: #EAA20A; color: #ffffff; font-size: 12px; font-weight: 800; padding: 6px 18px; border-radius: 14px; letter-spacing: 1px; text-transform: uppercase; display: inline-block;">
+          PROPOSAL FOR
+        </span>
+        <h1 style="font-size: 52px; font-weight: 900; color: #0d2847; margin: 12px 0 0 0; text-transform: uppercase; letter-spacing: 1px; line-height: 0.92;">
+          ROOFTOP
+        </h1>
+        <h2 style="font-size: 58px; font-weight: 900; color: #EAA20A; margin: 3px 0 0 0; text-transform: uppercase; letter-spacing: 1px; line-height: 0.92;">
+          SOLAR
+        </h2>
+        <h3 style="font-size: 30px; font-weight: 800; color: #0d2847; margin: 6px 0 0 0; text-transform: uppercase; letter-spacing: 6px;">
+          PROJECT
+        </h3>
+        <div style="display: flex; align-items: center; margin-top: 14px;">
+          <div style="height: 3.5px; width: 210px; background: #EAA20A; border-radius: 2px;"></div>
+          <div style="width: 9px; height: 9px; background: #EAA20A; border-radius: 50%; margin-left: -3px;"></div>
         </div>
       </div>
+
+      <!-- Dark Blue Customer Info Bar Overlay (Middle Right - Perfectly Inside Dark Blue Bar with Generous Spacing) -->
+      <div style="position: absolute; top: 568px; right: 0px; width: 54%; height: 130px; display: flex; align-items: center; padding-left: 32px; box-sizing: border-box;">
+        <!-- Yellow User Icon Circle -->
+        <div style="width: 52px; height: 52px; border-radius: 50%; background: #EAA20A; display: flex; align-items: center; justify-content: center; margin-right: 18px; flex-shrink: 0; box-shadow: 0 4px 12px rgba(0,0,0,0.3);">
+          <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#ffffff" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path>
+            <circle cx="12" cy="7" r="4"></circle>
+          </svg>
+        </div>
+        <!-- Customer Details (Generous Spacing, Clean Line Height, Zero Overlap) -->
+        <div style="color: #ffffff; text-align: left; display: flex; flex-direction: column; justify-content: center; width: calc(100% - 70px);">
+          <h2 style="font-size: 21px; font-weight: 900; margin: 0 0 8px 0; text-transform: uppercase; color: #ffffff; letter-spacing: 0.8px; line-height: 1.25; word-break: break-word;">
+            ${cName}
+          </h2>
+          <div style="font-size: 13px; font-weight: 600; color: #ffffff; margin-bottom: 5px; display: flex; align-items: center; gap: 8px;">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="#EAA20A" stroke="#EAA20A" stroke-width="1" style="flex-shrink: 0;">
+              <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"></path>
+              <circle cx="12" cy="10" r="3" fill="#0d2847"></circle>
+            </svg>
+            <span style="line-height: 1.2; font-weight: 700;">${city}, ${statePin}</span>
+          </div>
+          ${cMobile ? `
+            <div style="font-size: 12.5px; font-weight: 600; color: #ffffff; margin-top: 1px; display: flex; align-items: center; gap: 8px;">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="#EAA20A" stroke="#EAA20A" style="flex-shrink: 0;">
+                <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"></path>
+              </svg>
+              <span style="line-height: 1.2; font-weight: 700;">${cMobile}</span>
+            </div>
+          ` : ''}
+        </div>
+      </div>
+
+      <!-- 3 Feature Badges Section (Shifted Down & Right for Perfect Clearance) -->
+      <div style="position: absolute; top: 760px; right: 12px; width: 48%; display: flex; justify-content: space-between; text-align: center;">
+        <!-- Clean Energy Badge Card -->
+        <div style="display: flex; flex-direction: column; align-items: center; width: 31%; background: #ffffff; padding: 12px 6px; border-radius: 14px; box-shadow: 0 4px 14px rgba(0,0,0,0.06); border: 1px solid #e2e8f0;">
+          <div style="width: 46px; height: 46px; border-radius: 50%; background: #fffbeb; border: 1.5px solid #fde68a; display: flex; align-items: center; justify-content: center; margin-bottom: 8px; box-shadow: 0 2px 6px rgba(234, 162, 10, 0.15);">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#EAA20A" stroke-width="2">
+              <circle cx="12" cy="12" r="4"></circle>
+              <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"></path>
+            </svg>
+          </div>
+          <span style="font-size: 10px; font-weight: 800; color: #0d2847; text-transform: uppercase; line-height: 1.25; letter-spacing: 0.3px;">CLEAN<br/>ENERGY</span>
+        </div>
+
+        <!-- Sustainable Future Badge Card -->
+        <div style="display: flex; flex-direction: column; align-items: center; width: 31%; background: #ffffff; padding: 12px 6px; border-radius: 14px; box-shadow: 0 4px 14px rgba(0,0,0,0.06); border: 1px solid #e2e8f0;">
+          <div style="width: 46px; height: 46px; border-radius: 50%; background: #ecfdf5; border: 1.5px solid #a7f3d0; display: flex; align-items: center; justify-content: center; margin-bottom: 8px; box-shadow: 0 2px 6px rgba(5, 150, 105, 0.15);">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#059669" stroke-width="2">
+              <path d="M11 20A7 7 0 0 1 9.8 6.1C15.5 5 17 4.48 19 2c1 2 2 4.18 2 8 0 5.5-4.78 10-10 10Z"></path>
+              <path d="M2 21c0-3 1.85-5.36 5.08-6C9.5 14.52 12 13 13 12"></path>
+            </svg>
+          </div>
+          <span style="font-size: 10px; font-weight: 800; color: #0d2847; text-transform: uppercase; line-height: 1.25; letter-spacing: 0.3px;">SUSTAINABLE<br/>FUTURE</span>
+        </div>
+
+        <!-- Lower Bills Badge Card -->
+        <div style="display: flex; flex-direction: column; align-items: center; width: 34%; background: #ffffff; padding: 12px 6px; border-radius: 14px; box-shadow: 0 4px 14px rgba(0,0,0,0.06); border: 1px solid #e2e8f0;">
+          <div style="width: 46px; height: 46px; border-radius: 50%; background: #fffbeb; border: 1.5px solid #fde68a; display: flex; align-items: center; justify-content: center; margin-bottom: 8px; box-shadow: 0 2px 6px rgba(234, 162, 10, 0.15);">
+            <span style="font-size: 22px; font-weight: 900; color: #0d2847;">₹</span>
+          </div>
+          <span style="font-size: 10px; font-weight: 800; color: #0d2847; text-transform: uppercase; line-height: 1.25; letter-spacing: 0.3px;">LOWER BILLS<br/>HIGHER SAVINGS</span>
+        </div>
+      </div>
+
+      <!-- Bottom Left Dark Blue Block Metadata (All White Text & Clean SVGs) -->
+      <div style="position: absolute; bottom: 38px; left: 68px; width: 42%; color: #ffffff; font-size: 14px; font-weight: 700; line-height: 2.3; text-align: left;">
+        <div style="display: flex; align-items: center; margin-bottom: 4px;">
+          <div style="width: 28px; display: flex; align-items: center; justify-content: center; margin-right: 10px;">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="#EAA20A" stroke="#EAA20A" stroke-width="1.5">
+              <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path>
+              <circle cx="12" cy="7" r="4"></circle>
+            </svg>
+          </div>
+          <span style="color: #ffffff; font-weight: 800; font-size: 15px; width: 55px;">Lead</span>
+          <span style="color: #ffffff; font-weight: 800; font-size: 15px;">: &nbsp; B2C</span>
+        </div>
+
+        <div style="display: flex; align-items: center; margin-bottom: 4px;">
+          <div style="width: 28px; display: flex; align-items: center; justify-content: center; margin-right: 10px;">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#EAA20A" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="3" y="4" width="18" height="16" rx="3"></rect>
+              <circle cx="9" cy="10" r="2.5" fill="#EAA20A"></circle>
+              <line x1="15" y1="9" x2="18" y2="9"></line>
+              <line x1="15" y1="12" x2="18" y2="12"></line>
+              <line x1="7" y1="16" x2="17" y2="16"></line>
+            </svg>
+          </div>
+          <span style="color: #ffffff; font-weight: 800; font-size: 15px; width: 55px;">ID</span>
+          <span style="color: #ffffff; font-weight: 800; font-size: 15px;">: &nbsp; ${propId}</span>
+        </div>
+
+        <div style="display: flex; align-items: center; margin-bottom: 4px;">
+          <div style="width: 28px; display: flex; align-items: center; justify-content: center; margin-right: 10px;">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#EAA20A" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="3" y="4" width="18" height="18" rx="3" ry="3"></rect>
+              <line x1="16" y1="2" x2="16" y2="6"></line>
+              <line x1="8" y1="2" x2="8" y2="6"></line>
+              <line x1="3" y1="10" x2="21" y2="10"></line>
+              <rect x="7" y="13" width="3" height="3" fill="#EAA20A"></rect>
+              <rect x="14" y="13" width="3" height="3" fill="#EAA20A"></rect>
+            </svg>
+          </div>
+          <span style="color: #ffffff; font-weight: 800; font-size: 15px; width: 55px;">Date</span>
+          <span style="color: #ffffff; font-weight: 800; font-size: 15px;">: &nbsp; ${propDate}</span>
+        </div>
+
+        <div style="display: flex; align-items: center;">
+          <div style="width: 28px; display: flex; align-items: center; justify-content: center; margin-right: 10px;">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#EAA20A" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
+              <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" fill="#EAA20A"></path>
+            </svg>
+          </div>
+          <span style="color: #ffffff; font-weight: 800; font-size: 15px; width: 55px;">By</span>
+          <span style="color: #ffffff; font-weight: 800; font-size: 15px;">: &nbsp; ${byName}</span>
+        </div>
+      </div>
+
     </div>
 
     <!-- PAGE 2: ABOUT GREEN ENERGY SOLUTIONS -->
@@ -320,12 +428,21 @@ export function createNewQuotationProposalHtml(q: any, lead: any, creatorName: s
       <div style="padding: 36px 48px 0 48px; flex: 1;">
         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; height: 48px;">
           <h3 style="font-size: 14px; font-weight: 900; color: #0f172a; text-transform: uppercase;">Company Profile</h3>
-          <img src="${logo}" style="max-height: 44px; max-width: 160px; width: auto; height: auto; display: inline-block; object-fit: contain;" />
+          <img src="${logo}" style="max-height: 60px; max-width: 210px; height: 60px; width: auto; display: inline-block; object-fit: contain;" />
         </div>
-        <div style="width: 100%; height: 250px; background: #f1f5f9 url('${engineer}') center center / cover no-repeat; border-radius: 6px 6px 0 0; border: 1px solid #cbd5e1; overflow: hidden; position: relative;">
+        <!-- Solar Engineer Hero Visual Banner (330px height + center 35% alignment to show both full head & solar panels) -->
+        <div style="width: 100%; height: 330px; background: #f1f5f9 url('${engineer}') center 35% / cover no-repeat; border-radius: 12px 12px 0 0; border: 1px solid #cbd5e1; border-bottom: none; overflow: hidden; position: relative; box-shadow: 0 4px 16px rgba(0,0,0,0.06);">
         </div>
-        <div style="background: #FFC000; padding: 12px 20px; text-align: right; margin-top: 0px; font-weight: 900; font-size: 14px; color: #0f172a; border-radius: 0 0 6px 6px;">
-          GREEN ENERGY SOLUTIONS PVT. LTD
+
+        <!-- Premium Redesigned Green Banner -->
+        <div style="background: linear-gradient(135deg, #059669 0%, #047857 100%); padding: 14px 24px; display: flex; justify-content: space-between; align-items: center; border-radius: 0 0 12px 12px; border-bottom: 3.5px solid #fbbf24; box-shadow: 0 4px 14px rgba(5, 150, 105, 0.25);">
+          <div style="display: flex; align-items: center; gap: 8px; color: #ecfdf5; font-size: 12px; font-weight: 700; letter-spacing: 0.5px;">
+            <span style="display: inline-block; width: 8px; height: 8px; background: #fbbf24; border-radius: 50%;"></span>
+            Turnkey Solar EPC & Renewable Energy Excellence
+          </div>
+          <span style="font-weight: 900; font-size: 13.5px; color: #ffffff; text-transform: uppercase; letter-spacing: 1px;">
+            GREEN ENERGY SOLUTIONS PVT. LTD.
+          </span>
         </div>
         <div style="margin-top: 24px; color: #0f172a;">
           <h2 style="font-size: 22px; font-weight: 900; margin-bottom: 16px;">About Green Energy Solutions Pvt. Ltd</h2>
@@ -348,7 +465,7 @@ export function createNewQuotationProposalHtml(q: any, lead: any, creatorName: s
       <div style="padding: 36px 48px 0 48px; flex: 1; display: flex; flex-direction: column;">
         <div style="display: flex; justify-content: space-between; align-items: center; height: 48px; margin-bottom: 16px;">
           <h3 style="font-size: 14px; font-weight: 900; color: #0f172a; text-transform: uppercase;">Why Choose Us & Values</h3>
-          <img src="${logo}" style="height: 48px; object-fit: contain;" />
+          <img src="${logo}" style="height: 60px; max-width: 210px; object-fit: contain;" />
         </div>
 
         <div style="display: flex; flex-direction: column; gap: 20px; margin-top: 12px;">
@@ -393,7 +510,7 @@ export function createNewQuotationProposalHtml(q: any, lead: any, creatorName: s
       <div style="padding: 30px 40px 0 40px; flex: 1; display: flex; flex-direction: column;">
         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
           <h3 style="font-size: 14px; font-weight: 900; color: #0f172a; text-transform: uppercase; margin: 0;">Technical System Design & Layout</h3>
-          <img src="${logo}" style="height: 48px; object-fit: contain;" />
+          <img src="${logo}" style="height: 60px; max-width: 210px; object-fit: contain;" />
         </div>
         
         <!-- Large Centered High-Resolution 70% Area Design Layout Image -->
@@ -414,8 +531,8 @@ export function createNewQuotationProposalHtml(q: any, lead: any, creatorName: s
           <div style="text-align: center; flex: 1;">
             <h1 style="font-size: 26px; font-weight: 900; color: #193047; text-decoration: underline; margin: 0; text-transform: none;">Quotation</h1>
           </div>
-          <div style="width: 120px; text-align: right;">
-            <img src="${logo}" style="height: 44px; object-fit: contain;" />
+          <div style="width: 140px; text-align: right;">
+            <img src="${logo}" style="height: 58px; max-width: 200px; object-fit: contain;" />
           </div>
         </div>
 
@@ -493,25 +610,30 @@ export function createNewQuotationProposalHtml(q: any, lead: any, creatorName: s
         <!-- Notes, Bank Details & Signature Section -->
         <div style="display: flex; justify-content: space-between; border: 1px solid #cbd5e1; padding: 12px; margin-bottom: 16px; font-size: 10px; line-height: 1.5; background: #ffffff;">
           <!-- Notes & Bank Info 1 -->
-          <div style="width: 34%; color: #334155; padding-right: 10px;">
-            <p style="font-weight: 900; color: #0f172a; margin: 0 0 4px 0;">Notes: Bank Detail :</p>
-            <p style="margin: 0;">Please Refer Detailed Terms & LTD</p>
-            <p style="margin: 0;">for payment & Warranty Account</p>
-            <p style="font-weight: 900; color: #0f172a; margin: 4px 0 0 0;">PRIVATE LIMITED</p>
-            <p style="margin: 1px 0 0 0;">Account No.:- 18XXXX2858</p>
-            <p style="margin: 1px 0 0 0;">IFSC :- ICIC0001836</p>
+          <div style="width: 36%; color: #334155; padding-right: 10px;">
+            <p style="font-weight: 900; color: #0f172a; margin: 0 0 4px 0;">Notes / Bank Details:</p>
+            <p style="font-weight: 900; color: #059669; margin: 0 0 3px 0;">GREEN ENERGY SOLUTIONS PVT. LTD.</p>
+            <p style="margin: 2px 0 0 0; color: #0f172a; font-weight: 700;">Account No : <span style="font-weight: 900; color: #0f172a;">575705000030</span></p>
+            <p style="margin: 2px 0 0 0; color: #0f172a; font-weight: 700;">IFSC Code : <span style="font-weight: 900; color: #0f172a;">ICICI0005757</span></p>
+            <p style="margin: 4px 0 0 0; color: #64748b; font-size: 9.5px;">Please refer to terms for payment & warranty conditions.</p>
           </div>
 
-          <!-- Bank Info 2 -->
+          <!-- Bank Info 2 (Bank Address & Branch) -->
           <div style="width: 36%; border-left: 1px solid #cbd5e1; padding: 0 10px; color: #334155;">
-            <p style="margin: 22px 0 2px 0;">Condition Bank Name:- ICICI BANK</p>
-            <p style="margin: 2px 0 0 0;">Name.:- XXXXXX XXXXXX</p>
-            <p style="margin: 10px 0 0 0; font-weight: 800; color: #0f172a;">Branch:- KATARGAM - SURAT</p>
+            <p style="font-weight: 900; color: #0f172a; margin: 0 0 4px 0;">Bank & Branch Info:</p>
+            <p style="margin: 0; font-weight: 800; color: #0f172a;">Bank Name: ICICI Bank</p>
+            <p style="margin: 2px 0 0 0; font-weight: 800; color: #059669;">Branch: Nagpur - Ajni Square Branch</p>
+            <p style="margin: 3px 0 0 0; font-size: 9.5px; color: #475569; line-height: 1.35;">
+              Plot No. 10 Hindustan colony, Near Ajni Square, Wardha Road, MH - 440015
+            </p>
           </div>
 
-          <!-- Signature Box -->
-          <div style="width: 26%; border-left: 1px solid #cbd5e1; padding-left: 10px; text-align: center; display: flex; flex-direction: column; justify-content: flex-end; align-items: center; min-height: 70px;">
-            <p style="font-weight: 800; color: #0f172a; margin: 0; border-top: 1.5px solid #0f172a; padding-top: 4px; width: 100%; font-size: 10px;">Authorized Signature</p>
+          <!-- Authorized Signature & Official Company Stamp Box (Enlarged Stamp) -->
+          <div style="width: 28%; border-left: 1px solid #cbd5e1; padding: 4px 10px; text-align: center; display: flex; flex-direction: column; justify-content: space-between; align-items: center; min-height: 105px; position: relative;">
+            <div style="flex: 1; display: flex; align-items: center; justify-content: center; width: 100%; max-height: 90px; margin-bottom: 2px;">
+              <img src="${stamp}" style="max-height: 85px; max-width: 165px; width: auto; height: auto; object-fit: contain;" />
+            </div>
+            <p style="font-weight: 800; color: #0f172a; margin: 0; border-top: 1.5px solid #0f172a; padding-top: 4px; width: 100%; font-size: 10px; text-transform: uppercase;">Authorized Signature</p>
           </div>
         </div>
 
@@ -530,8 +652,8 @@ export function createNewQuotationProposalHtml(q: any, lead: any, creatorName: s
           <div style="text-align: center; flex: 1;">
             <h1 style="font-size: 22px; font-weight: 900; color: #0f172a; margin: 0;">Bill of Material</h1>
           </div>
-          <div style="width: 100px; text-align: right;">
-            <img src="${logo}" style="height: 44px; object-fit: contain;" />
+          <div style="width: 140px; text-align: right;">
+            <img src="${logo}" style="height: 58px; max-width: 200px; object-fit: contain;" />
           </div>
         </div>
 
@@ -575,7 +697,7 @@ export function createNewQuotationProposalHtml(q: any, lead: any, creatorName: s
             <h3 style="font-size: 13px; font-weight: 900; color: #0f172a; text-transform: uppercase; margin: 0;">Warranties & Terms of Agreement</h3>
             <p style="font-size: 9px; color: #64748b; margin: 2px 0 0 0;">Green Energy Solutions Pvt. Ltd. — Solar Rooftop EPC Policy</p>
           </div>
-          <img src="${logo}" style="height: 38px; object-fit: contain;" />
+          <img src="${logo}" style="height: 54px; max-width: 190px; object-fit: contain;" />
         </div>
 
         <!-- Section 1: Government Subsidy -->
@@ -686,7 +808,7 @@ export function createNewQuotationProposalHtml(q: any, lead: any, creatorName: s
               <h1 style="font-size: 24px; font-weight: 900; color: #193047; margin: 0;">Testimonials</h1>
               <p style="font-size: 11px; color: #64748b; margin: 2px 0 0 0;">What our happy solar rooftop customers say about us</p>
             </div>
-            <img src="${logo}" style="height: 44px; object-fit: contain;" />
+            <img src="${logo}" style="height: 60px; max-width: 210px; object-fit: contain;" />
           </div>
 
           <!-- Review 1 Card -->
@@ -777,29 +899,119 @@ export function createNewQuotationProposalHtml(q: any, lead: any, creatorName: s
   `;
 }
 
-export const pdfService = {
-  async generateQuotationPDF(q: Quotation, lead: Lead, creatorName: string): Promise<Blob> {
-    const existingContainer = document.querySelector('.quotation-print-container') as HTMLElement;
-    if (existingContainer) {
-      try {
-        return await generateQuotationDocumentPDF(existingContainer, `Solar_Quotation_${q.quotationNumber || 'EST'}.pdf`);
-      } catch (err) {
-        console.warn("DOM container capture note:", err);
-      }
-    }
+export function printQuotationHTML(htmlString: string, title: string = 'Quotation Proposal'): void {
+  const printWindow = window.open('', '_blank', 'width=1100,height=900');
+  if (!printWindow) {
+    alert('⚠️ Popup blocked: Kripya browser settings me popups allow karein quotation print karne ke liye.');
+    return;
+  }
 
+  const fullPrintHtml = `
+    <!DOCTYPE html>
+    <html>
+      <head>
+        <title>${title}</title>
+        <meta charset="utf-8" />
+        <style>
+          @page {
+            size: A4 portrait;
+            margin: 0;
+          }
+          *, *:before, *:after {
+            -webkit-print-color-adjust: exact !important;
+            print-color-adjust: exact !important;
+            color-adjust: exact !important;
+          }
+          html, body {
+            margin: 0 !important;
+            padding: 0 !important;
+            background: #ffffff !important;
+            width: 210mm;
+            font-family: 'Segoe UI', Arial, sans-serif;
+          }
+          .quotation-document-page {
+            width: 210mm !important;
+            height: 297mm !important;
+            min-width: 210mm !important;
+            min-height: 297mm !important;
+            max-width: 210mm !important;
+            max-height: 297mm !important;
+            page-break-after: always !important;
+            page-break-inside: avoid !important;
+            break-after: page !important;
+            break-inside: avoid !important;
+            box-sizing: border-box !important;
+            position: relative !important;
+            overflow: hidden !important;
+            background-color: #ffffff !important;
+            margin: 0 !important;
+            border: none !important;
+            box-shadow: none !important;
+          }
+          @media print {
+            html, body {
+              width: 210mm !important;
+              height: 297mm !important;
+              margin: 0 !important;
+              padding: 0 !important;
+            }
+            .quotation-document-page {
+              margin: 0 !important;
+              border: none !important;
+              box-shadow: none !important;
+            }
+          }
+        </style>
+      </head>
+      <body>
+        ${htmlString}
+        <script>
+          window.onload = function() {
+            setTimeout(function() {
+              window.focus();
+              window.print();
+            }, 600);
+          };
+        </script>
+      </body>
+    </html>
+  `;
+
+  printWindow.document.open();
+  printWindow.document.write(fullPrintHtml);
+  printWindow.document.close();
+}
+
+export const pdfService = {
+  printQuotationHTML,
+
+  async generateQuotationPDF(q: Quotation, lead: Lead, creatorName: string): Promise<Blob> {
+    // Always render from a clean, un-transformed off-screen container for 1:1 pixel-perfect layout precision
     const tempDiv = document.createElement('div');
-    tempDiv.className = 'quotation-print-container';
-    tempDiv.style.position = 'absolute';
-    tempDiv.style.left = '0';
-    tempDiv.style.top = '0';
+    tempDiv.className = 'quotation-pdf-export-container';
+    tempDiv.style.position = 'fixed';
+    tempDiv.style.left = '-9999px';
+    tempDiv.style.top = '-9999px';
     tempDiv.style.width = '210mm';
     tempDiv.style.zIndex = '-9999';
-    tempDiv.style.opacity = '0';
+    tempDiv.style.opacity = '1';
     tempDiv.style.pointerEvents = 'none';
     tempDiv.style.backgroundColor = '#ffffff';
+    tempDiv.style.transform = 'none';
     tempDiv.innerHTML = createNewQuotationProposalHtml(q, lead, creatorName);
     document.body.appendChild(tempDiv);
+
+    // Pre-load all images (qoutation 1.png, logo, engineer, stamp) for sub-second ultra-fast PDF generation
+    const images = Array.from(tempDiv.querySelectorAll('img'));
+    await Promise.all(
+      images.map(img => {
+        if (img.complete) return Promise.resolve();
+        return new Promise(resolve => {
+          img.onload = resolve;
+          img.onerror = resolve;
+        });
+      })
+    );
 
     try {
       const blob = await generateQuotationDocumentPDF(tempDiv, `Solar_Quotation_${q.quotationNumber || 'EST'}.pdf`);
@@ -929,6 +1141,7 @@ export const pdfService = {
     });
 
     const logoData = await getLogoBase64();
+    const stampData = await convertImageToBase64(stampImg);
 
     // Theme palette (Crisp White Header, Dark Slate Typography, Emerald Accents)
     const slateDark = [15, 23, 42];
@@ -1069,16 +1282,41 @@ export const pdfService = {
       const qtyNum = Number(item.qty) || 0;
       totalItemsCount += qtyNum;
 
+      const hasSerials = item.serialNumbers && item.serialNumbers.length > 0;
+      let snLines: string[] = [];
+
+      if (hasSerials) {
+        doc.setFontSize(7);
+        doc.setFont('courier', 'bold');
+        const snText = `Serial Nos: ${item.serialNumbers.join(', ')}`;
+        snLines = doc.splitTextToSize(snText, 100);
+      }
+
+      const rowHeight = hasSerials ? Math.max(9.5, 5.5 + (snLines.length * 3.8)) : 7.5;
+
       if (idx % 2 === 1) {
         doc.setFillColor(248, 250, 252);
-        doc.rect(14, currentY - 4.5, 182, 7.5, 'F');
+        doc.rect(14, currentY - 4.5, 182, rowHeight, 'F');
       }
 
       doc.setTextColor(slateDark[0], slateDark[1], slateDark[2]);
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(8.5);
       doc.text(`${idx + 1}`, 18, currentY);
 
       const prodName = item.productName.length > 55 ? item.productName.substring(0, 52) + '...' : item.productName;
       doc.text(prodName, 34, currentY);
+
+      if (hasSerials && snLines.length > 0) {
+        doc.setFontSize(7);
+        doc.setFont('courier', 'bold');
+        doc.setTextColor(5, 150, 105);
+        snLines.forEach((line: string, lIdx: number) => {
+          doc.text(line, 34, currentY + 4 + (lIdx * 3.6));
+        });
+        doc.setFont('helvetica', 'normal');
+        doc.setFontSize(8.5);
+      }
 
       doc.setTextColor(slateGray[0], slateGray[1], slateGray[2]);
       doc.text(item.category ? item.category.replace('_', ' ').toUpperCase() : 'SOLAR PART', 140, currentY);
@@ -1089,8 +1327,8 @@ export const pdfService = {
       doc.setFont('helvetica', 'normal');
 
       doc.setDrawColor(241, 245, 249);
-      doc.line(14, currentY + 2.5, 196, currentY + 2.5);
-      currentY += 7.5;
+      doc.line(14, currentY - 4.5 + rowHeight, 196, currentY - 4.5 + rowHeight);
+      currentY += rowHeight;
     });
 
     // Summary Total Row
@@ -1121,8 +1359,8 @@ export const pdfService = {
     doc.setTextColor(slateGray[0], slateGray[1], slateGray[2]);
     doc.text('We hereby acknowledge receipt of the above listed solar equipment and materials in sound condition & exact specified quantity.', 14, footerY + 4.5);
 
-    // 3 Signature Columns (positioned right below acknowledgement)
-    const signY = footerY + 22;
+    // 3 Signature Columns (positioned right below acknowledgement with clear vertical space)
+    const signY = footerY + 30;
 
     // Signature 1: Driver / Carrier
     doc.setDrawColor(203, 213, 225);
@@ -1145,7 +1383,11 @@ export const pdfService = {
     doc.text(`Customer: ${ch.leadName}`, 80, signY + 3.5);
 
     // Signature 3: Authorized Signatory
+    if (stampData) {
+      doc.addImage(stampData, 'PNG', 152, signY - 19, 34, 17);
+    }
     doc.line(146, signY - 4, 196, signY - 4);
+    doc.setTextColor(slateDark[0], slateDark[1], slateDark[2]);
     doc.setFont('helvetica', 'bold');
     doc.setFontSize(8);
     doc.text("FOR GREEN ENERGY SOLUTION", 146, signY);

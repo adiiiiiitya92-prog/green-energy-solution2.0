@@ -1,7 +1,5 @@
-import dayjs from 'dayjs';
 import type { Quotation, Lead } from '../types';
-import { quotationService, getCleanWhatsAppPhone } from './quotationService';
-import { uploadPdfToFirebase } from './firebase';
+import { quotationService } from './quotationService';
 import { pdfService } from './pdfService';
 
 export interface ShareQuotationParams {
@@ -11,25 +9,22 @@ export interface ShareQuotationParams {
 }
 
 /**
- * Dual-Strategy PDF/Quotation sharing logic on WhatsApp with Web Share API and Cloud Storage fallback:
- * 
- * 1. Primary (Native Share):
- *    - Takes PDF blob and checks navigator.canShare({ files: [pdfFile] }).
- *    - If supported, triggers navigator.share() with the PDF File object for direct native OS sharing.
- * 
- * 2. Secondary / Fallback (Cloud Storage Presigned URL + wa.me link):
- *    - Uploads PDF Blob to Cloud Storage (Backblaze B2) if pdfUrl is not present.
- *    - Formats a structured WhatsApp message with Header, Proposal No, Client Name, Itemized Summary, Grand Total & PDF link.
- *    - Opens WhatsApp using https://wa.me/<country_code><phone_number>?text=<url_encoded_message> in a new tab.
- * 
- * 3. DB State Update:
- *    - Updates database quotation status to 'Sent' (sentViaWhatsapp: true) upon sharing initiation.
+ * Ultra-fast WhatsApp PDF sharing via Native Web Share API.
+ *
+ * Flow:
+ * 1. Use cached PDF blob if available (instant), otherwise generate on-the-fly.
+ * 2. Create a File object from the PDF blob.
+ * 3. Call navigator.share({ files: [pdfFile] }) — this opens the native OS share sheet.
+ *    The user picks WhatsApp and then chooses which contact/group to send to.
+ *    No phone number redirect — user has full control.
+ * 4. Fallback: If native share is not supported, open wa.me (without phone number)
+ *    so user can pick who to send to manually.
  */
 export async function shareQuotationViaWhatsapp(params: ShareQuotationParams): Promise<{ success: boolean; method: 'native' | 'fallback' }> {
   const { quotation, lead } = params;
   let pdfBlob = params.pdfBlob;
 
-  // 1. Ensure we have a valid PDF blob
+  // 1. Ensure we have a valid PDF blob (use cached blob for speed, generate only if missing)
   if (!pdfBlob) {
     if (quotation.pdfBlob) {
       pdfBlob = quotation.pdfBlob;
@@ -57,114 +52,64 @@ export async function shareQuotationViaWhatsapp(params: ShareQuotationParams): P
   const propNo = quotation.quotationNumber || quotation.proposalId || 'EST-001';
   const sanitizedPropNo = (propNo || quotation.id).replace(/\//g, '_');
   const pdfFileName = `Solar_Quotation_${sanitizedPropNo}.pdf`;
-  const rawPhone = quotation.consumerMobile || quotation.consumerNo || lead?.phoneNumber || '';
-  const targetPhone = getCleanWhatsAppPhone(rawPhone);
-  const clientName = quotation.consumerName || lead?.name || 'Valued Customer';
 
-  // ----------------------------------------------------
-  // Strategy 1: Primary Native OS Web Share API
-  // ----------------------------------------------------
+  // -------------------------------------------------------
+  // Strategy 1: Native OS Web Share API (instant, no redirect)
+  // Opens the system share sheet → user picks WhatsApp → picks contact
+  // -------------------------------------------------------
   if (pdfBlob && typeof navigator !== 'undefined' && (navigator as any).canShare) {
     try {
       const pdfFile = new File([pdfBlob], pdfFileName, { type: 'application/pdf' });
       if ((navigator as any).canShare({ files: [pdfFile] })) {
         await (navigator as any).share({
           title: `Solar Proposal ${propNo}`,
-          text: `Solar Rooftop Quotation ${propNo} for ${clientName}`,
+          text: `Solar Rooftop Quotation ${propNo} - Green Energy Solution`,
           files: [pdfFile]
         });
 
-        // Mark DB state as Sent
+        // Mark DB state as Sent (fire-and-forget for speed)
         if (quotation.id) {
-          await quotationService.markQuotationAsSent(quotation.id);
+          quotationService.markQuotationAsSent(quotation.id).catch(() => {});
         }
         return { success: true, method: 'native' };
       }
     } catch (err: any) {
       if (err?.name === 'AbortError') {
-        console.log('Native share dialog dismissed by user');
-      } else {
-        console.warn('Native share failed or unsupported for this file, triggering fallback strategy:', err);
+        console.log('Share dialog dismissed by user');
+        return { success: false, method: 'native' };
       }
+      console.warn('Native share not supported, using fallback:', err);
     }
   }
 
-  // ----------------------------------------------------
-  // Strategy 2: Secondary / Fallback (Cloud Storage + wa.me link)
-  // ----------------------------------------------------
-  let cloudPdfUrl = quotation.pdfUrl;
+  // -------------------------------------------------------
+  // Strategy 2: Fallback — open WhatsApp WITHOUT phone number
+  // User picks the contact themselves inside WhatsApp
+  // -------------------------------------------------------
+  const clientName = quotation.consumerName || lead?.name || 'Valued Customer';
 
-  if (!cloudPdfUrl && pdfBlob) {
-    try {
-      const storagePath = `quotations/pdf_${sanitizedPropNo}.pdf`;
-      const uploadedUrl = await uploadPdfToFirebase(pdfBlob, storagePath);
-      if (uploadedUrl && (uploadedUrl.startsWith('http://') || uploadedUrl.startsWith('https://'))) {
-        cloudPdfUrl = uploadedUrl;
-        if (quotation.id) {
-          await quotationService.updateQuotation({ ...quotation, pdfUrl: cloudPdfUrl });
-        }
-      }
-    } catch (uploadErr) {
-      console.warn('Cloud Storage PDF upload fallback note:', uploadErr);
-    }
-  }
-
-  // Itemized summary calculation
-  let itemizedText = '';
-  if (quotation.items && quotation.items.length > 0) {
-    itemizedText = quotation.items
-      .map(item => `• ${item.name} (${item.quantity} ${item.unit || 'Nos'}) - ₹${(item.amount || item.rate * item.quantity).toLocaleString('en-IN')}`)
-      .join('\n');
-  } else {
-    itemizedText = `• ${quotation.systemCapacity || 'Solar Rooftop System'} - ₹${(quotation.grandTotal || 0).toLocaleString('en-IN')}`;
-  }
-
-  // Construct structured WhatsApp message
   let message = `☀️ *GREEN ENERGY SOLUTION* ☀️\n`;
   message += `📄 *Solar Proposal & Quotation*\n\n`;
   message += `📌 *Proposal No:* ${propNo}\n`;
-  message += `📅 *Date:* ${quotation.proposalDate ? dayjs(quotation.proposalDate).format('DD/MM/YYYY') : dayjs().format('DD/MM/YYYY')}\n`;
-  message += `👤 *Client Name:* ${clientName}\n`;
+  message += `👤 *Client:* ${clientName}\n`;
   if (quotation.systemCapacity) {
-    message += `⚡ *System Capacity:* ${quotation.systemCapacity}\n`;
+    message += `⚡ *System:* ${quotation.systemCapacity}\n`;
   }
-  message += `\n📋 *Itemized Summary:*\n${itemizedText}\n\n`;
   message += `💰 *Grand Total:* ₹${(quotation.grandTotal || quotation.subtotal || 0).toLocaleString('en-IN')}\n\n`;
-
-  if (cloudPdfUrl) {
-    message += `📄 *Click link to download/view PDF Proposal:*\n${cloudPdfUrl}\n\n`;
-  }
-
-  message += `Thank you for choosing *Green Energy Solution*! Feel free to reply for any queries.`;
+  message += `Thank you for choosing *Green Energy Solution*!`;
 
   const encodedMsg = encodeURIComponent(message);
-  const waUrl = targetPhone
-    ? `https://wa.me/${targetPhone}?text=${encodedMsg}`
-    : `https://wa.me/?text=${encodedMsg}`;
+  // No phone number — user picks contact themselves
+  const waUrl = `https://wa.me/?text=${encodedMsg}`;
 
-  // Open WhatsApp in new window/tab
   const win = window.open(waUrl, '_blank');
   if (!win || win.closed || typeof win.closed === 'undefined') {
     window.location.href = waUrl;
   }
 
-  // Trigger local auto-download backup if PDF blob exists
-  if (pdfBlob) {
-    try {
-      const blobUrl = URL.createObjectURL(pdfBlob);
-      const a = document.createElement('a');
-      a.href = blobUrl;
-      a.download = pdfFileName;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      setTimeout(() => URL.revokeObjectURL(blobUrl), 10000);
-    } catch (_) {}
-  }
-
-  // Mark DB state as Sent
+  // Mark DB state as Sent (fire-and-forget for speed)
   if (quotation.id) {
-    await quotationService.markQuotationAsSent(quotation.id);
+    quotationService.markQuotationAsSent(quotation.id).catch(() => {});
   }
 
   return { success: true, method: 'fallback' };

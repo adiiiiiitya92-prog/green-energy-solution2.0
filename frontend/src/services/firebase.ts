@@ -340,9 +340,14 @@ async function saveRecordViaBackend(collectionName: string, id: string, data: an
   }
 }
 
-async function fetchCollectionViaBackend<T>(collectionName: string): Promise<T[]> {
+async function fetchCollectionViaBackend<T>(collectionName: string, timeoutMs: number = 2500): Promise<T[]> {
   try {
-    const res = await fetch(buildApiUrl(`/api/firestore/${encodeCollectionPath(collectionName)}`));
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    const res = await fetch(buildApiUrl(`/api/firestore/${encodeCollectionPath(collectionName)}`), {
+      signal: controller.signal
+    });
+    clearTimeout(timer);
     if (!res.ok) {
       const text = await res.text().catch(() => '');
       console.warn(`Backend Firestore fetch failed [${collectionName}]:`, text || res.statusText);
@@ -396,14 +401,17 @@ export async function saveRecordToFirestore(collectionName: string, id: string, 
 /**
  * Fetches all documents in a collection from Firebase Firestore (strictly from green-energy-solution database)
  */
-export async function fetchCollectionFromFirestore<T>(collectionName: string): Promise<T[]> {
+export async function fetchCollectionFromFirestore<T>(collectionName: string, timeoutMs: number = 2500): Promise<T[]> {
   try {
     const colRef = collection(firestoreDb, collectionName);
-    const snapshot = await getDocs(colRef);
+    const timeoutPromise = new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error(`Firestore fetch timeout [${collectionName}]`)), timeoutMs)
+    );
+    const snapshot = await Promise.race([getDocs(colRef), timeoutPromise]);
     return snapshot.docs.map(docSnap => ({ id: docSnap.id, ...docSnap.data() }) as unknown as T);
   } catch (err) {
     console.warn(`Firestore direct fetch note [${collectionName}], trying backend:`, err);
-    return fetchCollectionViaBackend<T>(collectionName);
+    return fetchCollectionViaBackend<T>(collectionName, timeoutMs);
   }
 }
 

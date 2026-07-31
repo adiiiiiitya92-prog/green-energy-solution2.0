@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import { useAuthStore } from '../../store/authStore';
 import { leadService } from '../../services/leadService';
 import { quotationService, getCleanWhatsAppPhone } from '../../services/quotationService';
@@ -7,7 +7,8 @@ import { orderService } from '../../services/orderService';
 import { employeeService } from '../../services/employeeService';
 import { mapService } from '../../services/mapService';
 import { pdfService } from '../../services/pdfService';
-import type { Lead, Quotation, OrderConfirmation, Profile, ClientDocument, ClientRegistration, InstallationPhoto, ReleaseDocument, QuotationItem, PaymentInstallment } from '../../types';
+import { productService } from '../../services/productService';
+import type { Lead, Quotation, OrderConfirmation, Profile, ClientDocument, ClientRegistration, InstallationPhoto, ReleaseDocument, QuotationItem, PaymentInstallment, Product } from '../../types';
 import { Timeline } from '../../components/Pipeline/Timeline';
 import { SignatureCapture } from '../../components/Signature/SignatureCapture';
 import { compressImage } from '../../services/imageCompressionService';
@@ -30,18 +31,30 @@ export const Leads: React.FC = () => {
   const [leads, setLeads] = useState<Lead[]>([]);
   const [employees, setEmployees] = useState<Profile[]>([]);
   const [employeeNames, setEmployeeNames] = useState<Record<string, string>>({});
+  const [catalogProducts, setCatalogProducts] = useState<Product[]>([]);
   
+  // In-memory PDF blob cache for instant download/share (keyed by quotation ID)
+  const pdfBlobCache = useRef<Map<string, Blob>>(new Map());
+
   // Filtering & Search
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
   const [employeeFilter, setEmployeeFilter] = useState('');
   const [hotFilter, setHotFilter] = useState<'all' | 'hot' | 'normal'>('all');
 
-  // Selected Lead (Details View)
+  // Selected Lead (Details View) — restore from sessionStorage on refresh
   const [selectedLead, setSelectedLead] = useState<Lead | null>(null);
   const [mainTab, setMainTab] = useState<'pipeline' | 'reminders'>('pipeline');
-  const [activeTab, setActiveTab] = useState<'timeline' | 'quotation' | 'order' | 'installation' | 'registration' | 'documentation'>('timeline');
+  const [activeTab, setActiveTab] = useState<'timeline' | 'quotation' | 'order' | 'installation' | 'registration' | 'documentation'>(
+    () => (sessionStorage.getItem('leads_activeTab') as any) || 'timeline'
+  );
   const [docSubTab, setDocSubTab] = useState<'dcr' | 'wcr' | 'model_agreement' | 'annexure_proforma'>('dcr');
+
+  // Wrapper to persist active tab to sessionStorage
+  const switchTab = (tab: typeof activeTab) => {
+    setActiveTab(tab);
+    sessionStorage.setItem('leads_activeTab', tab);
+  };
 
   // Form: Create Lead
   const [showCreateModal, setShowCreateModal] = useState(false);
@@ -60,6 +73,7 @@ export const Leads: React.FC = () => {
 
   // PDF Preview Modal State
   const [selectedQuotationForPreview, setSelectedQuotationForPreview] = useState<Quotation | null>(null);
+  const [isQuotationViewOnly, setIsQuotationViewOnly] = useState<boolean>(true);
 
   const dataUrlToBlob = (dataUrl: string): Blob => {
     try {
@@ -77,16 +91,26 @@ export const Leads: React.FC = () => {
     }
   };
 
-  /** Try to get a PDF Blob from saved data, otherwise regenerate it on-the-fly */
+  /** Try to get a PDF Blob from saved data, otherwise regenerate it on-the-fly.
+   *  Uses in-memory cache for instant repeat access (download/share). */
   const resolvePdfBlob = async (q: Quotation): Promise<Blob> => {
+    // 0. Check in-memory cache first (instant)
+    const cached = pdfBlobCache.current.get(q.id);
+    if (cached && cached.size > 100) return cached;
+
+    const cacheAndReturn = (blob: Blob): Blob => {
+      pdfBlobCache.current.set(q.id, blob);
+      return blob;
+    };
+
     // 1. Try pdfDataUrl (base64 stored in IndexedDB)
     if (q.pdfDataUrl && typeof q.pdfDataUrl === 'string' && q.pdfDataUrl.startsWith('data:')) {
       const blob = dataUrlToBlob(q.pdfDataUrl);
-      if (blob.size > 100) return blob;
+      if (blob.size > 100) return cacheAndReturn(blob);
     }
     // 2. Try pdfBlob (raw Blob in memory)
     if (q.pdfBlob && ((q.pdfBlob as any) instanceof Blob || (q.pdfBlob as any) instanceof File)) {
-      return q.pdfBlob;
+      return cacheAndReturn(q.pdfBlob);
     }
     // 3. Try fetching from Firebase Storage URL
     if (q.pdfUrl && typeof q.pdfUrl === 'string' && q.pdfUrl.startsWith('http')) {
@@ -95,7 +119,8 @@ export const Leads: React.FC = () => {
         if (res.ok) {
           const ct = res.headers.get('content-type') || '';
           if (ct.includes('pdf') || ct.includes('octet')) {
-            return await res.blob();
+            const blob = await res.blob();
+            return cacheAndReturn(blob);
           }
         }
       } catch (_) { /* network error, will regenerate */ }
@@ -108,7 +133,7 @@ export const Leads: React.FC = () => {
         const parsed = JSON.parse(lsData);
         if (parsed.pdfDataUrl && typeof parsed.pdfDataUrl === 'string' && parsed.pdfDataUrl.startsWith('data:')) {
           const blob = dataUrlToBlob(parsed.pdfDataUrl);
-          if (blob.size > 100) return blob;
+          if (blob.size > 100) return cacheAndReturn(blob);
         }
       }
     } catch (_) {}
@@ -126,11 +151,18 @@ export const Leads: React.FC = () => {
       createdAt: q.createdAt || new Date().toISOString(),
       updatedAt: new Date().toISOString()
     };
-    return pdfService.generateQuotationPDF(q, mockLead, q.createdBy || 'Admin');
+    const blob = await pdfService.generateQuotationPDF(q, mockLead, q.createdBy || 'Admin');
+    return cacheAndReturn(blob);
   };
 
   const handleViewPdf = async (q: Quotation) => {
     setSelectedQuotationForPreview(q);
+    setIsQuotationViewOnly(true);
+  };
+
+  const handleEditQuotation = async (q: Quotation) => {
+    setSelectedQuotationForPreview(q);
+    setIsQuotationViewOnly(false);
   };
 
   const handleDownloadPdf = async (q: Quotation) => {
@@ -214,10 +246,23 @@ export const Leads: React.FC = () => {
       names[p.id] = p.fullName;
     });
     setEmployeeNames(names);
+
+    productService.getProducts().then(setCatalogProducts).catch(e => console.warn("Load products error:", e));
   };
 
   useEffect(() => {
-    loadData();
+    loadData().then(async () => {
+      // Restore selected lead from sessionStorage on refresh
+      const savedLeadId = sessionStorage.getItem('leads_selectedLeadId');
+      if (savedLeadId && !selectedLead) {
+        try {
+          const lead = await leadService.getLeadById(savedLeadId);
+          if (lead) {
+            handleSelectLead(lead, true);
+          }
+        } catch (_) {}
+      }
+    });
   }, [currentRole, currentUser]);
 
   // Helper to normalize payments list for backward compatibility
@@ -244,8 +289,11 @@ export const Leads: React.FC = () => {
   const handleSelectLead = async (lead: Lead, preserveTab?: boolean) => {
     const shouldPreserveTab = preserveTab !== undefined ? preserveTab : (selectedLead?.id === lead.id);
     setSelectedLead(lead);
+    // Persist to sessionStorage so refresh restores same lead + tab
+    sessionStorage.setItem('leads_selectedLeadId', lead.id);
     if (!shouldPreserveTab) {
       setActiveTab('timeline');
+      sessionStorage.setItem('leads_activeTab', 'timeline');
     }
     
     // Load Order Confirmation & Payment History
@@ -898,7 +946,7 @@ export const Leads: React.FC = () => {
           {/* Header Action Row */}
           <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center border-b border-slate-100 pb-4 gap-4 print:hidden">
             <button
-              onClick={() => setSelectedLead(null)}
+              onClick={() => { setSelectedLead(null); sessionStorage.removeItem('leads_selectedLeadId'); sessionStorage.removeItem('leads_activeTab'); }}
               className="text-xs font-bold text-slate-500 hover:text-slate-900 flex items-center gap-1 cursor-pointer"
             >
               <ChevronLeft className="w-4 h-4" />
@@ -967,7 +1015,7 @@ export const Leads: React.FC = () => {
           {/* Tab Menu Options */}
           <div className="flex border-b border-slate-200 overflow-x-auto text-xs font-bold text-slate-400 select-none shrink-0 print:hidden">
             <button
-              onClick={() => setActiveTab('timeline')}
+              onClick={() => switchTab('timeline')}
               className={`py-3 px-4 border-b-2 cursor-pointer transition-all whitespace-nowrap ${
                 activeTab === 'timeline' ? 'border-emerald-600 text-emerald-600 font-extrabold' : 'border-transparent hover:text-slate-800'
               }`}
@@ -978,7 +1026,7 @@ export const Leads: React.FC = () => {
             {/* Quotations builder available for Employee, Admin & Super Admin */}
             {['super_admin', 'admin', 'field_employee'].includes(currentRole) && (
               <button
-                onClick={() => setActiveTab('quotation')}
+                onClick={() => switchTab('quotation')}
                 className={`py-3 px-4 border-b-2 cursor-pointer transition-all whitespace-nowrap ${
                   activeTab === 'quotation' ? 'border-emerald-600 text-emerald-600 font-extrabold' : 'border-transparent hover:text-slate-800'
                 }`}
@@ -990,7 +1038,7 @@ export const Leads: React.FC = () => {
             {/* Confirm booking receipt */}
             {['super_admin', 'admin', 'field_employee'].includes(currentRole) && (
               <button
-                onClick={() => setActiveTab('order')}
+                onClick={() => switchTab('order')}
                 className={`py-3 px-4 border-b-2 cursor-pointer transition-all whitespace-nowrap flex items-center gap-1.5 ${
                   activeTab === 'order' ? 'border-emerald-600 text-emerald-600 font-extrabold' : 'border-transparent hover:text-slate-800'
                 }`}
@@ -1006,7 +1054,7 @@ export const Leads: React.FC = () => {
 
             {/* Geo photos */}
             <button
-              onClick={() => setActiveTab('installation')}
+              onClick={() => switchTab('installation')}
               className={`py-3 px-4 border-b-2 cursor-pointer transition-all whitespace-nowrap ${
                 activeTab === 'installation' ? 'border-emerald-600 text-emerald-600 font-extrabold' : 'border-transparent hover:text-slate-800'
               }`}
@@ -1016,7 +1064,7 @@ export const Leads: React.FC = () => {
 
             {/* Documentation tab containing DCR Certificate generator */}
             <button
-              onClick={() => setActiveTab('documentation')}
+              onClick={() => switchTab('documentation')}
               className={`py-3 px-4 border-b-2 cursor-pointer transition-all whitespace-nowrap ${
                 activeTab === 'documentation' ? 'border-emerald-600 text-emerald-600 font-extrabold' : 'border-transparent hover:text-slate-800'
               }`}
@@ -1027,7 +1075,7 @@ export const Leads: React.FC = () => {
             {/* Registration checklists & Release (Admin only) */}
             {currentRole !== 'field_employee' && (
               <button
-                onClick={() => setActiveTab('registration')}
+                onClick={() => switchTab('registration')}
                 className={`py-3 px-4 border-b-2 cursor-pointer transition-all whitespace-nowrap ${
                   activeTab === 'registration' ? 'border-emerald-600 text-emerald-600 font-extrabold' : 'border-transparent hover:text-slate-800'
                 }`}
@@ -1065,14 +1113,14 @@ export const Leads: React.FC = () => {
 
                 {/* 9-Page Full Turnkey Solar Quotation Document Generator */}
                 <div className="border border-slate-200 rounded-2xl overflow-hidden shadow-md bg-slate-900/5">
-                  <QuotationDocument defaultLeadId={selectedLead?.id} isEmbedded={true} onNavigateToOrderKyc={() => setActiveTab('order')} />
+                  <QuotationDocument defaultLeadId={selectedLead?.id} isEmbedded={true} onNavigateToOrderKyc={() => switchTab('order')} />
                 </div>
 
                 {/* Generated Quotations History */}
                 {selectedLead && (
                   <div className="space-y-3 pt-4 border-t border-slate-100">
                     <h4 className="font-bold text-slate-800 text-xs uppercase tracking-wider">Generated Quotations History</h4>
-                    <LeadQuotationsTimeline leadId={selectedLead.id} onShare={handleWhatsappShare} onViewPdf={handleViewPdf} onDownloadPdf={handleDownloadPdf} onDeleteQuotation={handleDeleteQuotation} />
+                    <LeadQuotationsTimeline leadId={selectedLead.id} onShare={handleWhatsappShare} onViewPdf={handleViewPdf} onEditQuotation={handleEditQuotation} onDownloadPdf={handleDownloadPdf} onDeleteQuotation={handleDeleteQuotation} />
                   </div>
                 )}
               </div>
@@ -2360,15 +2408,37 @@ export const Leads: React.FC = () => {
               </div>
 
               <div>
-                <label className="block text-slate-500 mb-1">Primary Requirement</label>
+                <div className="flex justify-between items-center mb-1">
+                  <label className="block text-slate-500 font-bold">Primary Requirement</label>
+                  <span className="text-[10px] text-slate-400 font-semibold">Select Catalog or Type Custom</span>
+                </div>
                 <input
                   type="text"
+                  list="create-lead-catalog-products"
                   required
                   value={leadRequirement}
                   onChange={(e) => setLeadRequirement(e.target.value)}
-                  placeholder="e.g. 5kW On-Grid System"
-                  className="w-full border border-slate-200 rounded-xl px-3 py-2.5 bg-slate-50 focus:outline-none"
+                  placeholder="Select from Product Catalog or type custom requirement..."
+                  className="w-full border border-slate-200 rounded-xl px-3 py-2.5 bg-slate-50 focus:outline-none focus:border-emerald-500 font-semibold text-slate-800"
                 />
+                <datalist id="create-lead-catalog-products">
+                  {catalogProducts
+                    .filter(p => p.category !== 'bom_item')
+                    .map(p => (
+                      <option key={p.id} value={p.brand ? `${p.name} (${p.brand})` : p.name} />
+                    ))}
+                  <option value="3 kW Solar Rooftop System" />
+                  <option value="5 kW Solar Rooftop System" />
+                  <option value="10 kW Commercial Solar System" />
+                  <option value="15 kW Commercial Solar System" />
+                  <option value="20 kW Commercial Solar System" />
+                  <option value="3.3 kW On-Grid System" />
+                  <option value="5 kW Hybrid System with Battery Backup" />
+                  <option value="Off-Grid Solar System" />
+                </datalist>
+                <p className="text-[10px] text-slate-400 mt-1 font-medium">
+                  💡 Select any product from the catalog dropdown or type custom text freely.
+                </p>
               </div>
 
               <div>
@@ -2492,14 +2562,16 @@ export const Leads: React.FC = () => {
           </div>
         </div>
       )}
-      {/* Quotation Preview Modal — Live QuotationDocument Component (100% Identical to Editor) */}
+      {/* Quotation Preview Modal — Pure 8-Page PDF View Mode or Custom Edit Mode */}
       {selectedQuotationForPreview && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/70 backdrop-blur-xs p-2 sm:p-4 animate-fade-in">
           <div className="bg-white rounded-2xl w-full max-w-7xl h-[95vh] flex flex-col shadow-2xl overflow-hidden border border-slate-200">
             <QuotationDocument
               readOnlyQuotation={selectedQuotationForPreview}
+              viewOnly={isQuotationViewOnly}
               isEmbedded={true}
               onClosePreview={() => setSelectedQuotationForPreview(null)}
+              onSwitchToEdit={() => setIsQuotationViewOnly(false)}
             />
           </div>
         </div>
@@ -2513,9 +2585,10 @@ const LeadQuotationsTimeline: React.FC<{
   leadId: string;
   onShare: (q: Quotation) => void;
   onViewPdf: (q: Quotation) => void;
+  onEditQuotation: (q: Quotation) => void;
   onDownloadPdf: (q: Quotation) => void;
   onDeleteQuotation: (q: Quotation) => Promise<void>;
-}> = ({ leadId, onShare, onViewPdf, onDownloadPdf, onDeleteQuotation }) => {
+}> = ({ leadId, onShare, onViewPdf, onEditQuotation, onDownloadPdf, onDeleteQuotation }) => {
   const [quotes, setQuotes] = useState<Quotation[]>([]);
 
   const loadQuotes = () => {
@@ -2546,7 +2619,7 @@ const LeadQuotationsTimeline: React.FC<{
           <div className="flex flex-wrap gap-2">
             <button
               type="button"
-              onClick={() => onViewPdf(q)}
+              onClick={() => onEditQuotation(q)}
               className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-[10px] font-bold flex items-center gap-1 cursor-pointer transition-colors shadow-xs"
               title="Custom Edit & Customize Proposal"
             >

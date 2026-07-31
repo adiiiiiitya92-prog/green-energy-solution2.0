@@ -195,6 +195,14 @@ export interface FieldVisitReport {
   visitedAt: string;
 }
 
+export interface ProductUnit {
+  id: string;
+  unitNumber: number;
+  serialNumber: string;
+  status?: 'available' | 'allocated' | 'dispatched' | 'installed' | 'sold';
+  notes?: string;
+}
+
 export interface Product {
   id: string;
   name: string;
@@ -206,6 +214,8 @@ export interface Product {
   description?: string;
   stockQuantity: number;
   minStockThreshold: number;
+  serialNumbers?: string[];
+  productUnits?: ProductUnit[];
   createdAt: string;
 }
 
@@ -213,6 +223,7 @@ export interface ChallanItem {
   productId: string;
   productName: string;
   qty: number;
+  serialNumbers?: string[];
 }
 
 export interface Challan {

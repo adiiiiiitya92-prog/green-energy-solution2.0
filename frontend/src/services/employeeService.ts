@@ -4,26 +4,48 @@ import { saveRecordToFirestore, fetchCollectionFromFirestore } from './firebase'
 
 export const employeeService = {
   async getEmployees(): Promise<Profile[]> {
-    try {
-      const remoteProfiles = await fetchCollectionFromFirestore<Profile>('profiles');
-      if (Array.isArray(remoteProfiles) && remoteProfiles.length > 0) {
-        await db.profiles.bulkPut(remoteProfiles);
+    const localProfiles = await db.profiles.where('role').anyOf(['admin', 'field_employee', 'inventory_manager']).toArray();
+
+    const syncRemote = async () => {
+      try {
+        const remoteProfiles = await fetchCollectionFromFirestore<Profile>('profiles');
+        if (Array.isArray(remoteProfiles) && remoteProfiles.length > 0) {
+          await db.profiles.bulkPut(remoteProfiles);
+        }
+      } catch (err) {
+        console.warn("Background profile sync note:", err);
       }
-    } catch (err) {
-      console.warn("Firestore profiles sync note:", err);
+    };
+
+    if (localProfiles.length > 0) {
+      syncRemote();
+      return localProfiles;
     }
+
+    await syncRemote();
     return db.profiles.where('role').anyOf(['admin', 'field_employee', 'inventory_manager']).toArray();
   },
 
   async getAllProfiles(): Promise<Profile[]> {
-    try {
-      const remoteProfiles = await fetchCollectionFromFirestore<Profile>('profiles');
-      if (Array.isArray(remoteProfiles) && remoteProfiles.length > 0) {
-        await db.profiles.bulkPut(remoteProfiles);
+    const localProfiles = await db.profiles.toArray();
+
+    const syncRemote = async () => {
+      try {
+        const remoteProfiles = await fetchCollectionFromFirestore<Profile>('profiles');
+        if (Array.isArray(remoteProfiles) && remoteProfiles.length > 0) {
+          await db.profiles.bulkPut(remoteProfiles);
+        }
+      } catch (err) {
+        console.warn("Background profile sync note:", err);
       }
-    } catch (err) {
-      console.warn("Firestore profiles sync note:", err);
+    };
+
+    if (localProfiles.length > 0) {
+      syncRemote();
+      return localProfiles;
     }
+
+    await syncRemote();
     return db.profiles.toArray();
   },
 

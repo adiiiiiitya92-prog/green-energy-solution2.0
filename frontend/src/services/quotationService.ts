@@ -1,6 +1,234 @@
 import { db } from './db';
-import type { Quotation, OrderConfirmation, ClientRegistration } from '../types';
+import type { Quotation, OrderConfirmation, ClientRegistration, BomItem } from '../types';
 import { saveRecordToFirestore, deleteRecordFromFirestore, fetchCollectionFromFirestore } from './firebase';
+
+export const BOM_CATEGORY_ORDER = [
+  'Solar Panels (PV Modules)',
+  'Solar String Inverter',
+  'Solar 80 micron HDGI Structure*',
+  'Protection Devices',
+  'Cables',
+  'Earthing / LA - lightning arrestor',
+  'Data Logger',
+  'Other Accessories'
+];
+
+export const DEFAULT_BOM_ITEMS: BomItem[] = [
+  {
+    srNo: "1",
+    itemName: "Solar Panels (PV Modules)",
+    qty: 1,
+    unit: "Set",
+    brand: "As specified in Quote",
+    category: "Solar Panels (PV Modules)"
+  },
+  {
+    srNo: "2",
+    itemName: "Solar String Inverter",
+    qty: 1,
+    unit: "Nos",
+    brand: "As specified in Quote",
+    category: "Solar String Inverter"
+  },
+  {
+    srNo: "3",
+    itemName: "Solar 80 micron HDGI Structure*",
+    description: "60 x 40 mm x 2 mm For Leg , Rafters\n40 x 40 mm x 2 mm For purlins",
+    qty: 1,
+    unit: "Set",
+    brand: "As specified in Quote",
+    category: "Solar 80 micron HDGI Structure*"
+  },
+  {
+    srNo: "4.1",
+    itemName: "ACDB (IP65) - With SPD, Fuse & MCB\nDCDB (IP65) - With SPD, Fuse & MCB",
+    qty: 1,
+    unit: "Nos",
+    brand: "polycab / schineder",
+    category: "Protection Devices"
+  },
+  {
+    srNo: "5.1",
+    itemName: "4 SQ MM DC Solar Copper Cable, XLS-R, UV RESISTANT, 1100V Grade, Double Insulated",
+    qty: 30,
+    unit: "Mtr",
+    brand: "Polycab / RR",
+    category: "Cables"
+  },
+  {
+    srNo: "5.2",
+    itemName: "4 SQ MM or 6 SQ MM AC Wire , XLS- R",
+    qty: 30,
+    unit: "Mtr",
+    brand: "Polycab / RR",
+    category: "Cables"
+  },
+  {
+    srNo: "5.3",
+    itemName: "4 SQ MM Copper Earthing wire for AC & DC",
+    qty: 30,
+    unit: "Mtr",
+    brand: "Polycab / RR",
+    category: "Cables"
+  },
+  {
+    srNo: "5.4",
+    itemName: "16 SQ MM Aluminium Wire For LA",
+    qty: 30,
+    unit: "Mtr",
+    brand: "Polycab / RR",
+    category: "Cables"
+  },
+  {
+    srNo: "5.5",
+    itemName: "UPVC Conduit Pipe for wiring",
+    qty: 1,
+    unit: "Mtr",
+    brand: "Polycab / RR",
+    category: "Cables"
+  },
+  {
+    srNo: "6.1",
+    itemName: "200 Micron Copper Coated 1 Meter Earthing Rod for AC / DC & LA",
+    qty: 3,
+    unit: "Set",
+    brand: "Polycab / RR",
+    category: "Earthing / LA - lightning arrestor"
+  },
+  {
+    srNo: "6.2",
+    itemName: "1 Meter copper LA with 3 spike & insulator",
+    qty: 1,
+    unit: "Set",
+    brand: "Standard",
+    category: "Earthing / LA - lightning arrestor"
+  },
+  {
+    srNo: "7.1",
+    itemName: "Wifi Stick : Data Loger for Oniline Monitoring",
+    qty: 1,
+    unit: "Nos",
+    brand: "As per inverter",
+    category: "Data Logger"
+  },
+  {
+    srNo: "8.1",
+    itemName: "Cable tie, SS304 300mm (100Pcs/Pkt)",
+    qty: 1,
+    unit: "Set",
+    brand: "Ss304",
+    category: "Other Accessories"
+  },
+  {
+    srNo: "8.2",
+    itemName: "Ferules & Cable Tags",
+    qty: 1,
+    unit: "Set",
+    brand: "Standard",
+    category: "Other Accessories"
+  },
+  {
+    srNo: "8.3",
+    itemName: "Lugs Ring Type As per wiring requirements",
+    qty: 1,
+    unit: "Set",
+    brand: "Coper",
+    category: "Other Accessories"
+  }
+];
+
+export function getBomCategoryIndex(categoryOrName?: string, itemName?: string): number {
+  const text = `${categoryOrName || ''} ${itemName || ''}`.toLowerCase().trim();
+
+  // 1. Solar Panels (PV Modules)
+  if (text.includes('panel') || text.includes('pv module') || text.includes('solar panel')) {
+    return 1;
+  }
+  // 2. Solar String Inverter
+  if (text.includes('inverter') || text.includes('string inverter')) {
+    return 2;
+  }
+  // 3. Solar HDGI Structure
+  if (text.includes('hdgi') || text.includes('structure') || text.includes('mounting') || text.includes('purlin') || text.includes('rafter') || text.includes('leg')) {
+    return 3;
+  }
+  // 4. Protection Devices
+  if (text.includes('protection') || text.includes('acdb') || text.includes('dcdb') || text.includes('spd') || text.includes('fuse') || text.includes('mcb')) {
+    return 4;
+  }
+  // 5. Cables
+  if (text.includes('cable') || text.includes('wire') || text.includes('conduit') || text.includes('wiring')) {
+    return 5;
+  }
+  // 6. Earthing / LA - lightning arrestor
+  if (text.includes('earthing') || text.includes('lightning') || text.includes('la') || text.includes('arrestor') || text.includes('rod')) {
+    return 6;
+  }
+  // 7. Data Logger
+  if (text.includes('data logger') || text.includes('logger') || text.includes('wifi stick')) {
+    return 7;
+  }
+  // 8. Other Accessories
+  if (text.includes('accessory') || text.includes('accessories') || text.includes('tie') || text.includes('ferule') || text.includes('lug') || text.includes('tag') || text.includes('other')) {
+    return 8;
+  }
+
+  return 9;
+}
+
+export function getStandardCategoryName(categoryOrName?: string, itemName?: string): string {
+  const idx = getBomCategoryIndex(categoryOrName, itemName);
+  switch (idx) {
+    case 1: return 'Solar Panels (PV Modules)';
+    case 2: return 'Solar String Inverter';
+    case 3: return 'Solar 80 micron HDGI Structure*';
+    case 4: return 'Protection Devices';
+    case 5: return 'Cables';
+    case 6: return 'Earthing / LA - lightning arrestor';
+    case 7: return 'Data Logger';
+    case 8: return 'Other Accessories';
+    default: return categoryOrName || 'Other Accessories';
+  }
+}
+
+export function sortAndFormatBomItems(items: BomItem[]): BomItem[] {
+  if (!items || items.length === 0) return [];
+
+  const list = items.map(i => ({ ...i }));
+
+  list.sort((a, b) => {
+    const idxA = getBomCategoryIndex(a.category, a.itemName);
+    const idxB = getBomCategoryIndex(b.category, b.itemName);
+    if (idxA !== idxB) {
+      return idxA - idxB;
+    }
+    return 0;
+  });
+
+  const subCategoryCounts: Record<number, number> = {};
+
+  return list.map(item => {
+    const catIdx = getBomCategoryIndex(item.category, item.itemName);
+    const stdCat = getStandardCategoryName(item.category, item.itemName);
+    item.category = stdCat;
+
+    if (catIdx >= 1 && catIdx <= 3) {
+      return {
+        ...item,
+        srNo: String(catIdx)
+      };
+    } else if (catIdx >= 4 && catIdx <= 8) {
+      subCategoryCounts[catIdx] = (subCategoryCounts[catIdx] || 0) + 1;
+      const subIdx = subCategoryCounts[catIdx];
+      return {
+        ...item,
+        srNo: `${catIdx}.${subIdx}`
+      };
+    } else {
+      return item;
+    }
+  });
+}
 
 function sanitizeQuotationRecord(qData: any): Quotation {
   if (!qData) return qData;
@@ -12,44 +240,118 @@ export const quotationService = {
   async getQuotations(): Promise<Quotation[]> {
     const localLeads = await db.leads.toArray();
     const validLeadIds = new Set(localLeads.map(l => l.id));
+    const cachedQuotes = await db.quotations.orderBy('createdAt').reverse().toArray();
+    const filteredCached = cachedQuotes.filter(q => !q.leadId || validLeadIds.has(q.leadId));
 
-    try {
-      const remoteQuotes = await fetchCollectionFromFirestore<Quotation>('quotations');
-      if (Array.isArray(remoteQuotes)) {
-        const validRemote = remoteQuotes.filter(q => !q.leadId || validLeadIds.has(q.leadId));
-        const remoteIds = new Set(validRemote.map(q => q.id));
-        
-        const localQuotes = await db.quotations.toArray();
-        const deletedIds = localQuotes.filter(q => !remoteIds.has(q.id)).map(q => q.id);
+    const syncRemote = async () => {
+      try {
+        const remoteQuotes = await fetchCollectionFromFirestore<Quotation>('quotations');
+        if (Array.isArray(remoteQuotes) && remoteQuotes.length > 0) {
+          const validRemote = remoteQuotes.filter(q => !q.leadId || validLeadIds.has(q.leadId));
+          const remoteIds = new Set(validRemote.map(q => q.id));
+          const currentLocal = await db.quotations.toArray();
+          const deletedIds = currentLocal.filter(q => !remoteIds.has(q.id)).map(q => q.id);
 
-        if (validRemote.length > 0) {
-          await db.quotations.bulkPut(validRemote.map(sanitizeQuotationRecord));
+          if (validRemote.length > 0) {
+            await db.quotations.bulkPut(validRemote.map(sanitizeQuotationRecord));
+          }
+          if (deletedIds.length > 0) {
+            await db.quotations.bulkDelete(deletedIds);
+          }
         }
-        if (deletedIds.length > 0) {
-          await db.quotations.bulkDelete(deletedIds);
-        }
-
-        return await db.quotations.orderBy('createdAt').reverse().toArray();
+      } catch (err) {
+        console.warn("Background quotation sync note:", err);
       }
-    } catch (err) {
-      console.warn("Firestore quotations sync note, returning local cache:", err);
+    };
+
+    if (filteredCached.length > 0) {
+      syncRemote();
+      return filteredCached;
     }
 
-    const localQuotes = await db.quotations.orderBy('createdAt').reverse().toArray();
-    return localQuotes.filter(q => !q.leadId || validLeadIds.has(q.leadId));
+    await syncRemote();
+    const finalQuotes = await db.quotations.orderBy('createdAt').reverse().toArray();
+    return finalQuotes.filter(q => !q.leadId || validLeadIds.has(q.leadId));
   },
 
   async getQuotationById(id: string): Promise<Quotation | undefined> {
-    return db.quotations.get(id);
+    let q = await db.quotations.get(id);
+    
+    // If not found locally, try Firestore sync
+    if (!q) {
+      try {
+        const remoteQuotes = await fetchCollectionFromFirestore<Quotation>('quotations');
+        if (Array.isArray(remoteQuotes) && remoteQuotes.length > 0) {
+          await db.quotations.bulkPut(remoteQuotes.map(sanitizeQuotationRecord));
+          q = await db.quotations.get(id);
+        }
+      } catch (err) {
+        console.warn("Firestore quotation fetch by ID note:", err);
+      }
+    }
+
+    if (q && (!q.items || q.items.length === 0 || q.grandTotal <= 0)) {
+      return undefined;
+    }
+    return q;
   },
 
   async getQuotationsByLeadId(leadId: string): Promise<Quotation[]> {
-    return db.quotations.where({ leadId }).reverse().sortBy('createdAt');
+    // First attempt: read from local IndexedDB cache
+    let quotes = await db.quotations.where({ leadId }).reverse().sortBy('createdAt');
+    let validQuotes = quotes.filter(q => q.items && q.items.length > 0 && q.grandTotal > 0);
+
+    // If local cache is empty, sync from Firestore first (handles reload/signout scenarios)
+    if (validQuotes.length === 0) {
+      try {
+        const remoteQuotes = await fetchCollectionFromFirestore<Quotation>('quotations');
+        if (Array.isArray(remoteQuotes) && remoteQuotes.length > 0) {
+          const forThisLead = remoteQuotes.filter(q => q.leadId === leadId);
+          if (forThisLead.length > 0) {
+            await db.quotations.bulkPut(forThisLead.map(sanitizeQuotationRecord));
+          }
+          // Re-read after sync
+          quotes = await db.quotations.where({ leadId }).reverse().sortBy('createdAt');
+          validQuotes = quotes.filter(q => q.items && q.items.length > 0 && q.grandTotal > 0);
+        }
+      } catch (err) {
+        console.warn("Firestore quotation sync for lead note:", err);
+      }
+    } else {
+      // Background sync for freshness (don't block)
+      fetchCollectionFromFirestore<Quotation>('quotations').then(remoteQuotes => {
+        if (Array.isArray(remoteQuotes) && remoteQuotes.length > 0) {
+          const forThisLead = remoteQuotes.filter(q => q.leadId === leadId);
+          if (forThisLead.length > 0) {
+            db.quotations.bulkPut(forThisLead.map(sanitizeQuotationRecord)).catch(() => {});
+          }
+        }
+      }).catch(() => {});
+    }
+
+    // Purge any orphan zero-total / zero-item quotations from local & remote DB
+    const zeroQuotes = quotes.filter(q => !q.items || q.items.length === 0 || q.grandTotal <= 0);
+    if (zeroQuotes.length > 0) {
+      for (const zq of zeroQuotes) {
+        db.quotations.delete(zq.id).catch(() => {});
+        deleteRecordFromFirestore('quotations', zq.id).catch(() => {});
+      }
+    }
+    return validQuotes;
   },
 
   async createQuotation(qData: Omit<Quotation, 'id' | 'createdAt'> & { id?: string }): Promise<string> {
+    if (!qData.items || qData.items.length === 0 || (qData.grandTotal !== undefined && qData.grandTotal <= 0)) {
+      console.warn("⚠️ Cannot create/save quotation without commercial product items or with 0 grand total.");
+      return '';
+    }
+
     const existingQuotes = await db.quotations.where({ leadId: qData.leadId }).toArray();
-    const existing = existingQuotes.length > 0 ? existingQuotes[0] : null;
+    const validExisting = existingQuotes.filter(q => q.items && q.items.length > 0 && q.grandTotal > 0);
+    
+    const existingById = qData.id ? validExisting.find(q => q.id === qData.id) : null;
+    const existingByNum = qData.quotationNumber ? validExisting.find(q => q.quotationNumber === qData.quotationNumber) : null;
+    const existing = existingById || existingByNum || null;
 
     const id = qData.id || existing?.id || ('q_' + Math.random().toString(36).substring(2, 11));
     const rawQuotation: Quotation = {

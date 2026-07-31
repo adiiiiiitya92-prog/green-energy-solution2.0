@@ -4,14 +4,25 @@ import { saveRecordToFirestore, fetchCollectionFromFirestore } from './firebase'
 
 export const visitService = {
   async getVisitReports(): Promise<FieldVisitReport[]> {
-    try {
-      const remoteVisits = await fetchCollectionFromFirestore<FieldVisitReport>('fieldVisitReports');
-      if (remoteVisits && remoteVisits.length > 0) {
-        await db.fieldVisitReports.bulkPut(remoteVisits);
+    const localVisits = await db.fieldVisitReports.orderBy('visitedAt').reverse().toArray();
+
+    const syncRemote = async () => {
+      try {
+        const remoteVisits = await fetchCollectionFromFirestore<FieldVisitReport>('fieldVisitReports');
+        if (remoteVisits && remoteVisits.length > 0) {
+          await db.fieldVisitReports.bulkPut(remoteVisits);
+        }
+      } catch (err) {
+        console.warn("Background visits sync note:", err);
       }
-    } catch (err) {
-      console.warn("Firestore visits sync note:", err);
+    };
+
+    if (localVisits.length > 0) {
+      syncRemote();
+      return localVisits;
     }
+
+    await syncRemote();
     return db.fieldVisitReports.orderBy('visitedAt').reverse().toArray();
   },
 

@@ -1,9 +1,9 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { leadService } from '../../services/leadService';
-import { quotationService, getCleanWhatsAppPhone } from '../../services/quotationService';
+import { quotationService, getCleanWhatsAppPhone, sortAndFormatBomItems, DEFAULT_BOM_ITEMS } from '../../services/quotationService';
 import { shareQuotationViaWhatsapp } from '../../services/quotationShareService';
 import { productService } from '../../services/productService';
-import { pdfService, createNewQuotationProposalHtml } from '../../services/pdfService';
+import { pdfService, createNewQuotationProposalHtml, printQuotationHTML } from '../../services/pdfService';
 import { uploadImageToFirebase, uploadPdfToFirebase } from '../../services/firebase';
 import type { Lead, Quotation, QuotationItem, Product, BomItem } from '../../types';
 import {
@@ -25,7 +25,12 @@ import {
   Calculator,
   Layers,
   CheckSquare,
-  Square
+  Square,
+  Search,
+  Package,
+  ChevronDown,
+  ChevronUp,
+  Printer
 } from 'lucide-react';
 import dayjs from 'dayjs';
 
@@ -33,14 +38,21 @@ export const QuotationDocument: React.FC<{
   defaultLeadId?: string;
   isEmbedded?: boolean;
   readOnlyQuotation?: Quotation;
+  viewOnly?: boolean;
   onClosePreview?: () => void;
   onNavigateToOrderKyc?: () => void;
-}> = ({ defaultLeadId, isEmbedded, readOnlyQuotation, onClosePreview, onNavigateToOrderKyc }) => {
+  onSwitchToEdit?: () => void;
+}> = ({ defaultLeadId, isEmbedded, readOnlyQuotation, viewOnly = false, onClosePreview, onNavigateToOrderKyc, onSwitchToEdit }) => {
+  const [isViewOnlyMode, setIsViewOnlyMode] = useState<boolean>(viewOnly);
   const [leads, setLeads] = useState<Lead[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
   const [selectedLeadId, setSelectedLeadId] = useState(defaultLeadId || readOnlyQuotation?.leadId || '');
   const [selectedLead, setSelectedLead] = useState<Lead | null>(null);
   const [saveSuccessMsg, setSaveSuccessMsg] = useState<string | null>(null);
+
+  useEffect(() => {
+    setIsViewOnlyMode(viewOnly);
+  }, [viewOnly]);
 
   // Proposal Meta
   const [proposalId, setProposalId] = useState(readOnlyQuotation?.proposalId || readOnlyQuotation?.quotationNumber || `GES/QTN/${dayjs().format('YYYY')}/${Math.floor(1000 + Math.random() * 9000)}`);
@@ -75,6 +87,54 @@ export const QuotationDocument: React.FC<{
   const contentRef = useRef<HTMLDivElement>(null);
   const [contentHeight, setContentHeight] = useState<number>(0);
 
+  // Auto-fit Zoom calculation for Mobile Screens
+  const handleAutoFitZoom = () => {
+    if (previewScrollRef.current) {
+      const containerWidth = previewScrollRef.current.clientWidth - 20;
+      if (containerWidth > 0) {
+        const fitScale = Math.min(1.0, Math.max(0.25, containerWidth / 794));
+        setZoomScale(Number(fitScale.toFixed(2)));
+        return;
+      }
+    }
+    if (window.innerWidth < 640) {
+      const fitScale = Math.min(0.75, Math.max(0.25, (window.innerWidth - 32) / 794));
+      setZoomScale(Number(fitScale.toFixed(2)));
+    } else {
+      setZoomScale(0.75);
+    }
+  };
+
+  useEffect(() => {
+    if (mobileTab === 'preview') {
+      const timer = setTimeout(handleAutoFitZoom, 100);
+      return () => clearTimeout(timer);
+    }
+  }, [mobileTab]);
+
+  useEffect(() => {
+    const handleResize = () => {
+      if (window.innerWidth < 1024) {
+        handleAutoFitZoom();
+      }
+    };
+    window.addEventListener('resize', handleResize);
+    handleResize();
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
+
+  // Accordion Sections Open/Closed State (Minimized by default like documentation tab)
+  const [openSections, setOpenSections] = useState<Record<string, boolean>>({
+    info: false,
+    gst: false,
+    bom: false,
+    items: false,
+  });
+
+  const toggleSection = (key: string) => {
+    setOpenSections(prev => ({ ...prev, [key]: !prev[key] }));
+  };
+
   // Line Items & Multi-Select Modal
   const [items, setItems] = useState<QuotationItem[]>(
     readOnlyQuotation?.items && readOnlyQuotation.items.length > 0
@@ -87,38 +147,48 @@ export const QuotationDocument: React.FC<{
   const [newItemRate, setNewItemRate] = useState(0);
   const [selectedCatalogProdId, setSelectedCatalogProdId] = useState('');
 
-  // Multi-Select Catalog Modal State
+  // Multi-Select Commercial Catalog Modal State
   const [isMultiModalOpen, setIsMultiModalOpen] = useState(false);
   const [multiSelectedMap, setMultiSelectedMap] = useState<Record<string, { selected: boolean; qty: number; rate: number }>>({});
   const [multiCategoryFilter, setMultiCategoryFilter] = useState<string>('all');
+  const [multiProductSearchTerm, setMultiProductSearchTerm] = useState<string>('');
 
-  // Bill of Materials (BOM) Customization State
-  const [bomItems, setBomItems] = useState<BomItem[]>([]);
+  // Dedicated Multi-Select BOM Catalog Modal State
+  const [isMultiBomModalOpen, setIsMultiBomModalOpen] = useState(false);
+  const [multiBomSelectedMap, setMultiBomSelectedMap] = useState<Record<string, { selected: boolean; qty: number; category: string }>>({});
+  const [multiBomCategoryFilter, setMultiBomCategoryFilter] = useState<string>('all');
+  const [multiBomSearchTerm, setMultiBomSearchTerm] = useState<string>('');
+
+  // Bill of Materials (BOM) Customization State (Strict Sequence & Default 15-Item Template)
+  const [bomItems, setBomItems] = useState<BomItem[]>(
+    readOnlyQuotation?.bomItems && readOnlyQuotation.bomItems.length > 0
+      ? sortAndFormatBomItems(readOnlyQuotation.bomItems)
+      : sortAndFormatBomItems(DEFAULT_BOM_ITEMS)
+  );
   const [isBomSectionOpen, setIsBomSectionOpen] = useState(false);
 
   const handleAddBomRow = () => {
-    const nextSr = bomItems.length + 1;
-    setBomItems([
-      ...bomItems,
-      { srNo: nextSr, itemName: '', qty: 1, unit: 'Nos', brand: '' }
-    ]);
+    setBomItems(prev => sortAndFormatBomItems([
+      ...prev,
+      { srNo: prev.length + 1, itemName: '', qty: 1, unit: 'Nos', brand: '', category: 'Other Accessories' }
+    ]));
   };
 
   const handleUpdateBomRow = (index: number, field: keyof BomItem, value: any) => {
     const updated = [...bomItems];
     updated[index] = { ...updated[index], [field]: value };
-    setBomItems(updated);
+    setBomItems(sortAndFormatBomItems(updated));
   };
 
   const handleRemoveBomRow = (index: number) => {
-    setBomItems(bomItems.filter((_, i) => i !== index));
+    setBomItems(prev => sortAndFormatBomItems(prev.filter((_, i) => i !== index)));
   };
 
   const handleSelectBomFromCatalog = (prodId: string) => {
     if (!prodId) return;
     const prod = products.find(p => p.id === prodId);
     if (prod) {
-      setBomItems(prev => [
+      setBomItems(prev => sortAndFormatBomItems([
         ...prev,
         {
           srNo: prev.length + 1,
@@ -129,8 +199,75 @@ export const QuotationDocument: React.FC<{
           category: prod.bomCategory || 'Other Accessories',
           description: prod.description || ''
         }
-      ]);
+      ]));
       setIsBomSectionOpen(true);
+    }
+  };
+
+  const handleToggleMultiBomItem = (prodId: string, defaultCategory: string) => {
+    setMultiBomSelectedMap(prev => {
+      const current = prev[prodId] || { selected: false, qty: 1, category: defaultCategory };
+      return {
+        ...prev,
+        [prodId]: { ...current, selected: !current.selected, category: current.category || defaultCategory }
+      };
+    });
+  };
+
+  const handleUpdateMultiBomQty = (prodId: string, delta: number, defaultCategory: string) => {
+    setMultiBomSelectedMap(prev => {
+      const current = prev[prodId] || { selected: true, qty: 1, category: defaultCategory };
+      const newQty = current.qty + delta;
+      if (newQty <= 0) {
+        return {
+          ...prev,
+          [prodId]: { ...current, qty: 0, selected: false }
+        };
+      }
+      return {
+        ...prev,
+        [prodId]: { ...current, qty: newQty, selected: true }
+      };
+    });
+  };
+
+  const handleUpdateMultiBomCategory = (prodId: string, category: string) => {
+    setMultiBomSelectedMap(prev => {
+      const current = prev[prodId] || { selected: true, qty: 1, category };
+      return {
+        ...prev,
+        [prodId]: { ...current, category, selected: true }
+      };
+    });
+  };
+
+  const handleAddAllSelectedBomItems = () => {
+    const newBomItemsToAdd: BomItem[] = [];
+    let currentCount = bomItems.length;
+
+    products.filter(p => p.category === 'bom_item').forEach(p => {
+      const sel = multiBomSelectedMap[p.id];
+      if (sel && sel.selected && sel.qty > 0) {
+        currentCount++;
+        newBomItemsToAdd.push({
+          srNo: currentCount,
+          itemName: p.name,
+          qty: sel.qty,
+          unit: p.unit || 'Nos',
+          brand: p.brand || '',
+          category: sel.category || p.bomCategory || 'Other Accessories',
+          description: p.description || ''
+        });
+      }
+    });
+
+    if (newBomItemsToAdd.length > 0) {
+      setBomItems(prev => sortAndFormatBomItems([...prev, ...newBomItemsToAdd]));
+      setMultiBomSelectedMap({});
+      setIsMultiBomModalOpen(false);
+      setIsBomSectionOpen(true);
+    } else {
+      alert('Kripya kam se kam ek BOM item select karein.');
     }
   };
 
@@ -193,7 +330,9 @@ export const QuotationDocument: React.FC<{
         setItems(readOnlyQuotation.items);
       }
       if (readOnlyQuotation.bomItems && readOnlyQuotation.bomItems.length > 0) {
-        setBomItems(readOnlyQuotation.bomItems);
+        setBomItems(sortAndFormatBomItems(readOnlyQuotation.bomItems));
+      } else {
+        setBomItems(sortAndFormatBomItems(DEFAULT_BOM_ITEMS));
       }
     }
   }, [readOnlyQuotation]);
@@ -237,7 +376,13 @@ export const QuotationDocument: React.FC<{
             setGstPreset([13.8, 12, 18, 5, 0].includes(q.gstRate) ? String(q.gstRate) : 'custom');
           }
           if (q.items && q.items.length > 0) setItems(q.items);
-          if (q.bomItems && q.bomItems.length > 0) setBomItems(q.bomItems);
+          if (q.bomItems && q.bomItems.length > 0) {
+            setBomItems(sortAndFormatBomItems(q.bomItems));
+          } else {
+            setBomItems(sortAndFormatBomItems(DEFAULT_BOM_ITEMS));
+          }
+        } else {
+          setBomItems(sortAndFormatBomItems(DEFAULT_BOM_ITEMS));
         }
       } catch (err) {
         console.warn("Existing quotation load note:", err);
@@ -471,10 +616,9 @@ export const QuotationDocument: React.FC<{
   // Save Quotation Record & Render 8-Page PDF Proposal to Backblaze B2 Storage
   const handleSaveQuotation = async (): Promise<string | null> => {
     const hasItems = items && items.length > 0;
-    const hasBom = bomItems && bomItems.length > 0;
 
-    if (!hasItems && !hasBom) {
-      alert('⚠️ Quotation save nahi ho sakta: Kripya pehle kam se kam 1 product item ya BOM row add karein.');
+    if (!hasItems || grandTotal <= 0) {
+      alert('⚠️ Quotation save nahi ho sakta: Kripya pehle kam se kam 1 commercial product item add karein (Total amount zero ₹0 nahi ho sakta).');
       return null;
     }
 
@@ -516,6 +660,7 @@ export const QuotationDocument: React.FC<{
       };
 
       const qId = await quotationService.createQuotation(quotationRecord);
+      if (!qId) return null;
       const fullQuotation = await quotationService.getQuotationById(qId);
       
       let b2Url = '';
@@ -544,12 +689,10 @@ export const QuotationDocument: React.FC<{
         if (b2Url && (b2Url.startsWith('http://') || b2Url.startsWith('https://'))) {
           await quotationService.updateQuotation({ ...fullQuotation, pdfUrl: b2Url });
           console.log(`📦 Quotation 8-Page PDF saved & uploaded to Backblaze B2: ${b2Url}`);
-        } else {
-          throw new Error('Backblaze B2 upload returned an empty or invalid URL.');
         }
       }
 
-      setSaveSuccessMsg('Quotation saved & PDF uploaded to Backblaze B2!');
+      setSaveSuccessMsg('Quotation saved & PDF uploaded successfully!');
       setTimeout(() => setSaveSuccessMsg(null), 4000);
       return qId;
     } catch (err: any) {
@@ -563,6 +706,11 @@ export const QuotationDocument: React.FC<{
 
   // Share Quotation PDF via WhatsApp using Dual Strategy
   const handleShareQuotation = async () => {
+    if (!items || items.length === 0 || grandTotal <= 0) {
+      alert('⚠️ Quotation share nahi ho sakta: Kripya pehle kam se kam 1 commercial product item add karein.');
+      return;
+    }
+
     let pdfBlob = lastPdfBlobRef.current;
     const targetLeadId = selectedLeadId || readOnlyQuotation?.leadId;
     const mockLead: Lead = selectedLead || {
@@ -614,6 +762,7 @@ export const QuotationDocument: React.FC<{
   // Silent save without loading spinner (used after WhatsApp share)
   const silentBackgroundSave = async () => {
     try {
+      if (!items || items.length === 0 || grandTotal <= 0) return;
       const targetLeadId = selectedLeadId || readOnlyQuotation?.leadId;
       if (!targetLeadId) return;
 
@@ -665,28 +814,38 @@ export const QuotationDocument: React.FC<{
     }
   };
 
-  // Download PDF Document
+  // Download PDF Document (Instant download using optimized single-pass PDF generation)
   const handleSaveAndGeneratePDF = async () => {
+    if (!items || items.length === 0 || grandTotal <= 0) {
+      alert('⚠️ Quotation download nahi ho sakta: Kripya pehle kam se kam 1 commercial product item add karein.');
+      return;
+    }
     setIsGenerating(true);
     try {
       const qId = await handleSaveQuotation();
       if (!qId) return;
 
-      const fullQuotation = await quotationService.getQuotationById(qId);
-      if (fullQuotation) {
-        const mockLead: Lead = selectedLead || {
-          id: selectedLeadId || fullQuotation.leadId,
-          name: consumerName || 'Valued Customer',
-          phoneNumber: consumerMobile,
-          email: consumerEmail,
-          requirement: `${systemCapacity} kW Solar Rooftop`,
-          description: city,
-          createdBy: preparedBy,
-          status: 'quotation_sent',
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString()
-        };
-        const blob = await pdfService.generateQuotationPDF(fullQuotation, mockLead, preparedBy);
+      let blob = lastPdfBlobRef.current;
+      if (!blob) {
+        const fullQuotation = await quotationService.getQuotationById(qId);
+        if (fullQuotation) {
+          const mockLead: Lead = selectedLead || {
+            id: selectedLeadId || fullQuotation.leadId,
+            name: consumerName || 'Valued Customer',
+            phoneNumber: consumerMobile,
+            email: consumerEmail,
+            requirement: `${systemCapacity} kW Solar Rooftop`,
+            description: city,
+            createdBy: preparedBy,
+            status: 'quotation_sent',
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString()
+          };
+          blob = await pdfService.generateQuotationPDF(fullQuotation, mockLead, preparedBy);
+        }
+      }
+
+      if (blob) {
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
@@ -704,6 +863,11 @@ export const QuotationDocument: React.FC<{
     }
   };
 
+  // Print Quotation Handler (Prints exact preview 8-page document)
+  const handlePrintQuotation = () => {
+    printQuotationHTML(proposalHtml, `Solar_Proposal_${proposalId.replace(/\//g, '_')}`);
+  };
+
   const scrollToPage = (pageIndex: number) => {
     if (!previewScrollRef.current) return;
     const pages = previewScrollRef.current.querySelectorAll('.quotation-document-page');
@@ -718,8 +882,9 @@ export const QuotationDocument: React.FC<{
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 bg-white p-4 sm:p-6 rounded-2xl border border-slate-200 shadow-xs">
         <div>
           <div className="flex items-center gap-2">
-            <span className="bg-emerald-100 text-emerald-800 font-black text-[10px] px-2.5 py-0.5 rounded-full uppercase tracking-wider">
-              Official 8-Page Proposal Studio
+            <span className="bg-emerald-100 text-emerald-800 font-black text-[10px] px-2.5 py-0.5 rounded-full uppercase tracking-wider flex items-center gap-1">
+              <Eye className="w-3 h-3 text-emerald-700" />
+              <span>{isViewOnlyMode ? 'Saved Quotation PDF View' : 'Official 8-Page Proposal Studio'}</span>
             </span>
             {saveSuccessMsg && (
               <span className="bg-emerald-600 text-white font-bold text-[11px] px-3 py-0.5 rounded-full flex items-center gap-1 animate-fade-in">
@@ -730,77 +895,108 @@ export const QuotationDocument: React.FC<{
           </div>
           <h1 className="text-xl sm:text-2xl font-black text-slate-900 tracking-tight flex items-center gap-2 mt-1">
             <FileText className="w-6 h-6 text-emerald-600" />
-            <span>Solar Rooftop Custom Quotation Studio</span>
+            <span>{isViewOnlyMode ? `Quotation: ${proposalId}` : 'Solar Rooftop Custom Quotation Studio'}</span>
           </h1>
-          <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider hidden sm:block">
-            Custom Edit, Save & Share 8-Page Proposal • Live Preview (Cover, BOM, Specs, Warranty, Financials)
+          <p className="text-xs font-bold text-slate-500 mt-0.5 hidden sm:block">
+            Customer: <strong className="text-slate-900">{consumerName || selectedLead?.name || 'Valued Customer'}</strong> • Total Amount: <strong className="text-emerald-700 text-sm font-black">₹{grandTotal.toLocaleString('en-IN')}</strong> ({items.length} items)
           </p>
         </div>
 
         <div className="flex flex-wrap items-center gap-2.5 self-end sm:self-auto">
-          {/* Mobile Tab Switcher */}
-          <div className="flex lg:hidden bg-slate-100 p-1 rounded-xl border border-slate-200">
+          {/* Mobile Tab Switcher (only in Edit mode) */}
+          {!isViewOnlyMode && (
+            <div className="flex lg:hidden bg-slate-100 p-1 rounded-xl border border-slate-200">
+              <button
+                onClick={() => setMobileTab('form')}
+                className={`px-3 py-1.5 rounded-lg text-xs font-black transition-all ${
+                  mobileTab === 'form' ? 'bg-white text-slate-900 shadow-xs' : 'text-slate-500'
+                }`}
+              >
+                Form Controls
+              </button>
+              <button
+                onClick={() => setMobileTab('preview')}
+                className={`px-3 py-1.5 rounded-lg text-xs font-black transition-all ${
+                  mobileTab === 'preview' ? 'bg-emerald-600 text-white shadow-xs' : 'text-slate-500'
+                }`}
+              >
+                8-Page Preview
+              </button>
+            </div>
+          )}
+
+          {/* In EDIT Mode: Show Save, Share WhatsApp, Download PDF, Print Proposal */}
+          {!isViewOnlyMode && (
+            <>
+              <button
+                type="button"
+                onClick={() => handleSaveQuotation()}
+                disabled={isGenerating}
+                className="px-4 py-2.5 bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white font-extrabold text-xs rounded-xl shadow-md flex items-center gap-2 transition-all cursor-pointer disabled:opacity-50"
+                title="Save Customized Quotation Record"
+              >
+                <Save className="w-4 h-4" />
+                <span>Save Quotation</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={handleShareQuotation}
+                disabled={isGenerating}
+                className="px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white font-extrabold text-xs rounded-xl shadow-md flex items-center gap-2 transition-all cursor-pointer disabled:opacity-50"
+                title="Save & Share Quotation Document via WhatsApp"
+              >
+                <Send className="w-4 h-4" />
+                <span>Share WhatsApp</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={handleSaveAndGeneratePDF}
+                disabled={isGenerating}
+                className="px-4 py-2.5 bg-slate-900 hover:bg-slate-800 text-white font-extrabold text-xs rounded-xl shadow-md flex items-center gap-2 transition-all cursor-pointer disabled:opacity-50"
+                title="Download PDF Document"
+              >
+                <Download className="w-4 h-4" />
+                <span>Download PDF</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={handlePrintQuotation}
+                disabled={isGenerating}
+                className="px-4 py-2.5 bg-indigo-600 hover:bg-indigo-700 active:bg-indigo-800 text-white font-extrabold text-xs rounded-xl shadow-md flex items-center gap-2 transition-all cursor-pointer disabled:opacity-50"
+                title="Print Quotation Proposal (Exact Live Preview Match)"
+              >
+                <Printer className="w-4 h-4" />
+                <span>Print Proposal</span>
+              </button>
+            </>
+          )}
+
+          {/* In VIEW Mode: Only show Custom Edit button to switch to Edit mode if needed */}
+          {isViewOnlyMode && (
             <button
-              onClick={() => setMobileTab('form')}
-              className={`px-3 py-1.5 rounded-lg text-xs font-black transition-all ${
-                mobileTab === 'form' ? 'bg-white text-slate-900 shadow-xs' : 'text-slate-500'
-              }`}
+              type="button"
+              onClick={() => {
+                setIsViewOnlyMode(false);
+                if (onSwitchToEdit) onSwitchToEdit();
+              }}
+              className="px-4 py-2.5 bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white font-extrabold text-xs rounded-xl shadow-md flex items-center gap-2 transition-all cursor-pointer"
+              title="Switch to Custom Edit Mode"
             >
-              Form Controls
+              <Sparkles className="w-4 h-4" />
+              <span>Custom Edit</span>
             </button>
-            <button
-              onClick={() => setMobileTab('preview')}
-              className={`px-3 py-1.5 rounded-lg text-xs font-black transition-all ${
-                mobileTab === 'preview' ? 'bg-emerald-600 text-white shadow-xs' : 'text-slate-500'
-              }`}
-            >
-              8-Page Preview
-            </button>
-          </div>
+          )}
 
-          {/* 1. Save Button */}
-          <button
-            type="button"
-            onClick={() => handleSaveQuotation()}
-            disabled={isGenerating}
-            className="px-4 py-2.5 bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white font-extrabold text-xs rounded-xl shadow-md flex items-center gap-2 transition-all cursor-pointer disabled:opacity-50"
-            title="Save Customized Quotation Record"
-          >
-            <Save className="w-4 h-4" />
-            <span>Save Quotation</span>
-          </button>
-
-          {/* 2. Share WhatsApp Button */}
-          <button
-            type="button"
-            onClick={handleShareQuotation}
-            disabled={isGenerating}
-            className="px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white font-extrabold text-xs rounded-xl shadow-md flex items-center gap-2 transition-all cursor-pointer disabled:opacity-50"
-            title="Save & Share Quotation Document via WhatsApp"
-          >
-            <Send className="w-4 h-4" />
-            <span>Share WhatsApp</span>
-          </button>
-
-          {/* 3. Download PDF Button */}
-          <button
-            type="button"
-            onClick={handleSaveAndGeneratePDF}
-            disabled={isGenerating}
-            className="px-4 py-2.5 bg-slate-900 hover:bg-slate-800 text-white font-extrabold text-xs rounded-xl shadow-md flex items-center gap-2 transition-all cursor-pointer disabled:opacity-50"
-            title="Download PDF Document"
-          >
-            <Download className="w-4 h-4" />
-            <span>Download PDF</span>
-          </button>
-
-          {/* 4. Close Button if in modal */}
+          {/* Close Button (if in modal view) */}
           {onClosePreview && (
             <button
               type="button"
               onClick={onClosePreview}
               className="p-2.5 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-xl transition-all cursor-pointer ml-1"
-              title="Close Editor"
+              title="Close Preview"
             >
               <X className="w-4 h-4" />
             </button>
@@ -829,263 +1025,350 @@ export const QuotationDocument: React.FC<{
 
       {/* Main Grid */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-        {/* Left Form Controls (4 cols) */}
-        <div className={`lg:col-span-4 bg-white p-6 rounded-2xl border border-slate-200 shadow-xs space-y-5 text-xs font-semibold ${
-          mobileTab === 'form' ? 'block' : 'hidden lg:block'
-        }`}>
-          <h3 className="text-sm font-black text-slate-900 pb-2 border-b border-slate-100 uppercase tracking-wider text-emerald-700 flex items-center gap-2">
-            <Sparkles className="w-4 h-4" />
-            <span>Proposal Configuration</span>
-          </h3>
-
-          {/* Lead Selector */}
-          <div>
-            <label className="block text-slate-500 mb-1">Select Customer Lead</label>
-            <select
-              value={selectedLeadId}
-              onChange={(e) => handleLeadSelect(e.target.value)}
-              className="w-full border border-slate-200 rounded-xl px-3 py-2.5 bg-slate-50 text-slate-800 font-bold focus:outline-none cursor-pointer"
-            >
-              <option value="">-- Choose Customer --</option>
-              {leads.map(l => (
-                <option key={l.id} value={l.id}>{l.name} ({l.phoneNumber})</option>
-              ))}
-            </select>
-          </div>
-
-          {/* Proposal Info */}
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="block text-slate-500 mb-1">Proposal ID</label>
-              <input
-                type="text"
-                value={proposalId}
-                onChange={(e) => setProposalId(e.target.value)}
-                className="w-full border border-slate-200 rounded-xl px-3 py-2 bg-slate-50 font-bold text-slate-800"
-              />
-            </div>
-            <div>
-              <label className="block text-slate-500 mb-1">Date</label>
-              <input
-                type="date"
-                value={proposalDate}
-                onChange={(e) => setProposalDate(e.target.value)}
-                className="w-full border border-slate-200 rounded-xl px-3 py-2 bg-slate-50 cursor-pointer font-bold"
-              />
-            </div>
-          </div>
-
-          <div>
-            <label className="block text-slate-500 mb-1">Prepared By (Engineer Name)</label>
-            <input
-              type="text"
-              value={preparedBy}
-              onChange={(e) => setPreparedBy(e.target.value)}
-              placeholder="e.g. Nitin Thakre"
-              className="w-full border border-slate-200 rounded-xl px-3 py-2 bg-slate-50 font-bold"
-            />
-          </div>
-
-          {/* Customer Details */}
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="block text-slate-500 mb-1">Customer Name</label>
-              <input
-                type="text"
-                value={consumerName}
-                onChange={(e) => setConsumerName(e.target.value)}
-                className="w-full border border-slate-200 rounded-xl px-3 py-2 bg-slate-50"
-              />
-            </div>
-            <div>
-              <label className="block text-slate-500 mb-1">Mobile Number</label>
-              <input
-                type="text"
-                value={consumerMobile}
-                onChange={(e) => setConsumerMobile(e.target.value)}
-                className="w-full border border-slate-200 rounded-xl px-3 py-2 bg-slate-50"
-              />
-            </div>
-          </div>
-
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="block text-slate-500 mb-1">City</label>
-              <input
-                type="text"
-                value={city}
-                onChange={(e) => setCity(e.target.value)}
-                className="w-full border border-slate-200 rounded-xl px-3 py-2 bg-slate-50"
-              />
-            </div>
-            <div>
-              <label className="block text-slate-500 mb-1">State</label>
-              <input
-                type="text"
-                value={statePin}
-                onChange={(e) => setStatePin(e.target.value)}
-                className="w-full border border-slate-200 rounded-xl px-3 py-2 bg-slate-50"
-              />
-            </div>
-          </div>
-
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="block text-slate-500 mb-1">Consumer No.</label>
-              <input
-                type="text"
-                value={consumerNo}
-                onChange={(e) => setConsumerNo(e.target.value)}
-                placeholder="e.g. 396013606014"
-                className="w-full border border-slate-200 rounded-xl px-3 py-2 bg-slate-50"
-              />
-            </div>
-            <div>
-              <label className="block text-slate-500 mb-1">Sanctioned Load</label>
-              <input
-                type="text"
-                value={sanctionLoad}
-                onChange={(e) => setSanctionLoad(e.target.value)}
-                placeholder="e.g. 5.0 kW"
-                className="w-full border border-slate-200 rounded-xl px-3 py-2 bg-slate-50"
-              />
-            </div>
-          </div>
-
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="block text-slate-500 mb-1">System Capacity (kW)</label>
-              <input
-                type="text"
-                value={systemCapacity}
-                onChange={(e) => setSystemCapacity(e.target.value)}
-                placeholder="e.g. 5.0"
-                className="w-full border border-slate-200 rounded-xl px-3 py-2 bg-slate-50 font-bold"
-              />
-            </div>
-            <div>
-              <label className="block text-slate-500 mb-1">Govt Subsidy (₹)</label>
-              <input
-                type="text"
-                value={subsidyAmount}
-                onChange={(e) => setSubsidyAmount(e.target.value)}
-                placeholder="e.g. 78000"
-                className="w-full border border-slate-200 rounded-xl px-3 py-2 bg-slate-50 font-bold text-emerald-700"
-              />
-            </div>
-          </div>
-
-          {/* GST Rate Settings */}
-          <div className="space-y-3 p-3 bg-blue-50/50 border border-blue-100 rounded-xl">
-            <div className="flex justify-between items-center">
-              <p className="text-[10px] uppercase font-bold text-blue-800 tracking-wider flex items-center gap-1">
-                <Percent className="w-3.5 h-3.5" />
-                <span>GST Taxation Configuration</span>
-              </p>
-              <span className="bg-blue-600 text-white font-extrabold text-[10px] px-2 py-0.5 rounded-md">
-                {gstRate}% GST
-              </span>
-            </div>
-
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className="block text-slate-500 mb-1">GST Rate Preset</label>
-                <select
-                  value={gstPreset}
-                  onChange={(e) => handleGstPresetChange(e.target.value)}
-                  className="w-full border border-blue-200 rounded-xl px-2.5 py-2 bg-white text-slate-800 font-bold cursor-pointer text-[11px]"
-                >
-                  <option value="13.8">13.8% (Solar EPC Standard)</option>
-                  <option value="12">12.0% (Solar Goods)</option>
-                  <option value="18">18.0% (Services/EPC)</option>
-                  <option value="5">5.0%</option>
-                  <option value="0">0.0% (Exempt)</option>
-                  <option value="custom">Custom %</option>
-                </select>
-              </div>
-
-              <div>
-                <label className="block text-slate-500 mb-1">Custom GST %</label>
-                <input
-                  type="number"
-                  step="0.1"
-                  min={0}
-                  max={100}
-                  value={gstRate}
-                  onChange={(e) => {
-                    setGstRate(parseFloat(e.target.value) || 0);
-                    setGstPreset('custom');
-                  }}
-                  className="w-full border border-blue-200 rounded-xl px-3 py-2 bg-white font-black text-blue-900"
-                />
-              </div>
-            </div>
-
-            {/* Tax calculation summary box */}
-            <div className="bg-white p-2.5 rounded-lg border border-blue-100 text-[11px] space-y-1 font-medium text-slate-700">
-              <div className="flex justify-between">
-                <span>Items Subtotal:</span>
-                <span className="font-bold text-slate-900">₹{subtotal.toLocaleString('en-IN')}</span>
-              </div>
-              <div className="flex justify-between text-blue-700">
-                <span>CGST ({((gstRate || 0) / 2).toFixed(1)}%):</span>
-                <span>₹{cgstAmount.toLocaleString('en-IN')}</span>
-              </div>
-              <div className="flex justify-between text-blue-700">
-                <span>SGST ({((gstRate || 0) / 2).toFixed(1)}%):</span>
-                <span>₹{sgstAmount.toLocaleString('en-IN')}</span>
-              </div>
-              <div className="flex justify-between pt-1 border-t border-slate-100 font-black text-slate-900">
-                <span>Invoice Total with Tax:</span>
-                <span className="text-emerald-700">₹{(subtotal + taxAmount).toLocaleString('en-IN')}</span>
-              </div>
-            </div>
-          </div>
-
-          {/* Custom Bill of Materials (BOM) Manager Section */}
-          <div className="space-y-3 p-3 bg-purple-50/60 border border-purple-200 rounded-xl">
-            <div className="flex justify-between items-center">
+        {/* Left Form Controls (4 cols) — Hidden in View Only mode */}
+        {!isViewOnlyMode && (
+          <div className={`lg:col-span-4 bg-white p-6 rounded-2xl border border-slate-200 shadow-xs space-y-5 text-xs font-semibold ${
+            mobileTab === 'form' ? 'block' : 'hidden lg:block'
+          }`}>
+          {/* Header & Quick Expand / Collapse All */}
+          <div className="flex items-center justify-between pb-2 border-b border-slate-100">
+            <h3 className="text-sm font-black text-slate-900 uppercase tracking-wider text-emerald-700 flex items-center gap-2">
+              <Sparkles className="w-4 h-4" />
+              <span>Proposal Configuration</span>
+            </h3>
+            <div className="flex items-center gap-2 text-[11px] font-bold">
               <button
                 type="button"
-                onClick={() => setIsBomSectionOpen(!isBomSectionOpen)}
-                className="flex items-center gap-1.5 text-xs font-black text-purple-900 cursor-pointer"
+                onClick={() => setOpenSections({ info: true, gst: true, bom: true, items: true })}
+                className="text-emerald-700 hover:text-emerald-900 hover:underline cursor-pointer"
               >
-                <Layers className="w-4 h-4 text-purple-600" />
-                <span>📄 Custom Bill of Materials (BOM) ({bomItems.length} rows)</span>
-                <span className="text-[10px] text-purple-600 font-bold ml-1">
-                  {isBomSectionOpen ? '▲ Hide' : '▼ Edit BOM Table'}
-                </span>
+                Expand All
+              </button>
+              <span className="text-slate-300">|</span>
+              <button
+                type="button"
+                onClick={() => setOpenSections({ info: false, gst: false, bom: false, items: false })}
+                className="text-slate-500 hover:text-slate-700 hover:underline cursor-pointer"
+              >
+                Collapse All
               </button>
             </div>
+          </div>
 
-            {isBomSectionOpen && (
-              <div className="space-y-3 pt-2 border-t border-purple-200">
+          {/* Section 1: Customer Lead & Proposal Details */}
+          <div className="border border-slate-200 rounded-2xl overflow-hidden bg-white shadow-xs">
+            <button
+              type="button"
+              onClick={() => toggleSection('info')}
+              className="w-full bg-slate-50 hover:bg-slate-100/80 px-4 py-3 flex items-center justify-between font-bold text-xs text-slate-800 transition-colors cursor-pointer"
+            >
+              <div className="flex items-center gap-2 min-w-0">
+                <Sparkles className="w-4 h-4 text-emerald-600 shrink-0" />
+                <span className="font-extrabold uppercase tracking-wider text-slate-900 text-xs truncate">
+                  Customer & Proposal Details
+                </span>
+              </div>
+              <div className="flex items-center gap-2 shrink-0">
+                {consumerName && (
+                  <span className="bg-emerald-100 text-emerald-800 text-[10px] font-black px-2 py-0.5 rounded-full truncate max-w-[120px]">
+                    {consumerName}
+                  </span>
+                )}
+                {openSections.info ? (
+                  <ChevronUp className="w-4 h-4 text-slate-500" />
+                ) : (
+                  <ChevronDown className="w-4 h-4 text-slate-500" />
+                )}
+              </div>
+            </button>
+            {openSections.info && (
+              <div className="p-4 bg-white border-t border-slate-200 space-y-4">
+                {/* Lead Selector */}
+                <div>
+                  <label className="block text-slate-500 mb-1">Select Customer Lead</label>
+                  <select
+                    value={selectedLeadId}
+                    onChange={(e) => handleLeadSelect(e.target.value)}
+                    className="w-full border border-slate-200 rounded-xl px-3 py-2.5 bg-slate-50 text-slate-800 font-bold focus:outline-none cursor-pointer"
+                  >
+                    <option value="">-- Choose Customer --</option>
+                    {leads.map(l => (
+                      <option key={l.id} value={l.id}>{l.name} ({l.phoneNumber})</option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* Proposal Info */}
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-slate-500 mb-1">Proposal ID</label>
+                    <input
+                      type="text"
+                      value={proposalId}
+                      onChange={(e) => setProposalId(e.target.value)}
+                      className="w-full border border-slate-200 rounded-xl px-3 py-2 bg-slate-50 font-bold text-slate-800"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-slate-500 mb-1">Date</label>
+                    <input
+                      type="date"
+                      value={proposalDate}
+                      onChange={(e) => setProposalDate(e.target.value)}
+                      className="w-full border border-slate-200 rounded-xl px-3 py-2 bg-slate-50 cursor-pointer font-bold"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-slate-500 mb-1">Prepared By (Engineer Name)</label>
+                  <input
+                    type="text"
+                    value={preparedBy}
+                    onChange={(e) => setPreparedBy(e.target.value)}
+                    placeholder="e.g. Nitin Thakre"
+                    className="w-full border border-slate-200 rounded-xl px-3 py-2 bg-slate-50 font-bold"
+                  />
+                </div>
+
+                {/* Customer Details */}
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-slate-500 mb-1">Customer Name</label>
+                    <input
+                      type="text"
+                      value={consumerName}
+                      onChange={(e) => setConsumerName(e.target.value)}
+                      className="w-full border border-slate-200 rounded-xl px-3 py-2 bg-slate-50"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-slate-500 mb-1">Mobile Number</label>
+                    <input
+                      type="text"
+                      value={consumerMobile}
+                      onChange={(e) => setConsumerMobile(e.target.value)}
+                      className="w-full border border-slate-200 rounded-xl px-3 py-2 bg-slate-50"
+                    />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-slate-500 mb-1">City</label>
+                    <input
+                      type="text"
+                      value={city}
+                      onChange={(e) => setCity(e.target.value)}
+                      className="w-full border border-slate-200 rounded-xl px-3 py-2 bg-slate-50"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-slate-500 mb-1">State</label>
+                    <input
+                      type="text"
+                      value={statePin}
+                      onChange={(e) => setStatePin(e.target.value)}
+                      className="w-full border border-slate-200 rounded-xl px-3 py-2 bg-slate-50"
+                    />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-slate-500 mb-1">Consumer No.</label>
+                    <input
+                      type="text"
+                      value={consumerNo}
+                      onChange={(e) => setConsumerNo(e.target.value)}
+                      placeholder="e.g. 396013606014"
+                      className="w-full border border-slate-200 rounded-xl px-3 py-2 bg-slate-50"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-slate-500 mb-1">Sanctioned Load</label>
+                    <input
+                      type="text"
+                      value={sanctionLoad}
+                      onChange={(e) => setSanctionLoad(e.target.value)}
+                      placeholder="e.g. 5.0 kW"
+                      className="w-full border border-slate-200 rounded-xl px-3 py-2 bg-slate-50"
+                    />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-slate-500 mb-1">System Capacity (kW)</label>
+                    <input
+                      type="text"
+                      value={systemCapacity}
+                      onChange={(e) => setSystemCapacity(e.target.value)}
+                      placeholder="e.g. 5.0"
+                      className="w-full border border-slate-200 rounded-xl px-3 py-2 bg-slate-50 font-bold"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-slate-500 mb-1">Govt Subsidy (₹)</label>
+                    <input
+                      type="text"
+                      value={subsidyAmount}
+                      onChange={(e) => setSubsidyAmount(e.target.value)}
+                      placeholder="e.g. 78000"
+                      className="w-full border border-slate-200 rounded-xl px-3 py-2 bg-slate-50 font-bold text-emerald-700"
+                    />
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Section 2: GST Taxation Configuration */}
+          <div className="border border-blue-200 rounded-2xl overflow-hidden bg-blue-50/30 shadow-xs">
+            <button
+              type="button"
+              onClick={() => toggleSection('gst')}
+              className="w-full bg-blue-50/70 hover:bg-blue-100/70 px-4 py-3 flex items-center justify-between font-bold text-xs text-blue-900 transition-colors cursor-pointer"
+            >
+              <div className="flex items-center gap-2 min-w-0">
+                <Percent className="w-4 h-4 text-blue-600 shrink-0" />
+                <span className="font-extrabold uppercase tracking-wider text-blue-900 text-xs truncate">
+                  GST Taxation Configuration
+                </span>
+              </div>
+              <div className="flex items-center gap-2 shrink-0">
+                <span className="bg-blue-600 text-white font-extrabold text-[10px] px-2 py-0.5 rounded-md">
+                  {gstRate}% GST
+                </span>
+                {openSections.gst ? (
+                  <ChevronUp className="w-4 h-4 text-blue-600" />
+                ) : (
+                  <ChevronDown className="w-4 h-4 text-blue-600" />
+                )}
+              </div>
+            </button>
+            {openSections.gst && (
+              <div className="p-4 bg-white border-t border-blue-100 space-y-3">
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-slate-500 mb-1">GST Rate Preset</label>
+                    <select
+                      value={gstPreset}
+                      onChange={(e) => handleGstPresetChange(e.target.value)}
+                      className="w-full border border-blue-200 rounded-xl px-2.5 py-2 bg-white text-slate-800 font-bold cursor-pointer text-[11px]"
+                    >
+                      <option value="13.8">13.8% (Solar EPC Standard)</option>
+                      <option value="12">12.0% (Solar Goods)</option>
+                      <option value="18">18.0% (Services/EPC)</option>
+                      <option value="5">5.0%</option>
+                      <option value="0">0.0% (Exempt)</option>
+                      <option value="custom">Custom %</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-slate-500 mb-1">Custom GST %</label>
+                    <input
+                      type="number"
+                      step="0.1"
+                      min={0}
+                      max={100}
+                      value={gstRate}
+                      onChange={(e) => {
+                        setGstRate(parseFloat(e.target.value) || 0);
+                        setGstPreset('custom');
+                      }}
+                      className="w-full border border-blue-200 rounded-xl px-3 py-2 bg-white font-black text-blue-900"
+                    />
+                  </div>
+                </div>
+
+                {/* Tax calculation summary box */}
+                <div className="bg-slate-50 p-2.5 rounded-lg border border-blue-100 text-[11px] space-y-1 font-medium text-slate-700">
+                  <div className="flex justify-between">
+                    <span>Items Subtotal:</span>
+                    <span className="font-bold text-slate-900">₹{subtotal.toLocaleString('en-IN')}</span>
+                  </div>
+                  <div className="flex justify-between text-blue-700">
+                    <span>CGST ({((gstRate || 0) / 2).toFixed(1)}%):</span>
+                    <span>₹{cgstAmount.toLocaleString('en-IN')}</span>
+                  </div>
+                  <div className="flex justify-between text-blue-700">
+                    <span>SGST ({((gstRate || 0) / 2).toFixed(1)}%):</span>
+                    <span>₹{sgstAmount.toLocaleString('en-IN')}</span>
+                  </div>
+                  <div className="flex justify-between pt-1 border-t border-slate-200 font-black text-slate-900">
+                    <span>Invoice Total with Tax:</span>
+                    <span className="text-emerald-700">₹{(subtotal + taxAmount).toLocaleString('en-IN')}</span>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Section 3: Custom Bill of Materials (BOM) Manager */}
+          <div className="border border-purple-200 rounded-2xl overflow-hidden bg-purple-50/30 shadow-xs">
+            <button
+              type="button"
+              onClick={() => toggleSection('bom')}
+              className="w-full bg-purple-50/70 hover:bg-purple-100/70 px-4 py-3 flex items-center justify-between font-bold text-xs text-purple-950 transition-colors cursor-pointer"
+            >
+              <div className="flex items-center gap-2 min-w-0">
+                <Layers className="w-4 h-4 text-purple-600 shrink-0" />
+                <span className="font-extrabold uppercase tracking-wider text-purple-950 text-xs truncate">
+                  Custom Bill of Materials (BOM)
+                </span>
+              </div>
+              <div className="flex items-center gap-2 shrink-0">
+                <span className="bg-purple-200 text-purple-900 text-[10px] font-black px-2 py-0.5 rounded-md">
+                  {bomItems.length} rows
+                </span>
+                {openSections.bom ? (
+                  <ChevronUp className="w-4 h-4 text-purple-700" />
+                ) : (
+                  <ChevronDown className="w-4 h-4 text-purple-700" />
+                )}
+              </div>
+            </button>
+            {openSections.bom && (
+              <div className="p-4 bg-white border-t border-purple-100 space-y-3">
                 <p className="text-[10px] text-purple-700 font-semibold">
                   Customize the exact Page 6 Bill of Materials table for this quotation. Assign categories to group products under section headers.
                 </p>
 
-                {/* Quick Add from Saved BOM Catalog Dropdown */}
-                {products.filter(p => p.category === 'bom_item').length > 0 && (
-                  <div className="bg-white p-2 border border-purple-200 rounded-xl shadow-2xs">
-                    <label className="block text-[10px] font-bold text-purple-900 mb-1">📖 Quick Pick from Saved BOM Catalog:</label>
-                    <select
-                      onChange={(e) => {
-                        if (e.target.value) {
-                          handleSelectBomFromCatalog(e.target.value);
-                          e.target.value = '';
-                        }
-                      }}
-                      className="w-full border border-purple-200 rounded-lg px-2 py-1.5 bg-purple-50/50 text-slate-800 font-bold text-xs cursor-pointer focus:outline-none"
-                    >
-                      <option value="">-- Add Saved BOM Catalog Item... --</option>
-                      {products.filter(p => p.category === 'bom_item').map(b => (
-                        <option key={b.id} value={b.id}>
-                          ➕ {b.name} {b.brand ? `(${b.brand})` : ''} [{b.unit || 'Nos'}] - ₹{b.rate}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                )}
+                {/* Quick Add Buttons & Dropdown for Saved BOM Catalog */}
+                <div className="flex flex-col gap-2.5 bg-slate-50 p-3 border border-purple-200 rounded-2xl shadow-2xs">
+                  <button
+                    type="button"
+                    onClick={() => setIsMultiBomModalOpen(true)}
+                    className="w-full py-2 px-3 bg-purple-600 hover:bg-purple-700 active:bg-purple-800 text-white font-extrabold text-xs rounded-xl shadow-xs flex items-center justify-center gap-2 cursor-pointer transition-all"
+                  >
+                    <Layers className="w-4 h-4 text-purple-200" />
+                    <span>➕ Multi-Select BOM Items from Catalog</span>
+                  </button>
+
+                  {products.filter(p => p.category === 'bom_item').length > 0 && (
+                    <div>
+                      <label className="block text-[10px] font-bold text-purple-800 mb-1">Or Quick Pick Single BOM Item:</label>
+                      <select
+                        onChange={(e) => {
+                          if (e.target.value) {
+                            handleSelectBomFromCatalog(e.target.value);
+                            e.target.value = '';
+                          }
+                        }}
+                        className="w-full max-w-full truncate border border-purple-200 rounded-xl px-3 py-2 bg-white text-purple-950 font-extrabold text-xs cursor-pointer focus:outline-none focus:border-purple-400"
+                      >
+                        <option value="">-- Select a Single BOM Item to Add... --</option>
+                        {products.filter(p => p.category === 'bom_item').map(b => (
+                          <option key={b.id} value={b.id}>
+                            ➕ {b.name} {b.brand ? `(${b.brand})` : ''} [{b.unit || 'Nos'}]
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
+                </div>
 
                 {bomItems.length > 0 ? (
                   <div className="space-y-2 max-h-72 overflow-y-auto pr-1">
@@ -1185,7 +1468,7 @@ export const QuotationDocument: React.FC<{
                     ))}
                   </div>
                 ) : (
-                  <div className="p-3 bg-white/80 border border-purple-100 rounded-xl text-center space-y-2">
+                  <div className="p-3 bg-slate-50 border border-purple-100 rounded-xl text-center space-y-2">
                     <p className="text-xs text-purple-800 font-bold">No custom BOM rows configured.</p>
                     <p className="text-[10px] text-slate-500">Click "+ Add Item Row" or "🏷️ Add Header Row" below to add custom items.</p>
                   </div>
@@ -1225,244 +1508,265 @@ export const QuotationDocument: React.FC<{
             )}
           </div>
 
-          {/* Line Items Builder with Multi-Select Product Catalog Picker */}
-          <div className="border border-slate-200 p-4 rounded-xl bg-slate-50/60 space-y-4">
-            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2">
-              <div>
-                <p className="text-xs uppercase font-black text-slate-800 tracking-wider flex items-center gap-1.5">
-                  <Calculator className="w-4 h-4 text-emerald-600" />
-                  <span>Proposal Line Items ({items.length})</span>
-                </p>
-                <p className="text-[10px] text-slate-400 font-semibold">
-                  Add catalog items or custom hardware & installation components
-                </p>
+          {/* Section 4: Proposal Line Items Builder & Pricing */}
+          <div className="border border-slate-200 rounded-2xl overflow-hidden bg-white shadow-xs">
+            <button
+              type="button"
+              onClick={() => toggleSection('items')}
+              className="w-full bg-slate-50 hover:bg-slate-100/80 px-4 py-3 flex items-center justify-between font-bold text-xs text-slate-800 transition-colors cursor-pointer"
+            >
+              <div className="flex items-center gap-2 min-w-0">
+                <Calculator className="w-4 h-4 text-emerald-600 shrink-0" />
+                <span className="font-extrabold uppercase tracking-wider text-slate-900 text-xs truncate">
+                  Proposal Line Items ({items.length})
+                </span>
               </div>
+              <div className="flex items-center gap-2 shrink-0">
+                <span className="bg-emerald-100 text-emerald-800 text-[10px] font-black px-2 py-0.5 rounded-md">
+                  ₹{grandTotal > 0 ? grandTotal.toLocaleString('en-IN') : 0}
+                </span>
+                {openSections.items ? (
+                  <ChevronUp className="w-4 h-4 text-slate-500" />
+                ) : (
+                  <ChevronDown className="w-4 h-4 text-slate-500" />
+                )}
+              </div>
+            </button>
+            {openSections.items && (
+              <div className="p-4 bg-white border-t border-slate-200 space-y-4">
+                <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2">
+                  <p className="text-[10px] text-slate-400 font-semibold">
+                    Add catalog items or custom hardware & installation components
+                  </p>
 
-              <div className="flex items-center gap-2 w-full sm:w-auto">
-                {items.length > 0 && (
-                  <button
-                    type="button"
-                    onClick={handleClearAllItems}
-                    className="px-2.5 py-2 bg-rose-50 hover:bg-rose-100 text-rose-700 font-extrabold text-[11px] rounded-xl border border-rose-200 flex items-center gap-1 transition-all cursor-pointer"
-                    title="Clear All Items from Proposal"
-                  >
-                    <Trash2 className="w-3.5 h-3.5" />
-                    <span>Clear All</span>
-                  </button>
+                  <div className="flex items-center gap-2 w-full sm:w-auto">
+                    {items.length > 0 && (
+                      <button
+                        type="button"
+                        onClick={handleClearAllItems}
+                        className="px-2.5 py-2 bg-rose-50 hover:bg-rose-100 text-rose-700 font-extrabold text-[11px] rounded-xl border border-rose-200 flex items-center gap-1 transition-all cursor-pointer"
+                        title="Clear All Items from Proposal"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                        <span>Clear All</span>
+                      </button>
+                    )}
+
+                    {/* Multi-Select Products Button */}
+                    <button
+                      type="button"
+                      onClick={() => setIsMultiModalOpen(true)}
+                      className="w-full sm:w-auto px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white font-extrabold text-xs rounded-xl shadow-xs flex items-center justify-center gap-2 transition-all cursor-pointer"
+                    >
+                      <Layers className="w-4 h-4" />
+                      <span>➕ Multi-Select Products</span>
+                    </button>
+                  </div>
+                </div>
+
+                {/* Commercial Product Catalog Quick Single Picker */}
+                {products.filter(p => p.category !== 'bom_item').length > 0 && (
+                  <div>
+                    <label className="block text-slate-500 mb-1 text-[11px] font-bold">Quick Single Add from Commercial Catalog</label>
+                    <select
+                      value={selectedCatalogProdId}
+                      onChange={(e) => handleCatalogProductSelect(e.target.value)}
+                      className="w-full border border-slate-300 rounded-xl px-2.5 py-2 bg-white text-slate-800 font-bold cursor-pointer text-[11px]"
+                    >
+                      <option value="">-- Choose Commercial Product from Catalog --</option>
+                      {products.filter(p => p.category !== 'bom_item').map(p => (
+                        <option key={p.id} value={p.id}>
+                          [{p.brand ? p.brand.toUpperCase() : p.category.toUpperCase().replace('_', ' ')}] {p.name} — ₹{p.rate.toLocaleString('en-IN')} / {p.unit || 'Nos'}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
                 )}
 
-                {/* Multi-Select Products Button */}
-                <button
-                  type="button"
-                  onClick={() => setIsMultiModalOpen(true)}
-                  className="w-full sm:w-auto px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white font-extrabold text-xs rounded-xl shadow-xs flex items-center justify-center gap-2 transition-all cursor-pointer"
-                >
-                  <Layers className="w-4 h-4" />
-                  <span>➕ Multi-Select Products</span>
-                </button>
-              </div>
-            </div>
-
-            {/* Product Catalog Quick Single Picker */}
-            {products.length > 0 && (
-              <div>
-                <label className="block text-slate-500 mb-1 text-[11px] font-bold">Quick Single Add from Catalog</label>
-                <select
-                  value={selectedCatalogProdId}
-                  onChange={(e) => handleCatalogProductSelect(e.target.value)}
-                  className="w-full border border-slate-300 rounded-xl px-2.5 py-2 bg-white text-slate-800 font-bold cursor-pointer text-[11px]"
-                >
-                  <option value="">-- Choose Product from Catalog --</option>
-                  {products.map(p => (
-                    <option key={p.id} value={p.id}>
-                      [{p.brand ? p.brand.toUpperCase() : p.category.toUpperCase().replace('_', ' ')}] {p.name} — ₹{p.rate.toLocaleString('en-IN')} / {p.unit || 'Nos'}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            )}
-
-            {/* Manual Single Item Input Row */}
-            <div className="flex gap-2 items-end">
-              <div className="flex-1">
-                <input
-                  type="text"
-                  placeholder="Component name..."
-                  value={newItemName}
-                  onChange={(e) => setNewItemName(e.target.value)}
-                  className="w-full border border-slate-200 rounded-xl px-2.5 py-2 bg-white font-semibold"
-                />
-              </div>
-              <div className="w-14">
-                <input
-                  type="number"
-                  min={1}
-                  placeholder="Qty"
-                  value={newItemQty}
-                  onChange={(e) => setNewItemQty(Number(e.target.value))}
-                  className="w-full border border-slate-200 rounded-xl px-2 py-2 bg-white text-center font-bold"
-                />
-              </div>
-              <div className="w-24">
-                <input
-                  type="number"
-                  min={0}
-                  placeholder="Rate (₹)"
-                  value={newItemRate || ''}
-                  onChange={(e) => setNewItemRate(Number(e.target.value))}
-                  className="w-full border border-slate-200 rounded-xl px-2 py-2 bg-white font-bold"
-                />
-              </div>
-              <button
-                type="button"
-                onClick={handleAddItem}
-                className="px-3.5 py-2 bg-slate-900 hover:bg-slate-800 text-white font-bold rounded-xl h-[36px] cursor-pointer transition-colors"
-                title="Add Item to Proposal"
-              >
-                <Plus className="w-4 h-4" />
-              </button>
-            </div>
-
-            {/* Interactive Items List with Explicit Delete Button on Every Card */}
-            {items.length > 0 ? (
-              <div className="space-y-2.5 max-h-72 overflow-y-auto pr-1">
-                {items.map((it, idx) => (
-                  <div
-                    key={idx}
-                    className="p-3 bg-white rounded-xl border border-slate-200 shadow-2xs hover:border-slate-300 transition-all space-y-2"
+                {/* Manual Single Item Input Row */}
+                <div className="flex gap-2 items-end">
+                  <div className="flex-1">
+                    <input
+                      type="text"
+                      placeholder="Component name..."
+                      value={newItemName}
+                      onChange={(e) => setNewItemName(e.target.value)}
+                      className="w-full border border-slate-200 rounded-xl px-2.5 py-2 bg-white font-semibold text-xs"
+                    />
+                  </div>
+                  <div className="w-14">
+                    <input
+                      type="number"
+                      min={1}
+                      placeholder="Qty"
+                      value={newItemQty}
+                      onChange={(e) => setNewItemQty(Number(e.target.value))}
+                      className="w-full border border-slate-200 rounded-xl px-2 py-2 bg-white text-center font-bold text-xs"
+                    />
+                  </div>
+                  <div className="w-24">
+                    <input
+                      type="number"
+                      min={0}
+                      placeholder="Rate (₹)"
+                      value={newItemRate || ''}
+                      onChange={(e) => setNewItemRate(Number(e.target.value))}
+                      className="w-full border border-slate-200 rounded-xl px-2 py-2 bg-white font-bold text-xs"
+                    />
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleAddItem}
+                    className="px-3.5 py-2 bg-slate-900 hover:bg-slate-800 text-white font-bold rounded-xl h-[36px] cursor-pointer transition-colors"
+                    title="Add Item to Proposal"
                   >
-                    {/* Header Row: Item Name + Brand Badge + Explicit Red Delete Button */}
-                    <div className="space-y-1">
-                      <div className="flex items-center justify-between gap-2">
-                        <div className="flex items-center gap-1.5 flex-1 min-w-0">
-                          {it.brand && (
-                            <span className="text-[9px] font-black uppercase px-1.5 py-0.5 rounded bg-blue-50 text-blue-800 border border-blue-200 shrink-0">
-                              🏷️ {it.brand}
-                            </span>
-                          )}
-                          <input
-                            type="text"
-                            value={it.itemName}
-                            onChange={(e) => handleUpdateItemName(idx, e.target.value)}
-                            className="font-black text-slate-900 text-xs bg-transparent border-b border-transparent hover:border-slate-300 focus:border-emerald-500 focus:bg-slate-50 px-1 py-0.5 rounded flex-1 min-w-0"
-                            placeholder="Item name..."
-                          />
+                    <Plus className="w-4 h-4" />
+                  </button>
+                </div>
+
+                {/* Interactive Items List with Explicit Delete Button on Every Card */}
+                {items.length > 0 ? (
+                  <div className="space-y-2.5 max-h-72 overflow-y-auto pr-1">
+                    {items.map((it, idx) => (
+                      <div
+                        key={idx}
+                        className="p-3 bg-white rounded-xl border border-slate-200 shadow-2xs hover:border-slate-300 transition-all space-y-2"
+                      >
+                        {/* Header Row: Item Name + Brand Badge + Explicit Red Delete Button */}
+                        <div className="space-y-1">
+                          <div className="flex items-center justify-between gap-2">
+                            <div className="flex items-center gap-1.5 flex-1 min-w-0">
+                              {it.brand && (
+                                <span className="text-[9px] font-black uppercase px-1.5 py-0.5 rounded bg-blue-50 text-blue-800 border border-blue-200 shrink-0">
+                                  🏷️ {it.brand}
+                                </span>
+                              )}
+                              <input
+                                type="text"
+                                value={it.itemName}
+                                onChange={(e) => handleUpdateItemName(idx, e.target.value)}
+                                className="font-black text-slate-900 text-xs bg-transparent border-b border-transparent hover:border-slate-300 focus:border-emerald-500 focus:bg-slate-50 px-1 py-0.5 rounded flex-1 min-w-0"
+                                placeholder="Item name..."
+                              />
+                            </div>
+
+                            {/* Explicit Red Delete Button */}
+                            <button
+                              type="button"
+                              onClick={() => handleRemoveItem(idx)}
+                              className="px-2.5 py-1 bg-rose-50 hover:bg-rose-100 active:bg-rose-200 text-rose-700 rounded-lg border border-rose-200 flex items-center gap-1 text-[11px] font-extrabold shrink-0 transition-colors cursor-pointer"
+                              title="Delete / Remove this product from proposal"
+                            >
+                              <Trash2 className="w-3.5 h-3.5 text-rose-600" />
+                              <span>Delete</span>
+                            </button>
+                          </div>
+
+                          {/* Description Input / Display */}
+                          <div>
+                            <input
+                              type="text"
+                              value={it.description || ''}
+                              onChange={(e) => handleUpdateItemDescription(idx, e.target.value)}
+                              placeholder="+ Add item description..."
+                              className="w-full text-[10px] font-medium text-slate-500 bg-slate-50 border border-slate-100 focus:border-slate-300 focus:bg-white rounded px-2 py-1 placeholder:italic"
+                            />
+                          </div>
                         </div>
 
-                        {/* Explicit Red Delete Button */}
-                        <button
-                          type="button"
-                          onClick={() => handleRemoveItem(idx)}
-                          className="px-2.5 py-1 bg-rose-50 hover:bg-rose-100 active:bg-rose-200 text-rose-700 rounded-lg border border-rose-200 flex items-center gap-1 text-[11px] font-extrabold shrink-0 transition-colors cursor-pointer"
-                          title="Delete / Remove this product from proposal"
-                        >
-                          <Trash2 className="w-3.5 h-3.5 text-rose-600" />
-                          <span>Delete</span>
-                        </button>
-                      </div>
+                        {/* Bottom Row: Qty Controls, Rate Input & Item Total Amount */}
+                        <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-slate-100 text-xs">
+                          {/* Qty Counter */}
+                          <div className="flex items-center space-x-1 bg-slate-100 p-1 rounded-lg border border-slate-200">
+                            <span className="text-[10px] font-bold text-slate-400 mr-1">Qty:</span>
+                            <button
+                              type="button"
+                              onClick={() => handleUpdateItemQty(idx, it.qty - 1)}
+                              className="p-1 bg-white hover:bg-slate-200 rounded text-slate-700 cursor-pointer"
+                              title="Reduce quantity (removes if 0)"
+                            >
+                              <Minus className="w-3 h-3" />
+                            </button>
+                            <input
+                              type="number"
+                              min={0}
+                              value={it.qty}
+                              onChange={(e) => handleUpdateItemQty(idx, parseInt(e.target.value) || 0)}
+                              className="w-9 text-center font-black text-slate-900 bg-white border border-slate-200 rounded text-xs py-0.5"
+                            />
+                            <button
+                              type="button"
+                              onClick={() => handleUpdateItemQty(idx, it.qty + 1)}
+                              className="p-1 bg-white hover:bg-slate-200 rounded text-slate-700 cursor-pointer"
+                              title="Increase quantity"
+                            >
+                              <Plus className="w-3 h-3" />
+                            </button>
+                          </div>
 
-                      {/* Description Input / Display */}
-                      <div>
-                        <input
-                          type="text"
-                          value={it.description || ''}
-                          onChange={(e) => handleUpdateItemDescription(idx, e.target.value)}
-                          placeholder="+ Add item description..."
-                          className="w-full text-[10px] font-medium text-slate-500 bg-slate-50 border border-slate-100 focus:border-slate-300 focus:bg-white rounded px-2 py-1 placeholder:italic"
-                        />
-                      </div>
-                    </div>
+                          {/* Rate Input */}
+                          <div className="flex items-center gap-1">
+                            <span className="text-[10px] font-bold text-slate-400">Rate: ₹</span>
+                            <input
+                              type="number"
+                              min={0}
+                              value={it.rate}
+                              onChange={(e) => handleUpdateItemRate(idx, parseFloat(e.target.value) || 0)}
+                              className="w-20 text-right font-extrabold text-slate-900 border border-slate-200 rounded px-1.5 py-0.5 bg-white text-xs"
+                            />
+                          </div>
 
-                    {/* Bottom Row: Qty Controls, Rate Input & Item Total Amount */}
-                    <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-slate-100 text-xs">
-                      {/* Qty Counter */}
-                      <div className="flex items-center space-x-1 bg-slate-100 p-1 rounded-lg border border-slate-200">
-                        <span className="text-[10px] font-bold text-slate-400 mr-1">Qty:</span>
-                        <button
-                          type="button"
-                          onClick={() => handleUpdateItemQty(idx, it.qty - 1)}
-                          className="p-1 bg-white hover:bg-slate-200 rounded text-slate-700 cursor-pointer"
-                          title="Reduce quantity (removes if 0)"
-                        >
-                          <Minus className="w-3 h-3" />
-                        </button>
-                        <input
-                          type="number"
-                          min={0}
-                          value={it.qty}
-                          onChange={(e) => handleUpdateItemQty(idx, parseInt(e.target.value) || 0)}
-                          className="w-9 text-center font-black text-slate-900 bg-white border border-slate-200 rounded text-xs py-0.5"
-                        />
-                        <button
-                          type="button"
-                          onClick={() => handleUpdateItemQty(idx, it.qty + 1)}
-                          className="p-1 bg-white hover:bg-slate-200 rounded text-slate-700 cursor-pointer"
-                          title="Increase quantity"
-                        >
-                          <Plus className="w-3 h-3" />
-                        </button>
+                          {/* Total Amount */}
+                          <div className="text-right">
+                            <span className="font-black text-slate-900 text-xs">
+                              ₹{it.amount.toLocaleString('en-IN')}
+                            </span>
+                          </div>
+                        </div>
                       </div>
-
-                      {/* Rate Input */}
-                      <div className="flex items-center gap-1">
-                        <span className="text-[10px] font-bold text-slate-400">Rate: ₹</span>
-                        <input
-                          type="number"
-                          min={0}
-                          value={it.rate}
-                          onChange={(e) => handleUpdateItemRate(idx, parseFloat(e.target.value) || 0)}
-                          className="w-20 text-right font-extrabold text-slate-900 border border-slate-200 rounded px-1.5 py-0.5 bg-white text-xs"
-                        />
-                      </div>
-
-                      {/* Total Amount */}
-                      <div className="text-right">
-                        <span className="font-black text-slate-900 text-xs">
-                          ₹{it.amount.toLocaleString('en-IN')}
-                        </span>
-                      </div>
-                    </div>
+                    ))}
                   </div>
-                ))}
-              </div>
-            ) : (
-              <p className="text-center text-xs text-slate-400 py-3 italic">
-                No items added. Click "Multi-Select Products" or add items above.
-              </p>
-            )}
+                ) : (
+                  <p className="text-center text-xs text-slate-400 py-3 italic">
+                    No items added. Click "Multi-Select Products" or add items above.
+                  </p>
+                )}
 
-            {/* Comprehensive Dynamic Pricing Summary Badge */}
-            <div className="bg-slate-900 text-white p-3 rounded-xl space-y-1.5 text-xs shadow-inner">
-              <div className="flex justify-between text-slate-300">
-                <span>Items Subtotal ({items.length} items):</span>
-                <span className="font-bold text-white">₹{subtotal.toLocaleString('en-IN')}</span>
+                {/* Comprehensive Dynamic Pricing Summary Badge */}
+                <div className="bg-slate-900 text-white p-3 rounded-xl space-y-1.5 text-xs shadow-inner">
+                  <div className="flex justify-between text-slate-300">
+                    <span>Items Subtotal ({items.length} items):</span>
+                    <span className="font-bold text-white">₹{subtotal.toLocaleString('en-IN')}</span>
+                  </div>
+                  <div className="flex justify-between text-blue-300">
+                    <span>GST Tax ({gstRate}%):</span>
+                    <span>+ ₹{taxAmount.toLocaleString('en-IN')}</span>
+                  </div>
+                  <div className="flex justify-between text-slate-300">
+                    <span>Subtotal + Tax:</span>
+                    <span className="font-bold">₹{(subtotal + taxAmount).toLocaleString('en-IN')}</span>
+                  </div>
+                  <div className="flex justify-between text-amber-300">
+                    <span>Govt Subsidy Credit:</span>
+                    <span>- ₹{subsidyVal.toLocaleString('en-IN')}</span>
+                  </div>
+                  <div className="flex justify-between pt-2 border-t border-slate-800 text-sm font-black">
+                    <span className="text-emerald-400">Net Customer Payable:</span>
+                    <span className="text-emerald-400">₹{grandTotal > 0 ? grandTotal.toLocaleString('en-IN') : 0}</span>
+                  </div>
+                </div>
               </div>
-              <div className="flex justify-between text-blue-300">
-                <span>GST Tax ({gstRate}%):</span>
-                <span>+ ₹{taxAmount.toLocaleString('en-IN')}</span>
-              </div>
-              <div className="flex justify-between text-slate-300">
-                <span>Subtotal + Tax:</span>
-                <span className="font-bold">₹{(subtotal + taxAmount).toLocaleString('en-IN')}</span>
-              </div>
-              <div className="flex justify-between text-amber-300">
-                <span>Govt Subsidy Credit:</span>
-                <span>- ₹{subsidyVal.toLocaleString('en-IN')}</span>
-              </div>
-              <div className="flex justify-between pt-2 border-t border-slate-800 text-sm font-black">
-                <span className="text-emerald-400">Net Customer Payable:</span>
-                <span className="text-emerald-400">₹{grandTotal > 0 ? grandTotal.toLocaleString('en-IN') : 0}</span>
-              </div>
-            </div>
+            )}
           </div>
         </div>
+      )}
 
-        {/* Right 8-Page Live Document Viewer (8 cols) */}
-        <div className={`lg:col-span-8 bg-slate-900 rounded-2xl p-4 sm:p-6 border border-slate-800 shadow-2xl space-y-4 ${
+        {/* Right 8-Page Live Document Viewer (12 cols in View mode, 8 cols in Edit mode) */}
+        <div className={`${isViewOnlyMode ? 'col-span-12 w-full' : 'lg:col-span-8'} bg-slate-900 rounded-2xl p-3 sm:p-6 border border-slate-800 shadow-2xl space-y-3 ${
           mobileTab === 'preview' ? 'block' : 'hidden lg:block'
         }`}>
           {/* Controls Bar: Zoom & Page Jump Pills */}
-          <div className="flex flex-wrap items-center justify-between gap-3 pb-3 border-b border-slate-800 text-white">
+          <div className="flex flex-wrap items-center justify-between gap-2 pb-2.5 border-b border-slate-800 text-white">
             <div className="flex items-center space-x-2">
               <Eye className="w-4 h-4 text-emerald-400" />
               <span className="text-xs font-black uppercase tracking-widest text-slate-200">
@@ -1470,22 +1774,22 @@ export const QuotationDocument: React.FC<{
               </span>
             </div>
 
-            {/* Zoom Controls */}
-            <div className="flex items-center space-x-1.5 bg-slate-800/90 px-3 py-1.5 rounded-xl border border-slate-700 text-xs font-bold">
+            {/* Zoom Controls with Fit Width */}
+            <div className="flex items-center space-x-1.5 bg-slate-800/90 px-2.5 py-1.5 rounded-xl border border-slate-700 text-xs font-bold shrink-0">
               <button
                 type="button"
-                onClick={() => setZoomScale(Math.max(0.4, zoomScale - 0.1))}
+                onClick={() => setZoomScale(Math.max(0.25, parseFloat((zoomScale - 0.05).toFixed(2))))}
                 className="p-1 hover:bg-slate-700 text-slate-300 rounded cursor-pointer transition-colors"
                 title="Zoom Out"
               >
                 <ZoomOut className="w-3.5 h-3.5" />
               </button>
-              <span className="text-emerald-400 font-mono w-12 text-center select-none">
+              <span className="text-emerald-400 font-mono w-11 text-center select-none text-[11px]">
                 {Math.round(zoomScale * 100)}%
               </span>
               <button
                 type="button"
-                onClick={() => setZoomScale(Math.min(1.2, zoomScale + 0.1))}
+                onClick={() => setZoomScale(Math.min(1.5, parseFloat((zoomScale + 0.05).toFixed(2))))}
                 className="p-1 hover:bg-slate-700 text-slate-300 rounded cursor-pointer transition-colors"
                 title="Zoom In"
               >
@@ -1496,18 +1800,27 @@ export const QuotationDocument: React.FC<{
 
               <button
                 type="button"
+                onClick={handleAutoFitZoom}
+                className="px-2 py-0.5 bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white rounded text-[10px] font-black cursor-pointer transition-all shadow-xs"
+                title="Fit Page to Mobile Screen Width"
+              >
+                Fit Width
+              </button>
+
+              <button
+                type="button"
                 onClick={() => setZoomScale(0.75)}
-                className="p-1 hover:bg-slate-700 text-slate-300 rounded cursor-pointer transition-colors"
+                className="p-1 hover:bg-slate-700 text-slate-300 rounded cursor-pointer transition-colors ml-0.5"
                 title="Reset Zoom to 75%"
               >
-                <RotateCcw className="w-3.5 h-3.5" />
+                <RotateCcw className="w-3 h-3" />
               </button>
             </div>
           </div>
 
-          {/* Quick Page Jump Pills */}
-          <div className="flex flex-wrap items-center gap-1.5 pb-2 text-[10px] font-extrabold text-slate-300 overflow-x-auto">
-            <span className="text-slate-500 uppercase tracking-wider mr-1">Jump to Page:</span>
+          {/* Quick Page Jump Pills - Horizontally Scrollable on Mobile */}
+          <div className="flex items-center gap-1.5 pb-1 text-[10px] font-extrabold text-slate-300 overflow-x-auto whitespace-nowrap scrollbar-none py-1">
+            <span className="text-slate-500 uppercase tracking-wider mr-1 shrink-0">Jump to Page:</span>
             {[
               '1. Cover',
               '2. About',
@@ -1522,7 +1835,7 @@ export const QuotationDocument: React.FC<{
                 key={idx}
                 type="button"
                 onClick={() => scrollToPage(idx)}
-                className="bg-slate-800 hover:bg-emerald-600 hover:text-white px-2 py-1 rounded-lg border border-slate-700/80 transition-colors cursor-pointer"
+                className="bg-slate-800 hover:bg-emerald-600 hover:text-white px-2.5 py-1 rounded-lg border border-slate-700/80 transition-colors cursor-pointer shrink-0"
               >
                 {pLabel}
               </button>
@@ -1532,14 +1845,14 @@ export const QuotationDocument: React.FC<{
           {/* 8-Page Render Scroll Container */}
           <div
             ref={previewScrollRef}
-            className="overflow-y-auto overflow-x-auto h-[75vh] p-4 bg-slate-950/90 rounded-xl border border-slate-800 flex flex-col items-center select-none"
+            className="overflow-y-auto overflow-x-auto h-[76vh] sm:h-[78vh] p-2 sm:p-4 bg-slate-950/95 rounded-xl border border-slate-800 flex flex-col items-center select-none"
           >
             <div
               ref={contentRef}
               style={{
                 transform: `scale(${zoomScale})`,
                 transformOrigin: 'top center',
-                transition: 'transform 0.2s ease-out',
+                transition: 'transform 0.15s ease-out',
                 marginBottom: contentHeight ? `-${contentHeight * (1 - zoomScale)}px` : undefined
               }}
               className="quotation-print-container"
@@ -1549,24 +1862,55 @@ export const QuotationDocument: React.FC<{
         </div>
       </div>
 
-      {/* MULTI-SELECT PRODUCT CATALOG MODAL */}
+      {/* Sticky Mobile Floating Navigation Switcher Bar */}
+      <div className="lg:hidden fixed bottom-4 left-1/2 -translate-x-1/2 z-40 bg-slate-950/90 backdrop-blur-md text-white p-1.5 rounded-2xl border border-slate-700/80 shadow-2xl flex items-center gap-1.5 text-xs">
+        <button
+          type="button"
+          onClick={() => setMobileTab('form')}
+          className={`px-4 py-2 rounded-xl font-extrabold flex items-center gap-1.5 transition-all cursor-pointer ${
+            mobileTab === 'form'
+              ? 'bg-emerald-600 text-white shadow-md'
+              : 'text-slate-400 hover:text-white bg-slate-800/80'
+          }`}
+        >
+          <Sparkles className="w-3.5 h-3.5" />
+          <span>Edit Form</span>
+        </button>
+        <button
+          type="button"
+          onClick={() => {
+            setMobileTab('preview');
+            setTimeout(handleAutoFitZoom, 100);
+          }}
+          className={`px-4 py-2 rounded-xl font-extrabold flex items-center gap-1.5 transition-all cursor-pointer ${
+            mobileTab === 'preview'
+              ? 'bg-emerald-600 text-white shadow-md'
+              : 'text-slate-400 hover:text-white bg-slate-800/80'
+          }`}
+        >
+          <Eye className="w-3.5 h-3.5" />
+          <span>8-Page Preview</span>
+        </button>
+      </div>
+
+      {/* MODAL 1: MULTI-SELECT COMMERCIAL PRODUCT CATALOG MODAL */}
       {isMultiModalOpen && (
         <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-xs flex items-center justify-center p-4">
           <div className="bg-white rounded-3xl max-w-3xl w-full overflow-hidden shadow-2xl border border-slate-200 flex flex-col max-h-[90vh]">
             {/* Modal Header */}
-            <div className="p-4 sm:p-6 bg-slate-900 text-white flex justify-between items-center">
+            <div className="p-5 sm:p-6 bg-gradient-to-r from-slate-900 via-slate-800 to-emerald-950 text-white flex justify-between items-center shadow-md">
               <div>
                 <div className="flex items-center gap-2">
                   <span className="bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 text-[10px] font-black px-2.5 py-0.5 rounded-full uppercase tracking-wider">
-                    Product Catalog Batch Selector
+                    Commercial Product Batch Selector
                   </span>
                 </div>
                 <h2 className="text-lg sm:text-xl font-black tracking-tight text-white flex items-center gap-2 mt-1">
-                  <Layers className="w-5 h-5 text-emerald-400" />
-                  <span>Multi-Select Products to Add to Quotation</span>
+                  <Package className="w-5 h-5 text-emerald-400" />
+                  <span>Multi-Select Commercial Products</span>
                 </h2>
                 <p className="text-xs text-slate-400 font-medium">
-                  Check multiple items, adjust quantity and unit rates, then add all at once.
+                  Check multiple commercial items, adjust quantity and unit rates, then add all at once.
                 </p>
               </div>
               <button
@@ -1578,35 +1922,57 @@ export const QuotationDocument: React.FC<{
               </button>
             </div>
 
-            {/* Category Filter Tabs */}
-            <div className="px-6 pt-4 pb-2 border-b border-slate-100 flex gap-2 overflow-x-auto text-xs font-bold bg-slate-50">
-              {[
-                { id: 'all', label: 'All Products' },
-                { id: 'solar_panel', label: '☀️ Solar Panels' },
-                { id: 'inverter', label: '⚡ Inverters' },
-                { id: 'battery', label: '🔋 Batteries' },
-                { id: 'structure', label: '🏗️ Structures' },
-                { id: 'accessories', label: '🔌 Cables & Protection' }
-              ].map(tab => (
-                <button
-                  key={tab.id}
-                  type="button"
-                  onClick={() => setMultiCategoryFilter(tab.id)}
-                  className={`px-3 py-1.5 rounded-xl whitespace-nowrap transition-all cursor-pointer ${
-                    multiCategoryFilter === tab.id
-                      ? 'bg-slate-900 text-white shadow-xs'
-                      : 'bg-white border border-slate-200 text-slate-600 hover:bg-slate-100'
-                  }`}
-                >
-                  {tab.label}
-                </button>
-              ))}
+            {/* Search & Category Filter Sub-Bar */}
+            <div className="px-5 py-3 border-b border-slate-200 space-y-3 bg-slate-50">
+              {/* Search Bar */}
+              <div className="relative">
+                <Search className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
+                <input
+                  type="text"
+                  value={multiProductSearchTerm}
+                  onChange={(e) => setMultiProductSearchTerm(e.target.value)}
+                  placeholder="Search commercial products by name, brand, description..."
+                  className="w-full border border-slate-200 rounded-xl pl-9 pr-3 py-1.5 text-xs font-semibold bg-white text-slate-900 focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500/20"
+                />
+              </div>
+
+              {/* Category Filter Tabs */}
+              <div className="flex flex-wrap items-center gap-1.5 text-xs font-bold">
+                {[
+                  { id: 'all', label: 'All Commercial Products' },
+                  { id: 'solar_panel', label: '☀️ Solar Panels' },
+                  { id: 'inverter', label: '⚡ Inverters' },
+                  { id: 'battery', label: '🔋 Batteries' },
+                  { id: 'structure', label: '🏗️ Structures' },
+                  { id: 'other', label: '🔌 Accessories & Other' }
+                ].map(tab => (
+                  <button
+                    key={tab.id}
+                    type="button"
+                    onClick={() => setMultiCategoryFilter(tab.id)}
+                    className={`px-3 py-1.5 rounded-xl font-bold text-[11px] transition-all cursor-pointer ${
+                      multiCategoryFilter === tab.id
+                        ? 'bg-emerald-600 text-white shadow-xs'
+                        : 'bg-white border border-slate-200 text-slate-600 hover:bg-slate-100'
+                    }`}
+                  >
+                    {tab.label}
+                  </button>
+                ))}
+              </div>
             </div>
 
-            {/* Product List */}
+            {/* Product List (Commercial Products ONLY - BOM items excluded) */}
             <div className="p-4 sm:p-6 overflow-y-auto flex-1 space-y-3">
               {products
-                .filter(p => multiCategoryFilter === 'all' || p.category === multiCategoryFilter)
+                .filter(p =>
+                  p.category !== 'bom_item' &&
+                  (multiCategoryFilter === 'all' || p.category === multiCategoryFilter) &&
+                  (!multiProductSearchTerm ||
+                    p.name.toLowerCase().includes(multiProductSearchTerm.toLowerCase()) ||
+                    (p.brand && p.brand.toLowerCase().includes(multiProductSearchTerm.toLowerCase())) ||
+                    (p.description && p.description.toLowerCase().includes(multiProductSearchTerm.toLowerCase())))
+                )
                 .map(prod => {
                   const selState = multiSelectedMap[prod.id] || { selected: false, qty: 1, rate: prod.rate };
                   const isChecked = selState.selected;
@@ -1638,7 +2004,7 @@ export const QuotationDocument: React.FC<{
                           )}
                         </div>
                         <div className="flex-1 cursor-pointer" onClick={() => handleToggleMultiProduct(prod.id, prod.rate)}>
-                          <div className="flex items-center gap-2 flex-wrap">
+                          <div className="flex items-center gap-2 flex-wrap mb-1">
                             {prod.brand && (
                               <span className="text-[9px] font-black uppercase px-2 py-0.5 rounded bg-blue-100 text-blue-800 border border-blue-200">
                                 🏷️ {prod.brand}
@@ -1647,7 +2013,6 @@ export const QuotationDocument: React.FC<{
                             <span className="text-[9px] font-black uppercase px-2 py-0.5 rounded bg-purple-100 text-purple-800 border border-purple-200">
                               📐 {prod.unit || 'Nos'}
                             </span>
-                            <span className="font-extrabold text-slate-900 text-xs">{prod.name}</span>
                             <span className="text-[9px] font-black uppercase px-2 py-0.5 rounded bg-slate-100 text-slate-600 border border-slate-200">
                               {prod.category.replace('_', ' ')}
                             </span>
@@ -1658,8 +2023,9 @@ export const QuotationDocument: React.FC<{
                               </span>
                             )}
                           </div>
+                          <h4 className="font-extrabold text-slate-900 text-xs">{prod.name}</h4>
                           {prod.description && (
-                            <p className="text-[11px] text-slate-500 line-clamp-1">{prod.description}</p>
+                            <p className="text-[11px] text-slate-500 line-clamp-1 mt-0.5">{prod.description}</p>
                           )}
                         </div>
                       </div>
@@ -1722,6 +2088,12 @@ export const QuotationDocument: React.FC<{
                     </div>
                   );
                 })}
+
+              {products.filter(p => p.category !== 'bom_item').length === 0 && (
+                <div className="text-center py-8 text-slate-400 font-bold text-xs bg-slate-50 border-2 border-dashed border-slate-200 rounded-2xl">
+                  No commercial products found in catalog matching filters.
+                </div>
+              )}
             </div>
 
             {/* Modal Sticky Footer Bar */}
@@ -1730,7 +2102,7 @@ export const QuotationDocument: React.FC<{
                 <span className="text-xs font-bold text-slate-600">
                   Selected:{' '}
                   <strong className="text-emerald-700 font-black">
-                    {Object.values(multiSelectedMap).filter(s => s.selected).length} Products
+                    {Object.values(multiSelectedMap).filter(s => s.selected).length} Commercial Products
                   </strong>
                 </span>
                 <span className="text-xs font-bold text-slate-600 ml-4">
@@ -1772,6 +2144,223 @@ export const QuotationDocument: React.FC<{
                 >
                   <Plus className="w-4 h-4" />
                   <span>Add Selected Products to Proposal</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL 2: DEDICATED MULTI-SELECT BILL OF MATERIALS (BOM) CATALOG MODAL */}
+      {isMultiBomModalOpen && (
+        <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl max-w-3xl w-full overflow-hidden shadow-2xl border border-purple-200 flex flex-col max-h-[90vh]">
+            {/* Modal Header */}
+            <div className="p-5 sm:p-6 bg-gradient-to-r from-slate-900 via-purple-950 to-slate-900 text-white flex justify-between items-center shadow-md">
+              <div>
+                <div className="flex items-center gap-2">
+                  <span className="bg-purple-500/20 text-purple-300 border border-purple-500/30 text-[10px] font-black px-2.5 py-0.5 rounded-full uppercase tracking-wider">
+                    Bill of Materials Batch Selector
+                  </span>
+                </div>
+                <h2 className="text-lg sm:text-xl font-black tracking-tight text-white flex items-center gap-2 mt-1">
+                  <Layers className="w-5 h-5 text-purple-400" />
+                  <span>Multi-Select Bill of Materials (BOM) Items</span>
+                </h2>
+                <p className="text-xs text-purple-200 font-medium">
+                  Select components from your saved BOM catalog to auto-populate Page 6 of the quotation.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsMultiBomModalOpen(false)}
+                className="p-2 bg-purple-900/60 hover:bg-purple-800 text-purple-200 rounded-xl transition-colors cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Search & BOM Category Filter Sub-Bar */}
+            <div className="px-5 py-3 border-b border-purple-100 space-y-3 bg-purple-50/40">
+              {/* Search Bar */}
+              <div className="relative">
+                <Search className="w-4 h-4 text-purple-400 absolute left-3 top-2.5" />
+                <input
+                  type="text"
+                  value={multiBomSearchTerm}
+                  onChange={(e) => setMultiBomSearchTerm(e.target.value)}
+                  placeholder="Search BOM component by name, brand, category..."
+                  className="w-full border border-purple-200 rounded-xl pl-9 pr-3 py-1.5 text-xs font-semibold bg-white text-slate-900 focus:outline-none focus:border-purple-500 focus:ring-1 focus:ring-purple-500/20"
+                />
+              </div>
+
+              {/* Category Filter Tabs */}
+              <div className="flex flex-wrap items-center gap-1.5 text-xs font-bold">
+                {[
+                  { id: 'all', label: 'All BOM Items' },
+                  { id: 'Solar Panels (PV Modules)', label: '☀️ Panels' },
+                  { id: 'Solar String Inverter', label: '⚡ Inverters' },
+                  { id: 'Solar 80 micron HDGI Structure*', label: '🏗️ Structure' },
+                  { id: 'Protection Devices', label: '🛡️ Protection Devices' },
+                  { id: 'Cables', label: '⚡ Cables & Wiring' },
+                  { id: 'Earthing / LA - lightning arrestor', label: '⚡ Earthing & LA' },
+                  { id: 'Data Logger', label: '📊 Data Logger' },
+                  { id: 'Other Accessories', label: '🔌 Accessories' }
+                ].map(tab => (
+                  <button
+                    key={tab.id}
+                    type="button"
+                    onClick={() => setMultiBomCategoryFilter(tab.id)}
+                    className={`px-3 py-1.5 rounded-xl font-bold text-[11px] transition-all cursor-pointer ${
+                      multiBomCategoryFilter === tab.id
+                        ? 'bg-purple-600 text-white shadow-xs'
+                        : 'bg-white border border-purple-200 text-purple-900 hover:bg-purple-50'
+                    }`}
+                  >
+                    {tab.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* BOM Product List (BOM Items ONLY) */}
+            <div className="p-4 sm:p-6 overflow-y-auto flex-1 space-y-3">
+              {products
+                .filter(p =>
+                  p.category === 'bom_item' &&
+                  (multiBomCategoryFilter === 'all' || p.bomCategory === multiBomCategoryFilter) &&
+                  (!multiBomSearchTerm ||
+                    p.name.toLowerCase().includes(multiBomSearchTerm.toLowerCase()) ||
+                    (p.brand && p.brand.toLowerCase().includes(multiBomSearchTerm.toLowerCase())) ||
+                    (p.bomCategory && p.bomCategory.toLowerCase().includes(multiBomSearchTerm.toLowerCase())))
+                )
+                .map(prod => {
+                  const defaultCat = prod.bomCategory || 'Other Accessories';
+                  const selState = multiBomSelectedMap[prod.id] || { selected: false, qty: 1, category: defaultCat };
+                  const isChecked = selState.selected;
+
+                  return (
+                    <div
+                      key={prod.id}
+                      className={`p-3 sm:p-4 rounded-2xl border transition-all flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 ${
+                        isChecked
+                          ? 'border-purple-500 bg-purple-50/50 shadow-xs'
+                          : 'border-purple-100 bg-white hover:border-purple-200'
+                      }`}
+                    >
+                      {/* Left Checkbox & Name */}
+                      <div className="flex items-center gap-3 flex-1">
+                        <div
+                          onClick={() => handleToggleMultiBomItem(prod.id, defaultCat)}
+                          className="text-purple-600 cursor-pointer flex-shrink-0"
+                          title={isChecked ? "Deselect Item" : "Select Item"}
+                        >
+                          {isChecked ? (
+                            <CheckSquare className="w-5 h-5 text-purple-600 fill-purple-100" />
+                          ) : (
+                            <Square className="w-5 h-5 text-slate-400" />
+                          )}
+                        </div>
+                        <div className="flex-1 cursor-pointer" onClick={() => handleToggleMultiBomItem(prod.id, defaultCat)}>
+                          <div className="flex items-center gap-2 flex-wrap mb-1">
+                            <span className="text-[9px] font-black uppercase px-2 py-0.5 rounded bg-purple-100 text-purple-900 border border-purple-200">
+                              📄 {prod.bomCategory || 'BOM ITEM'}
+                            </span>
+                            {prod.brand && (
+                              <span className="text-[9px] font-black uppercase px-2 py-0.5 rounded bg-blue-100 text-blue-800 border border-blue-200">
+                                🏷️ {prod.brand}
+                              </span>
+                            )}
+                            <span className="text-[9px] font-black uppercase px-2 py-0.5 rounded bg-amber-50 text-amber-900 border border-amber-200">
+                              📐 {prod.unit || 'Nos'}
+                            </span>
+                          </div>
+                          <h4 className="font-extrabold text-slate-900 text-xs">{prod.name}</h4>
+                          {prod.description && (
+                            <p className="text-[11px] text-slate-500 line-clamp-1 mt-0.5">{prod.description}</p>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Right Controls: Group Header Category Dropdown, Qty Counter */}
+                      <div className="flex items-center gap-3 self-end sm:self-center">
+                        {/* Group Header Category Select */}
+                        <div className="w-36">
+                          <label className="block text-[9px] font-bold text-purple-400 uppercase">Section Header</label>
+                          <select
+                            value={selState.category || defaultCat}
+                            onChange={(e) => handleUpdateMultiBomCategory(prod.id, e.target.value)}
+                            className="w-full border border-purple-200 rounded-lg px-2 py-1 font-bold text-[10px] bg-purple-50/50 text-purple-950"
+                          >
+                            <option value="Solar Panels (PV Modules)">Solar Panels (PV Modules)</option>
+                            <option value="Solar String Inverter">Solar String Inverter</option>
+                            <option value="Solar 80 micron HDGI Structure*">Solar HDGI Structure</option>
+                            <option value="Protection Devices">Protection Devices</option>
+                            <option value="Cables">Cables</option>
+                            <option value="Earthing / LA - lightning arrestor">Earthing / LA</option>
+                            <option value="Data Logger">Data Logger</option>
+                            <option value="Other Accessories">Other Accessories</option>
+                          </select>
+                        </div>
+
+                        {/* Qty Counter */}
+                        <div className="flex items-center space-x-1 bg-purple-50 p-1 rounded-xl border border-purple-200">
+                          <button
+                            type="button"
+                            onClick={() => handleUpdateMultiBomQty(prod.id, -1, defaultCat)}
+                            className="p-1 bg-white hover:bg-purple-100 rounded-lg text-purple-700 cursor-pointer"
+                          >
+                            <Minus className="w-3.5 h-3.5" />
+                          </button>
+                          <span className="w-7 text-center font-black text-xs text-purple-950">
+                            {selState.qty}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => handleUpdateMultiBomQty(prod.id, 1, defaultCat)}
+                            className="p-1 bg-white hover:bg-purple-100 rounded-lg text-purple-700 cursor-pointer"
+                          >
+                            <Plus className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+
+              {products.filter(p => p.category === 'bom_item').length === 0 && (
+                <div className="text-center py-8 text-slate-400 font-bold text-xs bg-slate-50 border-2 border-dashed border-slate-200 rounded-2xl">
+                  No Bill of Materials (BOM) items found in catalog. Create BOM items in Product Catalog first.
+                </div>
+              )}
+            </div>
+
+            {/* Modal Sticky Footer Bar */}
+            <div className="p-4 sm:p-6 bg-purple-50/50 border-t border-purple-100 flex flex-col sm:flex-row justify-between items-center gap-3">
+              <div>
+                <span className="text-xs font-bold text-purple-900">
+                  Selected:{' '}
+                  <strong className="text-purple-700 font-black">
+                    {Object.values(multiBomSelectedMap).filter(s => s.selected).length} BOM Items
+                  </strong>
+                </span>
+              </div>
+
+              <div className="flex items-center gap-2 w-full sm:w-auto">
+                <button
+                  type="button"
+                  onClick={() => setIsMultiBomModalOpen(false)}
+                  className="w-1/2 sm:w-auto px-4 py-2.5 border border-slate-300 text-slate-700 hover:bg-slate-200 font-bold text-xs rounded-xl cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={handleAddAllSelectedBomItems}
+                  className="w-1/2 sm:w-auto px-5 py-2.5 bg-purple-600 hover:bg-purple-700 text-white font-extrabold text-xs rounded-xl shadow-md cursor-pointer flex items-center justify-center gap-2"
+                >
+                  <Plus className="w-4 h-4" />
+                  <span>Add Selected BOM Items to Quotation</span>
                 </button>
               </div>
             </div>

@@ -4,26 +4,48 @@ import { saveRecordToFirestore, fetchCollectionFromFirestore } from './firebase'
 
 export const shadowAnalysisHistoryService = {
   async getReports(): Promise<ShadowAnalysisRecord[]> {
-    try {
-      const remote = await fetchCollectionFromFirestore<ShadowAnalysisRecord>('shadowAnalyses');
-      if (remote && remote.length > 0) {
-        await db.shadowAnalyses.bulkPut(remote);
+    const localRecords = await db.shadowAnalyses.orderBy('createdAt').reverse().toArray();
+
+    const syncRemote = async () => {
+      try {
+        const remote = await fetchCollectionFromFirestore<ShadowAnalysisRecord>('shadowAnalyses');
+        if (remote && remote.length > 0) {
+          await db.shadowAnalyses.bulkPut(remote);
+        }
+      } catch (e) {
+        console.warn('Background shadowAnalyses sync note:', e);
       }
-    } catch (e) {
-      console.warn('Firestore shadowAnalyses sync note:', e);
+    };
+
+    if (localRecords.length > 0) {
+      syncRemote();
+      return localRecords;
     }
+
+    await syncRemote();
     return db.shadowAnalyses.orderBy('createdAt').reverse().toArray();
   },
 
   async getReportsByLeadId(leadId: string): Promise<ShadowAnalysisRecord[]> {
-    try {
-      const remote = await fetchCollectionFromFirestore<ShadowAnalysisRecord>('shadowAnalyses');
-      if (remote && remote.length > 0) {
-        await db.shadowAnalyses.bulkPut(remote);
+    const localRecords = await db.shadowAnalyses.where('leadId').equals(leadId).toArray();
+
+    const syncRemote = async () => {
+      try {
+        const remote = await fetchCollectionFromFirestore<ShadowAnalysisRecord>('shadowAnalyses');
+        if (remote && remote.length > 0) {
+          await db.shadowAnalyses.bulkPut(remote);
+        }
+      } catch (e) {
+        console.warn('Background shadowAnalyses sync note:', e);
       }
-    } catch (e) {
-      console.warn('Firestore shadowAnalyses sync note:', e);
+    };
+
+    if (localRecords.length > 0) {
+      syncRemote();
+      return localRecords;
     }
+
+    await syncRemote();
     return db.shadowAnalyses.where('leadId').equals(leadId).toArray();
   },
 

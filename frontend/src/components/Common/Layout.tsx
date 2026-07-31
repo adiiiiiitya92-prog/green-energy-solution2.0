@@ -170,7 +170,7 @@ export const Layout: React.FC<LayoutProps> = ({ children }) => {
             <img
               src={logoImg}
               alt="Green Energy Solution"
-              className="h-8 sm:h-9 w-auto object-contain cursor-pointer"
+              className="h-10 sm:h-12 w-auto object-contain cursor-pointer transition-all"
             />
           </Link>
         </div>
@@ -253,8 +253,8 @@ export const Layout: React.FC<LayoutProps> = ({ children }) => {
         )}
 
         {/* Main Content Area */}
-        <main className="flex-1 overflow-y-auto px-4 py-6 md:p-8 pb-20 md:pb-8">
-          <div className="max-w-7xl mx-auto space-y-6">
+        <main className="flex-1 overflow-y-auto px-3 sm:px-6 py-6 pb-20 md:pb-8 transition-all">
+          <div className="w-full space-y-6">
             {children}
           </div>
         </main>
@@ -292,7 +292,7 @@ export const Layout: React.FC<LayoutProps> = ({ children }) => {
                   <img
                     src={logoImg}
                     alt="Green Energy Solution"
-                    className="h-7 w-auto object-contain"
+                    className="h-9 w-auto object-contain"
                   />
                 </div>
                 <button

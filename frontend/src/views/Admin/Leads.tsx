@@ -609,9 +609,14 @@ export const Leads: React.FC = () => {
     const photos = await orderService.getInstallationPhotosByLeadId(lead.id);
     setInstallPhotos(photos);
 
-    // Load Release Docs
+    // Load Release Docs & auto-correct premature closed status if NOC file is missing
     const rels = await orderService.getReleaseDocumentsByLeadId(lead.id);
     setReleaseDocs(rels);
+    if (rels.length === 0 && lead.status === 'closed') {
+      await leadService.updateLeadStatus(lead.id, 'confirmed');
+      lead.status = 'confirmed';
+      setSelectedLead({ ...lead, status: 'confirmed' });
+    }
   };
 
   const handleCreateLead = async (e: React.FormEvent) => {
@@ -896,10 +901,8 @@ export const Leads: React.FC = () => {
       await orderService.updateOrderConfirmation(updatedOc);
       setExistingOc(updatedOc);
 
-      // Auto update lead status to confirmed / closed
-      const newTotalPaid = updatedPayments.reduce((sum, p) => sum + p.amount, 0);
-      const isFullyPaidNow = newTotalPaid >= subtotal;
-      const targetStatus = isFullyPaidNow ? 'closed' : 'confirmed';
+      // Maintain confirmed status on payment recording (Closed is ONLY set when Release NOC is uploaded)
+      const targetStatus = selectedLead.status === 'closed' ? 'closed' : 'confirmed';
       await leadService.updateLeadStatus(selectedLead.id, targetStatus);
       selectedLead.status = targetStatus;
 
@@ -1168,10 +1171,16 @@ export const Leads: React.FC = () => {
 
   const handleReleaseDelete = async (relId: string) => {
     if (!selectedLead) return;
-    if (confirm('Delete this Handover NOC document?')) {
+    if (confirm('Delete this Handover NOC document? This will re-open the pipeline status.')) {
       await orderService.deleteReleaseDocument(relId);
       const rels = await orderService.getReleaseDocumentsByLeadId(selectedLead.id);
       setReleaseDocs(rels);
+      if (rels.length === 0) {
+        await leadService.updateLeadStatus(selectedLead.id, 'confirmed');
+        const updated = await leadService.getLeadById(selectedLead.id);
+        if (updated) setSelectedLead(updated);
+        loadData();
+      }
     }
   };
 

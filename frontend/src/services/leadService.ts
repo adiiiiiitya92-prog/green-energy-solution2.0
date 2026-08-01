@@ -6,14 +6,10 @@ const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || '';
 
 export const leadService = {
   async getLeads(): Promise<Lead[]> {
-    const deletedIds = await getDeletedRecordIdsSet();
-    const localLeads = await db.leads.orderBy('createdAt').reverse().toArray();
-    const validLocal = localLeads.filter(l => !deletedIds.has(l.id));
-
     const syncRemote = async () => {
       try {
         const remoteLeads = await fetchCollectionFromFirestore<Lead>('leads');
-        if (Array.isArray(remoteLeads) && remoteLeads.length > 0) {
+        if (Array.isArray(remoteLeads)) {
           const freshDeleted = await getDeletedRecordIdsSet();
           const validRemote = remoteLeads.filter(l => !freshDeleted.has(l.id));
           const remoteIds = new Set(validRemote.map(l => l.id));
@@ -21,22 +17,19 @@ export const leadService = {
           const currentLocal = await db.leads.toArray();
           const toDelete = currentLocal.filter(l => !remoteIds.has(l.id) || freshDeleted.has(l.id)).map(l => l.id);
           
-          if (validRemote.length > 0) {
-            await db.leads.bulkPut(validRemote);
-          }
           if (toDelete.length > 0) {
             await db.leads.bulkDelete(toDelete);
+          }
+          if (validRemote.length > 0) {
+            await db.leads.bulkPut(validRemote);
+          } else if (remoteLeads.length === 0) {
+            await db.leads.clear();
           }
         }
       } catch (err) {
         console.warn("Background lead sync note:", err);
       }
     };
-
-    if (validLocal.length > 0) {
-      syncRemote();
-      return validLocal;
-    }
 
     await syncRemote();
     const refreshed = await db.leads.orderBy('createdAt').reverse().toArray();

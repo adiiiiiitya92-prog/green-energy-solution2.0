@@ -24,48 +24,53 @@ export const Dashboard: React.FC = () => {
   };
 
   const loadData = async () => {
-    const lList = await leadService.getLeads();
-    let qList = await quotationService.getQuotations();
+    try {
+      const lList = await leadService.getLeads();
+      setLeads(lList);
 
-    const activeLeadIds = new Set(lList.map(l => l.id));
-    // Filter quotations to only include those belonging to active leads
-    qList = qList.filter(q => !q.leadId || activeLeadIds.has(q.leadId));
-
-    if (lList.length === 0) {
-      qList = [];
-    }
-
-    setQuotations(qList);
-
-    // Get order confirmations & auto-sync fully paid leads to closed (Release Complete) status
-    const allOc: OrderConfirmation[] = [];
-    const syncedLeads = [...lList];
-
-    for (const lead of syncedLeads) {
-      const oc = await orderService.getOrderConfirmationByLeadId(lead.id);
-      if (oc) {
-        allOc.push(oc);
-        const pList = getPaymentsList(oc);
-        const paidTotal = pList.reduce((sum, p) => sum + p.amount, 0);
-        if (paidTotal >= (oc.subtotal || 1) && lead.status !== 'closed') {
-          lead.status = 'closed';
-          await leadService.updateLeadStatus(lead.id, 'closed');
-        }
+      let qList: Quotation[] = [];
+      try {
+        qList = await quotationService.getAllQuotations();
+      } catch (qErr) {
+        console.warn("Quotations load in Dashboard warning:", qErr);
       }
+
+      const activeLeadIds = new Set(lList.map(l => l.id));
+      qList = qList.filter(q => !q.leadId || activeLeadIds.has(q.leadId));
+      if (lList.length === 0) {
+        qList = [];
+      }
+      setQuotations(qList);
+
+      const allOc: OrderConfirmation[] = [];
+      for (const lead of lList) {
+        try {
+          const oc = await orderService.getOrderConfirmationByLeadId(lead.id);
+          if (oc) {
+            allOc.push(oc);
+          }
+        } catch (_) {}
+      }
+      setConfirmations(lList.length === 0 ? [] : allOc);
+
+      try {
+        const empList = await employeeService.getEmployees();
+        setEmployees(empList);
+      } catch (_) {}
+
+      try {
+        const vReports = await visitService.getVisitReports();
+        setVisitsCount(vReports ? vReports.length : 0);
+      } catch (_) {}
+
+      try {
+        const pList = await productService.getProducts();
+        const lowStock = (pList || []).filter(p => p.stockQuantity <= p.minStockThreshold);
+        setLowStockProducts(lowStock);
+      } catch (_) {}
+    } catch (err) {
+      console.error("Error loading Dashboard metrics:", err);
     }
-
-    setLeads(syncedLeads);
-    setConfirmations(lList.length === 0 ? [] : allOc);
-
-    const empList = await employeeService.getEmployees();
-    setEmployees(empList);
-
-    const vReports = await visitService.getVisitReports();
-    setVisitsCount(vReports.length);
-
-    const pList = await productService.getProducts();
-    const lowStock = pList.filter(p => p.stockQuantity <= p.minStockThreshold);
-    setLowStockProducts(lowStock);
   };
 
   useEffect(() => {
@@ -84,11 +89,12 @@ export const Dashboard: React.FC = () => {
   };
 
   // 2. Revenue calculation with multi-installment support
-  const totalQuotedValue = quotations.reduce((sum, q) => sum + q.grandTotal, 0);
-  const totalConfirmedValue = confirmations.reduce((sum, c) => sum + c.subtotal, 0);
+  const getQVal = (q: Quotation) => q.grandTotal || q.total || q.subtotal || 0;
+  const totalQuotedValue = quotations.reduce((sum, q) => sum + getQVal(q), 0);
+  const totalConfirmedValue = confirmations.reduce((sum, c) => sum + (c.subtotal || 0), 0);
   const totalPaymentsCollected = confirmations.reduce((sum, c) => {
     const pList = getPaymentsList(c);
-    return sum + pList.reduce((s, p) => s + p.amount, 0);
+    return sum + pList.reduce((s, p) => s + (p.amount || 0), 0);
   }, 0);
   const outstandingBalance = Math.max(0, totalConfirmedValue - totalPaymentsCollected);
 

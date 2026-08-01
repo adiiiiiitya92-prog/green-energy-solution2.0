@@ -255,14 +255,10 @@ export function sanitizeQuotationRecord(q: Quotation): Quotation {
 
 export const quotationService = {
   async getAllQuotations(): Promise<Quotation[]> {
-    const deletedRecordIds = await getDeletedRecordIdsSet();
-    const allLocal = await db.quotations.orderBy('createdAt').reverse().toArray();
-    const validLocal = allLocal.filter(q => !deletedRecordIds.has(q.id) && q.items && q.items.length > 0 && getQuotationTotalAmount(q) > 0);
-
     const syncRemote = async () => {
       try {
         const remoteQuotes = await fetchCollectionFromFirestore<Quotation>('quotations');
-        if (Array.isArray(remoteQuotes) && remoteQuotes.length > 0) {
+        if (Array.isArray(remoteQuotes)) {
           const freshDeleted = await getDeletedRecordIdsSet();
           const validRemote = remoteQuotes.filter(q => !freshDeleted.has(q.id) && q.items && q.items.length > 0 && getQuotationTotalAmount(q) > 0);
           const remoteIds = new Set(validRemote.map(q => q.id));
@@ -270,22 +266,19 @@ export const quotationService = {
           const currentLocal = await db.quotations.toArray();
           const toDelete = currentLocal.filter(q => !remoteIds.has(q.id) || freshDeleted.has(q.id)).map(q => q.id);
 
-          if (validRemote.length > 0) {
-            await db.quotations.bulkPut(validRemote.map(sanitizeQuotationRecord));
-          }
           if (toDelete.length > 0) {
             await db.quotations.bulkDelete(toDelete);
+          }
+          if (validRemote.length > 0) {
+            await db.quotations.bulkPut(validRemote.map(sanitizeQuotationRecord));
+          } else if (remoteQuotes.length === 0) {
+            await db.quotations.clear();
           }
         }
       } catch (err) {
         console.warn("Background quotation sync note:", err);
       }
     };
-
-    if (validLocal.length > 0) {
-      syncRemote();
-      return validLocal.map(sanitizeQuotationRecord);
-    }
 
     await syncRemote();
     const refreshed = await db.quotations.orderBy('createdAt').reverse().toArray();

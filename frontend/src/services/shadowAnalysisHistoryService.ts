@@ -1,52 +1,70 @@
-import { db } from './db';
+import { db, markRecordAsDeleted, getDeletedRecordIdsSet } from './db';
 import type { ShadowAnalysisRecord } from '../types';
-import { saveRecordToFirestore, fetchCollectionFromFirestore } from './firebase';
+import { saveRecordToFirestore, deleteRecordFromFirestore, fetchCollectionFromFirestore } from './firebase';
 
 export const shadowAnalysisHistoryService = {
   async getReports(): Promise<ShadowAnalysisRecord[]> {
+    const deletedIds = await getDeletedRecordIdsSet();
     const localRecords = await db.shadowAnalyses.orderBy('createdAt').reverse().toArray();
+    const validLocal = localRecords.filter(r => !deletedIds.has(r.id) && (!r.leadId || !deletedIds.has(r.leadId)));
 
     const syncRemote = async () => {
       try {
         const remote = await fetchCollectionFromFirestore<ShadowAnalysisRecord>('shadowAnalyses');
         if (remote && remote.length > 0) {
-          await db.shadowAnalyses.bulkPut(remote);
+          const freshDeleted = await getDeletedRecordIdsSet();
+          const validRemote = remote.filter(r => !freshDeleted.has(r.id) && (!r.leadId || !freshDeleted.has(r.leadId)));
+          if (validRemote.length > 0) {
+            await db.shadowAnalyses.bulkPut(validRemote);
+          }
         }
       } catch (e) {
         console.warn('Background shadowAnalyses sync note:', e);
       }
     };
 
-    if (localRecords.length > 0) {
+    if (validLocal.length > 0) {
       syncRemote();
-      return localRecords;
+      return validLocal;
     }
 
     await syncRemote();
-    return db.shadowAnalyses.orderBy('createdAt').reverse().toArray();
+    const freshDeleted = await getDeletedRecordIdsSet();
+    const refreshed = await db.shadowAnalyses.orderBy('createdAt').reverse().toArray();
+    return refreshed.filter(r => !freshDeleted.has(r.id) && (!r.leadId || !freshDeleted.has(r.leadId)));
   },
 
   async getReportsByLeadId(leadId: string): Promise<ShadowAnalysisRecord[]> {
+    const deletedIds = await getDeletedRecordIdsSet();
+    if (deletedIds.has(leadId)) return [];
+
     const localRecords = await db.shadowAnalyses.where('leadId').equals(leadId).toArray();
+    const validLocal = localRecords.filter(r => !deletedIds.has(r.id));
 
     const syncRemote = async () => {
       try {
         const remote = await fetchCollectionFromFirestore<ShadowAnalysisRecord>('shadowAnalyses');
         if (remote && remote.length > 0) {
-          await db.shadowAnalyses.bulkPut(remote);
+          const freshDeleted = await getDeletedRecordIdsSet();
+          const validRemote = remote.filter(r => !freshDeleted.has(r.id) && r.leadId === leadId);
+          if (validRemote.length > 0) {
+            await db.shadowAnalyses.bulkPut(validRemote);
+          }
         }
       } catch (e) {
         console.warn('Background shadowAnalyses sync note:', e);
       }
     };
 
-    if (localRecords.length > 0) {
+    if (validLocal.length > 0) {
       syncRemote();
-      return localRecords;
+      return validLocal;
     }
 
     await syncRemote();
-    return db.shadowAnalyses.where('leadId').equals(leadId).toArray();
+    const freshDeleted = await getDeletedRecordIdsSet();
+    const refreshed = await db.shadowAnalyses.where('leadId').equals(leadId).toArray();
+    return refreshed.filter(r => !freshDeleted.has(r.id));
   },
 
   async saveReport(reportData: Omit<ShadowAnalysisRecord, 'id' | 'createdAt'>): Promise<string> {
@@ -74,5 +92,7 @@ export const shadowAnalysisHistoryService = {
 
   async deleteReport(id: string): Promise<void> {
     await db.shadowAnalyses.delete(id);
+    await markRecordAsDeleted(id, 'shadowAnalyses');
+    deleteRecordFromFirestore('shadowAnalyses', id);
   }
 };

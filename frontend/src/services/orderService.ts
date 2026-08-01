@@ -1,11 +1,44 @@
-import { db } from './db';
+import { db, markRecordAsDeleted, getDeletedRecordIdsSet } from './db';
 import type { OrderConfirmation, ClientDocument, ClientRegistration, InstallationPhoto, ReleaseDocument } from '../types';
 import { saveRecordToFirestore, deleteRecordFromFirestore, fetchCollectionFromFirestore } from './firebase';
 
 export const orderService = {
   // Order Confirmations
   async getOrderConfirmationByLeadId(leadId: string): Promise<OrderConfirmation | undefined> {
-    return db.orderConfirmations.where({ leadId }).first();
+    const deletedIds = await getDeletedRecordIdsSet();
+    if (deletedIds.has(leadId)) return undefined;
+
+    let oc = await db.orderConfirmations.where({ leadId }).first();
+    if (oc && deletedIds.has(oc.id)) return undefined;
+
+    if (!oc) {
+      try {
+        const remoteOcs = await fetchCollectionFromFirestore<OrderConfirmation>('orderConfirmations');
+        if (Array.isArray(remoteOcs) && remoteOcs.length > 0) {
+          const freshDeleted = await getDeletedRecordIdsSet();
+          const validRemote = remoteOcs.filter(o => !freshDeleted.has(o.id) && !freshDeleted.has(o.leadId));
+          if (validRemote.length > 0) {
+            await db.orderConfirmations.bulkPut(validRemote);
+            oc = await db.orderConfirmations.where({ leadId }).first();
+          }
+        }
+      } catch (err) {
+        console.warn("Firestore orderConfirmations sync note:", err);
+      }
+    } else {
+      fetchCollectionFromFirestore<OrderConfirmation>('orderConfirmations').then(async (remoteOcs) => {
+        if (Array.isArray(remoteOcs) && remoteOcs.length > 0) {
+          const freshDeleted = await getDeletedRecordIdsSet();
+          const validRemote = remoteOcs.filter(o => !freshDeleted.has(o.id) && !freshDeleted.has(o.leadId));
+          if (validRemote.length > 0) {
+            db.orderConfirmations.bulkPut(validRemote).catch(() => {});
+          }
+        }
+      }).catch(() => {});
+    }
+
+    if (oc && deletedIds.has(oc.id)) return undefined;
+    return oc;
   },
 
   async createOrderConfirmation(ocData: Omit<OrderConfirmation, 'id' | 'createdAt'>): Promise<string> {
@@ -46,16 +79,50 @@ export const orderService = {
   },
 
   async updateOrderConfirmation(oc: OrderConfirmation): Promise<void> {
+    const deletedIds = await getDeletedRecordIdsSet();
+    if (deletedIds.has(oc.id) || deletedIds.has(oc.leadId)) return;
     await db.orderConfirmations.put(oc);
     saveRecordToFirestore('orderConfirmations', oc.id, oc);
   },
 
   // Client Registrations Checklist
   async getClientRegistrationByLeadId(leadId: string): Promise<ClientRegistration | undefined> {
-    return db.clientRegistrations.get(leadId);
+    const deletedIds = await getDeletedRecordIdsSet();
+    if (deletedIds.has(leadId)) return undefined;
+
+    let reg = await db.clientRegistrations.get(leadId);
+    if (!reg) {
+      try {
+        const remoteRegs = await fetchCollectionFromFirestore<ClientRegistration>('clientRegistrations');
+        if (Array.isArray(remoteRegs) && remoteRegs.length > 0) {
+          const freshDeleted = await getDeletedRecordIdsSet();
+          const validRemote = remoteRegs.filter(r => !freshDeleted.has(r.leadId));
+          if (validRemote.length > 0) {
+            await db.clientRegistrations.bulkPut(validRemote);
+            reg = await db.clientRegistrations.get(leadId);
+          }
+        }
+      } catch (err) {
+        console.warn("Firestore clientRegistrations sync note:", err);
+      }
+    } else {
+      fetchCollectionFromFirestore<ClientRegistration>('clientRegistrations').then(async (remoteRegs) => {
+        if (Array.isArray(remoteRegs) && remoteRegs.length > 0) {
+          const freshDeleted = await getDeletedRecordIdsSet();
+          const validRemote = remoteRegs.filter(r => !freshDeleted.has(r.leadId));
+          if (validRemote.length > 0) {
+            db.clientRegistrations.bulkPut(validRemote).catch(() => {});
+          }
+        }
+      }).catch(() => {});
+    }
+
+    return reg;
   },
 
   async saveClientRegistration(registration: ClientRegistration): Promise<void> {
+    const deletedIds = await getDeletedRecordIdsSet();
+    if (deletedIds.has(registration.leadId)) return;
     registration.updatedAt = new Date().toISOString();
     await db.transaction('rw', [db.clientRegistrations, db.leads], async () => {
       await db.clientRegistrations.put(registration);
@@ -74,18 +141,40 @@ export const orderService = {
 
   // Client Documents (Slots: PAN, Aadhar, Bill, Tax, Bank etc)
   async getClientDocumentsByLeadId(leadId: string): Promise<ClientDocument[]> {
+    const deletedIds = await getDeletedRecordIdsSet();
+    if (deletedIds.has(leadId)) return [];
+
     const localDocs = await db.clientDocuments.where({ leadId }).toArray();
-    (async () => {
+    let validLocal = localDocs.filter(d => !deletedIds.has(d.id));
+
+    if (validLocal.length === 0) {
       try {
         const remoteDocs = await fetchCollectionFromFirestore<ClientDocument>('clientDocuments');
-        if (remoteDocs && remoteDocs.length > 0) {
-          await db.clientDocuments.bulkPut(remoteDocs);
+        if (Array.isArray(remoteDocs) && remoteDocs.length > 0) {
+          const freshDeleted = await getDeletedRecordIdsSet();
+          const validRemote = remoteDocs.filter(d => !freshDeleted.has(d.id) && !freshDeleted.has(d.leadId));
+          if (validRemote.length > 0) {
+            await db.clientDocuments.bulkPut(validRemote);
+            const reRead = await db.clientDocuments.where({ leadId }).toArray();
+            validLocal = reRead.filter(d => !freshDeleted.has(d.id));
+          }
         }
       } catch (err) {
         console.warn("Firestore documents sync note:", err);
       }
-    })();
-    return localDocs;
+    } else {
+      fetchCollectionFromFirestore<ClientDocument>('clientDocuments').then(async (remoteDocs) => {
+        if (Array.isArray(remoteDocs) && remoteDocs.length > 0) {
+          const freshDeleted = await getDeletedRecordIdsSet();
+          const validRemote = remoteDocs.filter(d => !freshDeleted.has(d.id) && !freshDeleted.has(d.leadId));
+          if (validRemote.length > 0) {
+            db.clientDocuments.bulkPut(validRemote).catch(() => {});
+          }
+        }
+      }).catch(() => {});
+    }
+
+    return validLocal;
   },
 
   async uploadClientDocument(docData: Omit<ClientDocument, 'id' | 'uploadedAt'>): Promise<string> {
@@ -100,6 +189,7 @@ export const orderService = {
       const existing = await db.clientDocuments.where({ leadId: docData.leadId, docType: docData.docType }).first();
       if (existing) {
         await db.clientDocuments.delete(existing.id);
+        await markRecordAsDeleted(existing.id, 'clientDocuments');
         deleteRecordFromFirestore('clientDocuments', existing.id);
       }
       await db.clientDocuments.add(newDoc);
@@ -135,23 +225,46 @@ export const orderService = {
       }
     });
 
+    await markRecordAsDeleted(id, 'clientDocuments');
     deleteRecordFromFirestore('clientDocuments', id);
   },
 
   // Installation Photos
   async getInstallationPhotosByLeadId(leadId: string): Promise<InstallationPhoto[]> {
+    const deletedIds = await getDeletedRecordIdsSet();
+    if (deletedIds.has(leadId)) return [];
+
     const localPhotos = await db.installationPhotos.where({ leadId }).toArray();
-    (async () => {
+    let validLocal = localPhotos.filter(p => !deletedIds.has(p.id));
+
+    if (validLocal.length === 0) {
       try {
         const remotePhotos = await fetchCollectionFromFirestore<InstallationPhoto>('installationPhotos');
-        if (remotePhotos && remotePhotos.length > 0) {
-          await db.installationPhotos.bulkPut(remotePhotos);
+        if (Array.isArray(remotePhotos) && remotePhotos.length > 0) {
+          const freshDeleted = await getDeletedRecordIdsSet();
+          const validRemote = remotePhotos.filter(p => !freshDeleted.has(p.id) && !freshDeleted.has(p.leadId));
+          if (validRemote.length > 0) {
+            await db.installationPhotos.bulkPut(validRemote);
+            const reRead = await db.installationPhotos.where({ leadId }).toArray();
+            validLocal = reRead.filter(p => !freshDeleted.has(p.id));
+          }
         }
       } catch (err) {
         console.warn("Firestore installation photos sync note:", err);
       }
-    })();
-    return localPhotos;
+    } else {
+      fetchCollectionFromFirestore<InstallationPhoto>('installationPhotos').then(async (remotePhotos) => {
+        if (Array.isArray(remotePhotos) && remotePhotos.length > 0) {
+          const freshDeleted = await getDeletedRecordIdsSet();
+          const validRemote = remotePhotos.filter(p => !freshDeleted.has(p.id) && !freshDeleted.has(p.leadId));
+          if (validRemote.length > 0) {
+            db.installationPhotos.bulkPut(validRemote).catch(() => {});
+          }
+        }
+      }).catch(() => {});
+    }
+
+    return validLocal;
   },
 
   async uploadInstallationPhoto(photoData: Omit<InstallationPhoto, 'id'>): Promise<string> {
@@ -182,23 +295,46 @@ export const orderService = {
 
   async deleteInstallationPhoto(id: string): Promise<void> {
     await db.installationPhotos.delete(id);
+    await markRecordAsDeleted(id, 'installationPhotos');
     deleteRecordFromFirestore('installationPhotos', id);
   },
 
   // Release Documents
   async getReleaseDocumentsByLeadId(leadId: string): Promise<ReleaseDocument[]> {
+    const deletedIds = await getDeletedRecordIdsSet();
+    if (deletedIds.has(leadId)) return [];
+
     const localReleases = await db.releaseDocuments.where({ leadId }).toArray();
-    (async () => {
+    let validLocal = localReleases.filter(r => !deletedIds.has(r.id));
+
+    if (validLocal.length === 0) {
       try {
         const remoteReleases = await fetchCollectionFromFirestore<ReleaseDocument>('releaseDocuments');
-        if (remoteReleases && remoteReleases.length > 0) {
-          await db.releaseDocuments.bulkPut(remoteReleases);
+        if (Array.isArray(remoteReleases) && remoteReleases.length > 0) {
+          const freshDeleted = await getDeletedRecordIdsSet();
+          const validRemote = remoteReleases.filter(r => !freshDeleted.has(r.id) && !freshDeleted.has(r.leadId));
+          if (validRemote.length > 0) {
+            await db.releaseDocuments.bulkPut(validRemote);
+            const reRead = await db.releaseDocuments.where({ leadId }).toArray();
+            validLocal = reRead.filter(r => !freshDeleted.has(r.id));
+          }
         }
       } catch (err) {
         console.warn("Firestore release documents sync note:", err);
       }
-    })();
-    return localReleases;
+    } else {
+      fetchCollectionFromFirestore<ReleaseDocument>('releaseDocuments').then(async (remoteReleases) => {
+        if (Array.isArray(remoteReleases) && remoteReleases.length > 0) {
+          const freshDeleted = await getDeletedRecordIdsSet();
+          const validRemote = remoteReleases.filter(r => !freshDeleted.has(r.id) && !freshDeleted.has(r.leadId));
+          if (validRemote.length > 0) {
+            db.releaseDocuments.bulkPut(validRemote).catch(() => {});
+          }
+        }
+      }).catch(() => {});
+    }
+
+    return validLocal;
   },
 
   async uploadReleaseDocument(relData: Omit<ReleaseDocument, 'id' | 'uploadedAt'>): Promise<string> {
@@ -213,6 +349,7 @@ export const orderService = {
       const existing = await db.releaseDocuments.where({ leadId: relData.leadId }).toArray();
       for (const item of existing) {
         await db.releaseDocuments.delete(item.id);
+        await markRecordAsDeleted(item.id, 'releaseDocuments');
         deleteRecordFromFirestore('releaseDocuments', item.id);
       }
 
@@ -233,6 +370,7 @@ export const orderService = {
 
   async deleteReleaseDocument(id: string): Promise<void> {
     await db.releaseDocuments.delete(id);
+    await markRecordAsDeleted(id, 'releaseDocuments');
     deleteRecordFromFirestore('releaseDocuments', id);
   }
 };

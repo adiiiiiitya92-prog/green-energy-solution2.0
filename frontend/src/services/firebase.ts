@@ -401,17 +401,45 @@ export async function saveRecordToFirestore(collectionName: string, id: string, 
 /**
  * Fetches all documents in a collection from Firebase Firestore (strictly from green-energy-solution database)
  */
-export async function fetchCollectionFromFirestore<T>(collectionName: string, timeoutMs: number = 2500): Promise<T[]> {
+/**
+ * Fetches all documents in a collection from Firebase Firestore (strictly from green-energy-solution database)
+ */
+export async function fetchCollectionFromFirestore<T extends { id?: string; isDeleted?: boolean; leadId?: string }>(
+  collectionName: string,
+  timeoutMs: number = 2500
+): Promise<T[]> {
   try {
     const colRef = collection(firestoreDb, collectionName);
     const timeoutPromise = new Promise<never>((_, reject) =>
       setTimeout(() => reject(new Error(`Firestore fetch timeout [${collectionName}]`)), timeoutMs)
     );
     const snapshot = await Promise.race([getDocs(colRef), timeoutPromise]);
-    return snapshot.docs.map(docSnap => ({ id: docSnap.id, ...docSnap.data() }) as unknown as T);
+    const rawDocs = snapshot.docs.map(docSnap => ({ id: docSnap.id, ...docSnap.data() }) as unknown as T);
+    
+    // Tombstone filtering
+    const { getDeletedRecordIdsSet } = await import('./db');
+    const deletedIds = await getDeletedRecordIdsSet();
+
+    const validDocs: T[] = [];
+    for (const docItem of rawDocs) {
+      if (docItem.id && deletedIds.has(docItem.id)) {
+        // Cleanup orphaned record in Firestore if found
+        deleteRecordFromFirestore(collectionName, docItem.id).catch(() => {});
+        continue;
+      }
+      if (docItem.isDeleted) {
+        if (docItem.id) deleteRecordFromFirestore(collectionName, docItem.id).catch(() => {});
+        continue;
+      }
+      validDocs.push(docItem);
+    }
+    return validDocs;
   } catch (err) {
     console.warn(`Firestore direct fetch note [${collectionName}], trying backend:`, err);
-    return fetchCollectionViaBackend<T>(collectionName, timeoutMs);
+    const backendDocs = await fetchCollectionViaBackend<T>(collectionName, timeoutMs);
+    const { getDeletedRecordIdsSet } = await import('./db');
+    const deletedIds = await getDeletedRecordIdsSet();
+    return backendDocs.filter(d => (!d.id || !deletedIds.has(d.id)) && !d.isDeleted);
   }
 }
 
@@ -419,16 +447,17 @@ export async function fetchCollectionFromFirestore<T>(collectionName: string, ti
  * Deletes a document from Firebase Firestore (strictly from green-energy-solution database)
  */
 export async function deleteRecordFromFirestore(collectionName: string, id: string): Promise<void> {
+  if (!id) return;
   try {
     const docRef = doc(firestoreDb, collectionName, id);
     await deleteDoc(docRef);
     console.log(`Firestore deleted [${collectionName}/${id}] -> DB: [${TARGET_DATABASE_ID}]`);
-    return;
   } catch (err) {
     console.warn(`Firestore direct delete note [${collectionName}/${id}], trying backend:`, err);
-    await deleteRecordViaBackend(collectionName, id);
-    return;
   }
+  
+  // Call Express backend DELETE API fallback as well
+  deleteRecordViaBackend(collectionName, id).catch(() => {});
 }
 
 /**
@@ -436,22 +465,32 @@ export async function deleteRecordFromFirestore(collectionName: string, id: stri
  */
 export async function syncAllLocalDataToFirestore(): Promise<void> {
   try {
-    const { db } = await import('./db');
+    const { db, getDeletedRecordIdsSet } = await import('./db');
+    const deletedIds = await getDeletedRecordIdsSet();
+
     const leads = await db.leads.toArray();
     for (const l of leads) {
-      await saveRecordToFirestore('leads', l.id, l);
+      if (!deletedIds.has(l.id)) {
+        await saveRecordToFirestore('leads', l.id, l);
+      }
     }
     const quotations = await db.quotations.toArray();
     for (const q of quotations) {
-      await saveRecordToFirestore('quotations', q.id, q);
+      if (!deletedIds.has(q.id) && (!q.leadId || !deletedIds.has(q.leadId))) {
+        await saveRecordToFirestore('quotations', q.id, q);
+      }
     }
     const releaseDocs = await db.releaseDocuments.toArray();
     for (const r of releaseDocs) {
-      await saveRecordToFirestore('releaseDocuments', r.id, r);
+      if (!deletedIds.has(r.id) && (!r.leadId || !deletedIds.has(r.leadId))) {
+        await saveRecordToFirestore('releaseDocuments', r.id, r);
+      }
     }
     const clientDocs = await db.clientDocuments.toArray();
     for (const cd of clientDocs) {
-      await saveRecordToFirestore('clientDocuments', cd.id, cd);
+      if (!deletedIds.has(cd.id) && (!cd.leadId || !deletedIds.has(cd.leadId))) {
+        await saveRecordToFirestore('clientDocuments', cd.id, cd);
+      }
     }
     console.log("🔥 Initialized background dual-sync of all local data to Firestore!");
   } catch (err) {

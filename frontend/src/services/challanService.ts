@@ -1,29 +1,37 @@
-import { db } from './db';
+import { db, markRecordAsDeleted, getDeletedRecordIdsSet } from './db';
 import type { Challan } from '../types';
 import { saveRecordToFirestore, fetchCollectionFromFirestore } from './firebase';
 
 export const challanService = {
   async getChallans(): Promise<Challan[]> {
+    const deletedIds = await getDeletedRecordIdsSet();
     const localChallans = await db.challans.orderBy('createdAt').reverse().toArray();
+    const validLocal = localChallans.filter(c => !deletedIds.has(c.id) && (!c.leadId || !deletedIds.has(c.leadId)));
 
     const syncRemote = async () => {
       try {
         const remoteChallans = await fetchCollectionFromFirestore<Challan>('challans');
         if (remoteChallans && remoteChallans.length > 0) {
-          await db.challans.bulkPut(remoteChallans);
+          const freshDeleted = await getDeletedRecordIdsSet();
+          const validRemote = remoteChallans.filter(c => !freshDeleted.has(c.id) && (!c.leadId || !freshDeleted.has(c.leadId)));
+          if (validRemote.length > 0) {
+            await db.challans.bulkPut(validRemote);
+          }
         }
       } catch (err) {
         console.warn("Background challans sync note:", err);
       }
     };
 
-    if (localChallans.length > 0) {
+    if (validLocal.length > 0) {
       syncRemote();
-      return localChallans;
+      return validLocal;
     }
 
     await syncRemote();
-    return db.challans.orderBy('createdAt').reverse().toArray();
+    const freshDeleted = await getDeletedRecordIdsSet();
+    const refreshed = await db.challans.orderBy('createdAt').reverse().toArray();
+    return refreshed.filter(c => !freshDeleted.has(c.id) && (!c.leadId || !freshDeleted.has(c.leadId)));
   },
 
   async createChallan(cData: Omit<Challan, 'id' | 'createdAt' | 'challanNumber'>): Promise<string> {
@@ -155,6 +163,8 @@ export const challanService = {
       }
       await db.challans.delete(id);
     });
+
+    await markRecordAsDeleted(id, 'challans');
 
     try {
       const { deleteRecordFromFirestore } = await import('./firebase');

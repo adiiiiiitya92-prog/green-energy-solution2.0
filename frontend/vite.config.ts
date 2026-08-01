@@ -36,7 +36,7 @@ function b2DevServerPlugin() {
                 const errTxt = await authRes.text().catch(() => '');
                 throw new Error(`B2 authorize failed (${authRes.status}): ${errTxt}`);
               }
-              const auth = await authRes.json();
+              const auth: any = await authRes.json();
 
               const uploadUrlRes = await fetch(`${auth.apiUrl}/b2api/v2/b2_get_upload_url`, {
                 method: 'POST',
@@ -44,7 +44,7 @@ function b2DevServerPlugin() {
                 body: JSON.stringify({ bucketId })
               });
               if (!uploadUrlRes.ok) throw new Error('B2 get upload url failed');
-              const uploadInfo = await uploadUrlRes.json();
+              const uploadInfo: any = await uploadUrlRes.json();
 
               const uploadRes = await fetch(uploadInfo.uploadUrl, {
                 method: 'POST',
@@ -70,7 +70,7 @@ function b2DevServerPlugin() {
 
               let url = `${auth.downloadUrl}/file/${bucketName}/${cleanPath}`;
               if (dnldAuthRes.ok) {
-                const dnldData = await dnldAuthRes.json();
+                const dnldData: any = await dnldAuthRes.json();
                 if (dnldData.authorizationToken) {
                   url += `?Authorization=${encodeURIComponent(dnldData.authorizationToken)}`;
                 }
@@ -101,7 +101,7 @@ function b2DevServerPlugin() {
               headers: { Authorization: `Basic ${credentials}` }
             });
             if (!authRes.ok) throw new Error('B2 authorize failed');
-            const auth = await authRes.json();
+            const auth: any = await authRes.json();
 
             const uploadUrlRes = await fetch(`${auth.apiUrl}/b2api/v2/b2_get_upload_url`, {
               method: 'POST',
@@ -109,7 +109,7 @@ function b2DevServerPlugin() {
               body: JSON.stringify({ bucketId })
             });
             if (!uploadUrlRes.ok) throw new Error('B2 get upload url failed');
-            const uploadInfo = await uploadUrlRes.json();
+            const uploadInfo: any = await uploadUrlRes.json();
 
             res.setHeader('Content-Type', 'application/json');
             res.statusCode = 200;
@@ -138,7 +138,17 @@ export default defineConfig({
     proxy: {
       '/api': {
         target: 'http://localhost:5050',
-        changeOrigin: true
+        changeOrigin: true,
+        configure: (proxy) => {
+          proxy.on('error', (_err, _req, res) => {
+            if (res && typeof (res as any).writeHead === 'function' && !(res as any).headersSent) {
+              try {
+                (res as any).writeHead(200, { 'Content-Type': 'application/json' });
+                (res as any).end(JSON.stringify({ success: true, offlineFallback: true }));
+              } catch (_) {}
+            }
+          });
+        }
       }
     }
   },

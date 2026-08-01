@@ -31,10 +31,7 @@ export const Dashboard: React.FC = () => {
     // Filter quotations to only include those belonging to active leads
     qList = qList.filter(q => !q.leadId || activeLeadIds.has(q.leadId));
 
-    // If no leads exist, automatically purge any remaining stale quotes/confirmations
     if (lList.length === 0) {
-      await db.quotations.clear();
-      await db.orderConfirmations.clear();
       qList = [];
     }
 

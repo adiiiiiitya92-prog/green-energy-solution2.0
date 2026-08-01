@@ -1,4 +1,4 @@
-import { db } from './db';
+import { db, markRecordAsDeleted, getDeletedRecordIdsSet } from './db';
 import type { Quotation, OrderConfirmation, ClientRegistration, BomItem } from '../types';
 import { saveRecordToFirestore, deleteRecordFromFirestore, fetchCollectionFromFirestore } from './firebase';
 
@@ -238,19 +238,22 @@ function sanitizeQuotationRecord(qData: any): Quotation {
 
 export const quotationService = {
   async getQuotations(): Promise<Quotation[]> {
+    const deletedRecordIds = await getDeletedRecordIdsSet();
     const localLeads = await db.leads.toArray();
-    const validLeadIds = new Set(localLeads.map(l => l.id));
+    const validLeadIds = new Set(localLeads.map(l => l.id).filter(id => !deletedRecordIds.has(id)));
+
     const cachedQuotes = await db.quotations.orderBy('createdAt').reverse().toArray();
-    const filteredCached = cachedQuotes.filter(q => !q.leadId || validLeadIds.has(q.leadId));
+    const filteredCached = cachedQuotes.filter(q => !deletedRecordIds.has(q.id) && (!q.leadId || validLeadIds.has(q.leadId)));
 
     const syncRemote = async () => {
       try {
         const remoteQuotes = await fetchCollectionFromFirestore<Quotation>('quotations');
         if (Array.isArray(remoteQuotes) && remoteQuotes.length > 0) {
-          const validRemote = remoteQuotes.filter(q => !q.leadId || validLeadIds.has(q.leadId));
+          const freshDeleted = await getDeletedRecordIdsSet();
+          const validRemote = remoteQuotes.filter(q => !freshDeleted.has(q.id) && (!q.leadId || validLeadIds.has(q.leadId)));
           const remoteIds = new Set(validRemote.map(q => q.id));
           const currentLocal = await db.quotations.toArray();
-          const deletedIds = currentLocal.filter(q => !remoteIds.has(q.id)).map(q => q.id);
+          const deletedIds = currentLocal.filter(q => !remoteIds.has(q.id) || freshDeleted.has(q.id)).map(q => q.id);
 
           if (validRemote.length > 0) {
             await db.quotations.bulkPut(validRemote.map(sanitizeQuotationRecord));
@@ -270,11 +273,15 @@ export const quotationService = {
     }
 
     await syncRemote();
+    const freshDeleted = await getDeletedRecordIdsSet();
     const finalQuotes = await db.quotations.orderBy('createdAt').reverse().toArray();
-    return finalQuotes.filter(q => !q.leadId || validLeadIds.has(q.leadId));
+    return finalQuotes.filter(q => !freshDeleted.has(q.id) && (!q.leadId || validLeadIds.has(q.leadId)));
   },
 
   async getQuotationById(id: string): Promise<Quotation | undefined> {
+    const deletedRecordIds = await getDeletedRecordIdsSet();
+    if (deletedRecordIds.has(id)) return undefined;
+
     let q = await db.quotations.get(id);
     
     // If not found locally, try Firestore sync
@@ -282,7 +289,9 @@ export const quotationService = {
       try {
         const remoteQuotes = await fetchCollectionFromFirestore<Quotation>('quotations');
         if (Array.isArray(remoteQuotes) && remoteQuotes.length > 0) {
-          await db.quotations.bulkPut(remoteQuotes.map(sanitizeQuotationRecord));
+          const freshDeleted = await getDeletedRecordIdsSet();
+          const validRemote = remoteQuotes.filter(item => !freshDeleted.has(item.id));
+          await db.quotations.bulkPut(validRemote.map(sanitizeQuotationRecord));
           q = await db.quotations.get(id);
         }
       } catch (err) {
@@ -297,31 +306,35 @@ export const quotationService = {
   },
 
   async getQuotationsByLeadId(leadId: string): Promise<Quotation[]> {
-    // First attempt: read from local IndexedDB cache
+    const deletedRecordIds = await getDeletedRecordIdsSet();
+    if (deletedRecordIds.has(leadId)) return [];
+
     let quotes = await db.quotations.where({ leadId }).reverse().sortBy('createdAt');
-    let validQuotes = quotes.filter(q => q.items && q.items.length > 0 && q.grandTotal > 0);
+    let validQuotes = quotes.filter(q => !deletedRecordIds.has(q.id) && q.items && q.items.length > 0 && q.grandTotal > 0);
 
     // If local cache is empty, sync from Firestore first (handles reload/signout scenarios)
     if (validQuotes.length === 0) {
       try {
         const remoteQuotes = await fetchCollectionFromFirestore<Quotation>('quotations');
         if (Array.isArray(remoteQuotes) && remoteQuotes.length > 0) {
-          const forThisLead = remoteQuotes.filter(q => q.leadId === leadId);
+          const freshDeleted = await getDeletedRecordIdsSet();
+          const forThisLead = remoteQuotes.filter(q => !freshDeleted.has(q.id) && q.leadId === leadId);
           if (forThisLead.length > 0) {
             await db.quotations.bulkPut(forThisLead.map(sanitizeQuotationRecord));
           }
           // Re-read after sync
           quotes = await db.quotations.where({ leadId }).reverse().sortBy('createdAt');
-          validQuotes = quotes.filter(q => q.items && q.items.length > 0 && q.grandTotal > 0);
+          validQuotes = quotes.filter(q => !freshDeleted.has(q.id) && q.items && q.items.length > 0 && q.grandTotal > 0);
         }
       } catch (err) {
         console.warn("Firestore quotation sync for lead note:", err);
       }
     } else {
       // Background sync for freshness (don't block)
-      fetchCollectionFromFirestore<Quotation>('quotations').then(remoteQuotes => {
+      fetchCollectionFromFirestore<Quotation>('quotations').then(async (remoteQuotes) => {
         if (Array.isArray(remoteQuotes) && remoteQuotes.length > 0) {
-          const forThisLead = remoteQuotes.filter(q => q.leadId === leadId);
+          const freshDeleted = await getDeletedRecordIdsSet();
+          const forThisLead = remoteQuotes.filter(q => !freshDeleted.has(q.id) && q.leadId === leadId);
           if (forThisLead.length > 0) {
             db.quotations.bulkPut(forThisLead.map(sanitizeQuotationRecord)).catch(() => {});
           }
@@ -334,6 +347,7 @@ export const quotationService = {
     if (zeroQuotes.length > 0) {
       for (const zq of zeroQuotes) {
         db.quotations.delete(zq.id).catch(() => {});
+        markRecordAsDeleted(zq.id, 'quotations').catch(() => {});
         deleteRecordFromFirestore('quotations', zq.id).catch(() => {});
       }
     }
@@ -443,6 +457,7 @@ export const quotationService = {
       localStorage.removeItem(`quotation_${id}`);
     } catch (_) {}
     await db.quotations.delete(id);
+    await markRecordAsDeleted(id, 'quotations');
     deleteRecordFromFirestore('quotations', id);
   },
 

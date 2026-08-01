@@ -1,4 +1,4 @@
-import { db } from './db';
+import { db, markRecordAsDeleted, getDeletedRecordIdsSet } from './db';
 import type { Product } from '../types';
 import { saveRecordToFirestore, deleteRecordFromFirestore, fetchCollectionFromFirestore } from './firebase';
 
@@ -6,7 +6,9 @@ const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || '';
 
 export const productService = {
   async getProducts(): Promise<Product[]> {
+    const deletedIds = await getDeletedRecordIdsSet();
     const localProds = await db.products.orderBy('name').toArray();
+    const validLocal = localProds.filter(p => !deletedIds.has(p.id));
 
     const syncRemote = async () => {
       try {
@@ -27,13 +29,17 @@ export const productService = {
         }
 
         if (Array.isArray(remoteProds) && remoteProds.length > 0) {
-          const remoteIds = new Set(remoteProds.map(p => p.id));
+          const freshDeleted = await getDeletedRecordIdsSet();
+          const validRemote = remoteProds.filter(p => !freshDeleted.has(p.id));
+          const remoteIds = new Set(validRemote.map(p => p.id));
           const currentLocal = await db.products.toArray();
-          const deletedIds = currentLocal.filter(p => !remoteIds.has(p.id)).map(p => p.id);
+          const deletedIdsList = currentLocal.filter(p => !remoteIds.has(p.id) || freshDeleted.has(p.id)).map(p => p.id);
 
-          await db.products.bulkPut(remoteProds);
-          if (deletedIds.length > 0) {
-            await db.products.bulkDelete(deletedIds);
+          if (validRemote.length > 0) {
+            await db.products.bulkPut(validRemote);
+          }
+          if (deletedIdsList.length > 0) {
+            await db.products.bulkDelete(deletedIdsList);
           }
         }
       } catch (err) {
@@ -41,13 +47,15 @@ export const productService = {
       }
     };
 
-    if (localProds.length > 0) {
+    if (validLocal.length > 0) {
       syncRemote();
-      return localProds;
+      return validLocal;
     }
 
     await syncRemote();
-    return db.products.orderBy('name').toArray();
+    const freshDeleted = await getDeletedRecordIdsSet();
+    const refreshed = await db.products.orderBy('name').toArray();
+    return refreshed.filter(p => !freshDeleted.has(p.id));
   },
 
   async createProduct(pData: Omit<Product, 'id' | 'createdAt'>): Promise<string> {
@@ -73,6 +81,9 @@ export const productService = {
   },
 
   async updateProduct(product: Product): Promise<void> {
+    const deletedIds = await getDeletedRecordIdsSet();
+    if (deletedIds.has(product.id)) return;
+
     // 1. Instant local IndexedDB storage
     await db.products.put(product);
 
@@ -88,6 +99,7 @@ export const productService = {
   async deleteProduct(id: string): Promise<void> {
     // 1. Instant local IndexedDB storage
     await db.products.delete(id);
+    await markRecordAsDeleted(id, 'products');
 
     // 2. Non-blocking Firestore & REST API Sync in background
     deleteRecordFromFirestore('products', id).catch(err => console.warn("Firestore product delete note:", err));

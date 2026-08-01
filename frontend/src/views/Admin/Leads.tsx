@@ -22,9 +22,26 @@ import { FollowUpReminders } from '../../components/Common/FollowUpReminders';
 import {
   Search, Plus, Camera, CheckSquare, UploadCloud,
   ChevronLeft, Trash2, Send, Star, FileCheck, CheckCircle, Compass, X, Eye, Download,
-  CreditCard, Wallet, Edit3, MessageSquare, Bell, Flame, FileText
+  CreditCard, Wallet, Edit3, MessageSquare, Bell, Flame, FileText,
+  BarChart3, FileSpreadsheet, Printer, PieChart, ArrowDownToLine, Calendar, RotateCcw, Sparkles
 } from 'lucide-react';
 import dayjs from 'dayjs';
+
+export interface LeadReportItem {
+  leadId: string;
+  name: string;
+  phone: string;
+  requirement: string;
+  status: Lead['status'];
+  assignedSalesName: string;
+  assignedAdminName: string;
+  createdAt: string;
+  totalValue: number;
+  paidAmount: number;
+  pendingBalance: number;
+  paymentStatus: 'Fully Paid' | 'Partially Paid' | 'Pending' | 'No Quote';
+  installmentCount: number;
+}
 
 export const Leads: React.FC = () => {
   const { currentRole, currentUser } = useAuthStore();
@@ -44,7 +61,7 @@ export const Leads: React.FC = () => {
 
   // Selected Lead (Details View) — restore from sessionStorage on refresh
   const [selectedLead, setSelectedLead] = useState<Lead | null>(null);
-  const [mainTab, setMainTab] = useState<'pipeline' | 'reminders'>('pipeline');
+  const [mainTab, setMainTab] = useState<'pipeline' | 'reminders' | 'reports'>('pipeline');
   const [activeTab, setActiveTab] = useState<'timeline' | 'quotation' | 'order' | 'installation' | 'registration' | 'documentation'>(
     () => (sessionStorage.getItem('leads_activeTab') as any) || 'timeline'
   );
@@ -230,10 +247,242 @@ export const Leads: React.FC = () => {
   const [previewDoc, setPreviewDoc] = useState<{ name: string; url: string; type: string } | null>(null);
   const [editingDocData, setEditingDocData] = useState<any>(null);
 
+  // Analytics & Financial Summary Reports States
+  const [showReportModal, setShowReportModal] = useState(false);
+  const [reportItems, setReportItems] = useState<LeadReportItem[]>([]);
+  const [isGeneratingReport, setIsGeneratingReport] = useState(false);
+  const [reportSearchTerm, setReportSearchTerm] = useState('');
+  const [reportStageFilter, setReportStageFilter] = useState('');
+  const [reportPaymentFilter, setReportPaymentFilter] = useState('');
+  const [reportTimeFilter, setReportTimeFilter] = useState<'all' | 'today' | 'week' | 'month' | 'year' | 'custom'>('all');
+  const [reportStartDate, setReportStartDate] = useState('');
+  const [reportEndDate, setReportEndDate] = useState('');
+  const [balanceFilter, setBalanceFilter] = useState<'all' | 'pending' | 'partially_paid' | 'fully_paid' | 'no_quote'>('all');
+
+  const leadFinancialMap = React.useMemo(() => {
+    const map: Record<string, LeadReportItem> = {};
+    reportItems.forEach(item => {
+      map[item.leadId] = item;
+    });
+    return map;
+  }, [reportItems]);
+
+  // Auto-save & restore draft for New Lead modal
+  const [hasLeadDraftRestored, setHasLeadDraftRestored] = useState(false);
+
+  useEffect(() => {
+    const savedDraft = localStorage.getItem('draft_lead_form');
+    if (savedDraft) {
+      try {
+        const d = JSON.parse(savedDraft);
+        if (d.leadName) setLeadName(d.leadName);
+        if (d.leadPhone) setLeadPhone(d.leadPhone);
+        if (d.leadEmail) setLeadEmail(d.leadEmail);
+        if (d.leadRequirement) setLeadRequirement(d.leadRequirement);
+        if (d.leadDescription) setLeadDescription(d.leadDescription);
+        if (d.leadAssignedSalesPersonId) setLeadAssignedSalesPersonId(d.leadAssignedSalesPersonId);
+        if (d.leadAssignedAdminId) setLeadAssignedAdminId(d.leadAssignedAdminId);
+        if (d.leadIsHot !== undefined) setLeadIsHot(d.leadIsHot);
+        setHasLeadDraftRestored(true);
+      } catch (_) {}
+    }
+  }, []);
+
+  useEffect(() => {
+    if (leadName || leadPhone || leadEmail || leadRequirement || leadDescription) {
+      localStorage.setItem('draft_lead_form', JSON.stringify({
+        leadName,
+        leadPhone,
+        leadEmail,
+        leadRequirement,
+        leadDescription,
+        leadAssignedSalesPersonId,
+        leadAssignedAdminId,
+        leadIsHot
+      }));
+    }
+  }, [leadName, leadPhone, leadEmail, leadRequirement, leadDescription, leadAssignedSalesPersonId, leadAssignedAdminId, leadIsHot]);
+
+  const handleClearLeadFormData = () => {
+    if (confirm('🧹 Clear all lead form fields and reset to blank?')) {
+      localStorage.removeItem('draft_lead_form');
+      setLeadName('');
+      setLeadPhone('');
+      setLeadEmail('');
+      setLeadRequirement('');
+      setLeadDescription('');
+      setLeadAssignedSalesPersonId('');
+      setLeadAssignedAdminId('');
+      setLeadIsHot(false);
+      setHasLeadDraftRestored(false);
+    }
+  };
+
+  const renderStatusBadge = (status: Lead['status']) => {
+    switch (status) {
+      case 'new':
+        return <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-[10px] font-extrabold bg-slate-100 text-slate-700 border border-slate-300">🆕 NEW LEAD</span>;
+      case 'quotation_sent':
+        return <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-[10px] font-extrabold bg-blue-100 text-blue-800 border border-blue-200">📄 QUOTATION SENT</span>;
+      case 'confirmed':
+        return <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-[10px] font-extrabold bg-violet-100 text-violet-800 border border-violet-200">⚡ ORDER CONFIRMED</span>;
+      case 'registered':
+        return <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-[10px] font-extrabold bg-indigo-100 text-indigo-800 border border-indigo-200">📋 REGISTERED</span>;
+      case 'installed':
+        return <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-[10px] font-extrabold bg-teal-100 text-teal-800 border border-teal-200">🔧 INSTALLED</span>;
+      case 'closed':
+        return <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-[10px] font-extrabold bg-emerald-100 text-emerald-800 border border-emerald-200">🏆 CLOSED / RELEASED</span>;
+      case 'lost':
+        return <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-[10px] font-extrabold bg-rose-100 text-rose-800 border border-rose-200">❌ LOST</span>;
+      default:
+        return <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-[10px] font-extrabold bg-slate-100 text-slate-600">PENDING</span>;
+    }
+  };
+
+  const compileReportItems = async () => {
+    try {
+      const items: LeadReportItem[] = [];
+      for (const l of leads) {
+        const oc = await orderService.getOrderConfirmationByLeadId(l.id);
+        const quotes = await quotationService.getQuotationsByLeadId(l.id);
+        const mainQuote = quotes[0];
+
+        let totalValue = 0;
+        let paidAmount = 0;
+        let installmentCount = 0;
+
+        if (oc) {
+          totalValue = oc.subtotal || mainQuote?.grandTotal || 0;
+          const pList = (oc.payments && oc.payments.length > 0)
+            ? oc.payments
+            : (oc.advanceAmount && oc.advanceAmount > 0)
+            ? [{ amount: oc.advanceAmount }]
+            : [];
+          paidAmount = pList.reduce((s, p) => s + (p.amount || 0), 0);
+          installmentCount = pList.length;
+        } else if (mainQuote) {
+          totalValue = mainQuote.grandTotal || 0;
+        }
+
+        const pendingBalance = Math.max(0, totalValue - paidAmount);
+        let paymentStatus: LeadReportItem['paymentStatus'] = 'No Quote';
+        if (totalValue > 0) {
+          if (paidAmount >= totalValue) paymentStatus = 'Fully Paid';
+          else if (paidAmount > 0) paymentStatus = 'Partially Paid';
+          else paymentStatus = 'Pending';
+        }
+
+        items.push({
+          leadId: l.id,
+          name: l.name || 'Unnamed Client',
+          phone: l.phoneNumber || '',
+          requirement: l.requirement || 'Solar Installation',
+          status: l.status,
+          assignedSalesName: employeeNames[l.assignedSalesPersonId || l.assignedEmployeeId || ''] || 'Unassigned',
+          assignedAdminName: employeeNames[l.assignedAdminId || ''] || 'Unassigned',
+          createdAt: l.createdAt || new Date().toISOString(),
+          totalValue,
+          paidAmount,
+          pendingBalance,
+          paymentStatus,
+          installmentCount
+        });
+      }
+      setReportItems(items);
+    } catch (err) {
+      console.error("Error generating lead report items:", err);
+    }
+  };
+
+  const handleOpenReportsModal = async () => {
+    if (currentRole === 'field_employee') return;
+    setShowReportModal(true);
+    setIsGeneratingReport(true);
+    await compileReportItems();
+    setIsGeneratingReport(false);
+  };
+
+  const handleDownloadReportPDF = async (itemsToReport: LeadReportItem[]) => {
+    try {
+      const blob = await pdfService.generateExecutiveReportPDF(itemsToReport);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `Green_Energy_Executive_Financial_Report_${dayjs().format('YYYY_MM_DD')}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(url), 10000);
+    } catch (err) {
+      console.error("Error downloading PDF report:", err);
+      alert('Failed to generate PDF Report.');
+    }
+  };
+
+  const exportReportToCSV = (items: LeadReportItem[]) => {
+    const headers = [
+      'Client Name',
+      'Phone Number',
+      'Requirement',
+      'Pipeline Status',
+      'Total Proposal Value (INR)',
+      'Paid Amount (INR)',
+      'Pending Balance (INR)',
+      'Payment Status',
+      'Installments Paid',
+      'Assigned Sales',
+      'Assigned Admin',
+      'Created Date'
+    ];
+
+    const rows = items.map(item => {
+      const formattedDate = item.createdAt && dayjs(item.createdAt).isValid() 
+        ? dayjs(item.createdAt).format('DD-MMM-YYYY') 
+        : 'N/A';
+
+      return [
+        `"${(item.name || '').replace(/"/g, '""')}"`,
+        `"${item.phone || ''}"`,
+        `"${(item.requirement || '').replace(/"/g, '""')}"`,
+        `"${(item.status || '').toUpperCase()}"`,
+        item.totalValue || 0,
+        item.paidAmount || 0,
+        item.pendingBalance || 0,
+        `"${item.paymentStatus || ''}"`,
+        item.installmentCount || 0,
+        `"${(item.assignedSalesName || '').replace(/"/g, '""')}"`,
+        `"${(item.assignedAdminName || '').replace(/"/g, '""')}"`,
+        formattedDate
+      ];
+    });
+
+    // Add UTF-8 BOM (\uFEFF) so Excel opens CSV in UTF-8 mode without column glitching or ##### errors
+    const csvString = [headers.join(','), ...rows.map(r => r.join(','))].join('\n');
+    const blob = new Blob(['\uFEFF' + csvString], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.setAttribute('href', url);
+    link.setAttribute('download', `Green_Energy_Leads_Financial_Report_${dayjs().format('YYYY_MM_DD')}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    setTimeout(() => URL.revokeObjectURL(url), 10000);
+  };
+
+  const handlePrintReport = () => {
+    window.print();
+  };
+
   const loadData = async () => {
     let list = await leadService.getLeads();
     if (currentRole === 'field_employee' && currentUser) {
-      list = list.filter(l => l.assignedSalesPersonId === currentUser.id || l.assignedAdminId === currentUser.id || l.assignedEmployeeId === currentUser.id);
+      list = list.filter(l => 
+        l.assignedSalesPersonId === currentUser.id || 
+        l.assignedAdminId === currentUser.id || 
+        l.assignedEmployeeId === currentUser.id ||
+        l.createdBy === currentUser.id ||
+        l.createdBy === currentUser.fullName
+      );
     }
     setLeads(list);
 
@@ -264,6 +513,12 @@ export const Leads: React.FC = () => {
       }
     });
   }, [currentRole, currentUser]);
+
+  useEffect(() => {
+    if (leads.length > 0) {
+      compileReportItems();
+    }
+  }, [leads.length]);
 
   // Helper to normalize payments list for backward compatibility
   const getPaymentsList = (oc: OrderConfirmation | null): PaymentInstallment[] => {
@@ -356,15 +611,18 @@ export const Leads: React.FC = () => {
       return;
     }
 
+    const salesId = leadAssignedSalesPersonId || (currentRole === 'field_employee' ? currentUser?.id : undefined);
+    const adminId = leadAssignedAdminId || undefined;
+
     await leadService.createLead({
       name: leadName,
       phoneNumber: leadPhone,
       email: leadEmail || undefined,
       requirement: leadRequirement,
       description: leadDescription,
-      assignedSalesPersonId: leadAssignedSalesPersonId || undefined,
-      assignedAdminId: leadAssignedAdminId || undefined,
-      assignedEmployeeId: leadAssignedSalesPersonId || leadAssignedAdminId || undefined,
+      assignedSalesPersonId: salesId,
+      assignedAdminId: adminId,
+      assignedEmployeeId: salesId || adminId,
       createdBy: currentUser?.id || 'mock_admin',
       status: 'new',
       isHot: leadIsHot,
@@ -372,6 +630,7 @@ export const Leads: React.FC = () => {
     });
 
     // Reset
+    localStorage.removeItem('draft_lead_form');
     setLeadName('');
     setLeadPhone('');
     setLeadEmail('');
@@ -2144,6 +2403,24 @@ export const Leads: React.FC = () => {
                   <Bell className="w-3.5 h-3.5" />
                   <span>🔔 Follow-up Reminders</span>
                 </button>
+
+                {currentRole !== 'field_employee' && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setMainTab('reports');
+                      handleOpenReportsModal();
+                    }}
+                    className={`px-3 py-1.5 text-xs font-bold rounded-lg transition-all cursor-pointer flex items-center gap-1.5 ${
+                      mainTab === 'reports'
+                        ? 'bg-indigo-600 text-white shadow-xs'
+                        : 'text-slate-600 hover:text-slate-900'
+                    }`}
+                  >
+                    <BarChart3 className="w-3.5 h-3.5" />
+                    <span>📊 Reports</span>
+                  </button>
+                )}
               </div>
 
               {['super_admin', 'admin', 'field_employee'].includes(currentRole) && (
@@ -2166,210 +2443,767 @@ export const Leads: React.FC = () => {
                 if (target) handleSelectLead(target);
               }}
             />
-          ) : (
-            <>
+          ) : mainTab === 'reports' ? (
+            /* In-Page Reports Summary View (No popup, No disk saves) */
+            <div className="space-y-6 animate-fade-in">
+              {/* Header & KPI Summary */}
+              <div className="bg-slate-900 text-white p-6 rounded-2xl shadow-lg border border-slate-800 flex flex-col md:flex-row md:items-center justify-between gap-6">
+                <div>
+                  <div className="flex items-center gap-2">
+                    <h2 className="text-xl font-black tracking-tight">Executive Lead Financial & Progress Summary</h2>
+                    <span className="bg-emerald-500/20 text-emerald-300 text-[10px] font-extrabold px-2.5 py-0.5 rounded-full border border-emerald-500/30">
+                      LIVE DATA
+                    </span>
+                  </div>
+                  <p className="text-xs text-slate-400 font-medium mt-1">Real-time breakdown of proposal values, collections, pending balances, and pipeline progress per client.</p>
+                </div>
+                
+                <div className="flex items-center gap-2 flex-wrap">
+                  <button
+                    type="button"
+                    onClick={() => handleDownloadReportPDF(reportItems)}
+                    className="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-xl shadow-md cursor-pointer transition-all shrink-0 flex items-center gap-1.5"
+                    title="Download Official PDF Report with Letterhead"
+                  >
+                    <Download className="w-4 h-4" />
+                    <span>Download PDF</span>
+                  </button>
 
-          {/* Filters Bar */}
-          <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-xs flex flex-col md:flex-row items-stretch md:items-center justify-between gap-3 text-xs font-bold">
-            <div className="flex-1 flex items-center space-x-3 bg-slate-50 rounded-lg p-2.5 border border-slate-100 min-w-[200px]">
-              <Search className="w-4 h-4 text-slate-400 shrink-0" />
-              <input
-                type="text"
-                placeholder="Search leads by name or phone..."
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                className="bg-transparent focus:outline-none w-full text-slate-800 font-medium"
-              />
-            </div>
+                  <button
+                    type="button"
+                    onClick={() => exportReportToCSV(reportItems)}
+                    className="px-3.5 py-2 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold rounded-xl shadow-md cursor-pointer transition-all shrink-0 flex items-center gap-1.5"
+                    title="Export Data Table to Excel CSV File"
+                  >
+                    <FileSpreadsheet className="w-4 h-4" />
+                    <span>Export Excel</span>
+                  </button>
 
-            <div className="flex flex-wrap items-center gap-2">
-              {/* Quick Hot Lead Filter Toggle Pill */}
-              <button
-                type="button"
-                onClick={() => setHotFilter(prev => prev === 'hot' ? 'all' : 'hot')}
-                className={`px-3 py-2 rounded-lg border flex items-center gap-1.5 transition-all cursor-pointer ${
-                  hotFilter === 'hot'
-                    ? 'bg-amber-500 text-white border-amber-600 shadow-xs font-black'
-                    : 'bg-amber-50 text-amber-800 border-amber-200 hover:bg-amber-100 font-bold'
-                }`}
-                title="Filter Hot Leads Only"
-              >
-                <Flame className={`w-4 h-4 ${hotFilter === 'hot' ? 'text-white fill-white' : 'text-amber-500 fill-amber-500'}`} />
-                <span>🔥 Hot Leads</span>
-                <span className={`px-1.5 py-0.2 rounded-full text-[10px] ${
-                  hotFilter === 'hot' ? 'bg-white text-amber-700 font-black' : 'bg-amber-200/80 text-amber-900 font-black'
-                }`}>
-                  {hotLeadsCount}
-                </span>
-              </button>
+                  <button
+                    type="button"
+                    onClick={handlePrintReport}
+                    className="px-3.5 py-2 bg-slate-800 hover:bg-slate-700 text-white text-xs font-bold rounded-xl border border-slate-700 cursor-pointer transition-all shrink-0 flex items-center gap-1.5"
+                    title="Print Sheet with Header Page"
+                  >
+                    <Printer className="w-4 h-4" />
+                    <span>Print Sheet</span>
+                  </button>
+                </div>
+              </div>
 
-              {/* Hot Lead Filter Select */}
-              <select
-                value={hotFilter}
-                onChange={(e) => setHotFilter(e.target.value as any)}
-                className="border border-slate-200 rounded-lg p-2.5 bg-slate-50 focus:outline-none cursor-pointer text-slate-700 font-bold"
-              >
-                <option value="all">All Lead Types</option>
-                <option value="hot">🔥 Hot Leads Only ({hotLeadsCount})</option>
-                <option value="normal">❄️ Normal Leads</option>
-              </select>
+              {/* KPI Summary Cards & Time Period Toolbar */}
+              {(() => {
+                const filteredItems = reportItems.filter(item => {
+                  const searchStr = (reportSearchTerm || '').toLowerCase().trim();
+                  const matchesSearch = !searchStr || 
+                    (item.name || '').toLowerCase().includes(searchStr) ||
+                    (item.phone || '').includes(searchStr) ||
+                    (item.requirement || '').toLowerCase().includes(searchStr);
+                  
+                  const matchesStage = !reportStageFilter || item.status === reportStageFilter;
+                  const matchesPayment = !reportPaymentFilter || item.paymentStatus === reportPaymentFilter;
 
-              <select
-                value={statusFilter}
-                onChange={(e) => setStatusFilter(e.target.value)}
-                className="border border-slate-200 rounded-lg p-2.5 bg-slate-50 focus:outline-none cursor-pointer text-slate-700"
-              >
-                <option value="">All Stages</option>
-                <option value="new">New Lead</option>
-                <option value="quotation_sent">Quotation Sent</option>
-                <option value="confirmed">Confirmed</option>
-                <option value="registered">Registered</option>
-                <option value="installed">Installed</option>
-                <option value="closed">Release Complete (Closed)</option>
-                <option value="lost">Lost</option>
-              </select>
+                  let matchesTime = true;
+                  if (item.createdAt && dayjs(item.createdAt).isValid()) {
+                    const itemDate = dayjs(item.createdAt);
+                    const now = dayjs();
 
-              {currentRole !== 'field_employee' && (
-                <select
-                  value={employeeFilter}
-                  onChange={(e) => setEmployeeFilter(e.target.value)}
-                  className="border border-slate-200 rounded-lg p-2.5 bg-slate-50 focus:outline-none cursor-pointer text-slate-700"
-                >
-                  <option value="">All Assigned Staff</option>
-                  {employees.map(emp => (
-                    <option key={emp.id} value={emp.id}>{emp.fullName}</option>
-                  ))}
-                </select>
-              )}
-            </div>
-          </div>
+                    if (reportTimeFilter === 'today') {
+                      matchesTime = itemDate.isSame(now, 'day');
+                    } else if (reportTimeFilter === 'week') {
+                      matchesTime = itemDate.isSame(now, 'week') || itemDate.isAfter(now.subtract(7, 'day'));
+                    } else if (reportTimeFilter === 'month') {
+                      matchesTime = itemDate.isSame(now, 'month');
+                    } else if (reportTimeFilter === 'year') {
+                      matchesTime = itemDate.isSame(now, 'year');
+                    } else if (reportTimeFilter === 'custom') {
+                      if (reportStartDate) {
+                        matchesTime = matchesTime && (itemDate.isSame(dayjs(reportStartDate), 'day') || itemDate.isAfter(dayjs(reportStartDate).startOf('day')));
+                      }
+                      if (reportEndDate) {
+                        matchesTime = matchesTime && (itemDate.isSame(dayjs(reportEndDate), 'day') || itemDate.isBefore(dayjs(reportEndDate).endOf('day')));
+                      }
+                    }
+                  }
 
-          {/* Leads Cards Grid */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {filteredLeads.map((lead) => {
-              const isHot = lead.isHot || (lead.clientRating && lead.clientRating >= 4);
-              const rating = lead.clientRating || (lead.isHot ? 5 : 0);
+                  return matchesSearch && matchesStage && matchesPayment && matchesTime;
+                });
 
-              return (
-                <div
-                  key={lead.id}
-                  onClick={() => handleSelectLead(lead)}
-                  className={`bg-white border ${
-                    isHot
-                      ? 'border-amber-400/90 bg-gradient-to-br from-amber-50/40 via-white to-orange-50/20 ring-1 ring-amber-300/50 shadow-xs'
-                      : 'border-slate-200'
-                  } rounded-2xl p-5 hover:shadow-md transition-all cursor-pointer relative flex flex-col justify-between min-h-52 group`}
-                >
-                  <div>
-                    {/* Header Row: Lead Name, Hot Lead Toggle/Badge, Status & Delete */}
-                    <div className="flex justify-between items-start gap-2">
-                      <div className="space-y-1">
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <h3 className="text-sm font-bold text-slate-900 group-hover:text-emerald-700 transition-colors">{lead.name}</h3>
+                const totalActiveLeads = filteredItems.length;
+                const totalPipelineValue = filteredItems.reduce((s, i) => s + i.totalValue, 0);
+                const totalCollectedValue = filteredItems.reduce((s, i) => s + i.paidAmount, 0);
+                const totalPendingValue = filteredItems.reduce((s, i) => s + i.pendingBalance, 0);
+                const totalClosed = filteredItems.filter(i => ['confirmed', 'registered', 'installed', 'closed'].includes(i.status)).length;
+                const conversionRate = totalActiveLeads > 0 ? Math.round((totalClosed / totalActiveLeads) * 100) : 0;
 
-                          {/* Hot Lead Badge / Toggle Button */}
-                          <button
-                            type="button"
-                            onClick={(e) => handleToggleHotLead(lead, e)}
-                            className={`px-2.5 py-0.5 rounded-full text-[10px] font-black flex items-center gap-1 transition-all cursor-pointer border ${
-                              isHot
-                                ? 'bg-gradient-to-r from-amber-500 to-orange-500 text-white border-amber-600 shadow-2xs hover:brightness-105'
-                                : 'bg-slate-100 text-slate-500 border-slate-200 hover:bg-amber-100 hover:text-amber-700 hover:border-amber-300'
-                            }`}
-                            title={isHot ? "Hot Lead! Click to remove Hot status" : "Click to mark as Hot Lead"}
-                          >
-                            <Flame className={`w-3.5 h-3.5 ${isHot ? 'fill-white text-white' : 'text-slate-400'}`} />
-                            <span>{isHot ? 'HOT LEAD' : 'Mark Hot'}</span>
-                          </button>
+                const stageCounts = {
+                  new: filteredItems.filter(i => i.status === 'new').length,
+                  quotation_sent: filteredItems.filter(i => i.status === 'quotation_sent').length,
+                  confirmed: filteredItems.filter(i => i.status === 'confirmed').length,
+                  registered: filteredItems.filter(i => i.status === 'registered').length,
+                  installed: filteredItems.filter(i => i.status === 'installed').length,
+                  closed: filteredItems.filter(i => i.status === 'closed').length,
+                  lost: filteredItems.filter(i => i.status === 'lost').length,
+                };
+
+                return (
+                  <div className="space-y-6">
+                    {/* Date-Range & Period Analytics Toolbar */}
+                    <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs space-y-4">
+                      <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 border-b border-slate-100 pb-4">
+                        <div className="flex items-center gap-2.5">
+                          <div className="p-2 bg-indigo-50 text-indigo-600 rounded-xl">
+                            <Calendar className="w-5 h-5" />
+                          </div>
+                          <div>
+                            <h3 className="text-xs font-black uppercase text-slate-900 tracking-wider">Date-Range Report Filter</h3>
+                            <p className="text-[11px] text-slate-400 font-medium">Select any two dates to analyze reports between that custom date range.</p>
+                          </div>
                         </div>
 
-                        <p className="text-[10px] text-slate-400 font-semibold uppercase">📞 +91 {lead.phoneNumber}</p>
-                      </div>
-
-                      <div className="flex items-center space-x-1.5 shrink-0">
-                        {getStatusBadge(lead.status)}
-                        {currentRole !== 'field_employee' && (
+                        {/* Quick Preset Buttons */}
+                        <div className="flex flex-wrap items-center gap-1.5 bg-slate-100 p-1.5 rounded-xl text-xs font-bold shrink-0">
                           <button
                             type="button"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleDeleteLead(lead.id);
+                            onClick={() => {
+                              setReportTimeFilter('all');
+                              setReportStartDate('');
+                              setReportEndDate('');
                             }}
-                            className="p-1 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer"
-                            title="Delete Lead"
+                            className={`px-3 py-1.5 rounded-lg transition-all cursor-pointer ${
+                              reportTimeFilter === 'all' && !reportStartDate && !reportEndDate
+                                ? 'bg-indigo-600 text-white shadow-xs'
+                                : 'text-slate-600 hover:text-slate-900'
+                            }`}
                           >
-                            <Trash2 className="w-3.5 h-3.5" />
+                            ⚡ All Time
                           </button>
-                        )}
-                      </div>
-                    </div>
 
-                    {/* Interactive Star Rating Row right inside Lead Card */}
-                    <div className="mt-2.5 flex items-center justify-between bg-slate-50/90 px-3 py-1.5 rounded-xl border border-slate-100">
-                      <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider flex items-center gap-1">
-                        <Star className="w-3 h-3 text-amber-500 fill-amber-500" />
-                        <span>Lead Rating:</span>
-                      </span>
-
-                      <div className="flex items-center gap-1">
-                        {[1, 2, 3, 4, 5].map((starNum) => (
                           <button
-                            key={starNum}
                             type="button"
-                            onClick={(e) => handleRatingChange(lead, starNum as any, e)}
-                            className="p-0.5 hover:scale-125 transition-transform cursor-pointer focus:outline-none"
-                            title={`Set rating ${starNum} star${starNum > 1 ? 's' : ''}${starNum >= 4 ? ' (Marks as Hot Lead)' : ''}`}
+                            onClick={() => {
+                              const todayStr = dayjs().format('YYYY-MM-DD');
+                              setReportTimeFilter('today');
+                              setReportStartDate(todayStr);
+                              setReportEndDate(todayStr);
+                            }}
+                            className={`px-3 py-1.5 rounded-lg transition-all cursor-pointer ${
+                              reportTimeFilter === 'today'
+                                ? 'bg-indigo-600 text-white shadow-xs'
+                                : 'text-slate-600 hover:text-slate-900'
+                            }`}
                           >
-                            <Star
-                              className={`w-4 h-4 ${
-                                starNum <= rating
-                                  ? 'text-amber-400 fill-amber-400 drop-shadow-2xs'
-                                  : 'text-slate-300 hover:text-amber-300'
-                              }`}
-                            />
+                            📅 Today
                           </button>
-                        ))}
+
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setReportTimeFilter('week');
+                              setReportStartDate(dayjs().subtract(7, 'day').format('YYYY-MM-DD'));
+                              setReportEndDate(dayjs().format('YYYY-MM-DD'));
+                            }}
+                            className={`px-3 py-1.5 rounded-lg transition-all cursor-pointer ${
+                              reportTimeFilter === 'week'
+                                ? 'bg-indigo-600 text-white shadow-xs'
+                                : 'text-slate-600 hover:text-slate-900'
+                            }`}
+                          >
+                            🗓️ Last 7 Days
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setReportTimeFilter('month');
+                              setReportStartDate(dayjs().startOf('month').format('YYYY-MM-DD'));
+                              setReportEndDate(dayjs().format('YYYY-MM-DD'));
+                            }}
+                            className={`px-3 py-1.5 rounded-lg transition-all cursor-pointer ${
+                              reportTimeFilter === 'month'
+                                ? 'bg-indigo-600 text-white shadow-xs'
+                                : 'text-slate-600 hover:text-slate-900'
+                            }`}
+                          >
+                            📆 This Month
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setReportTimeFilter('year');
+                              setReportStartDate(dayjs().startOf('year').format('YYYY-MM-DD'));
+                              setReportEndDate(dayjs().format('YYYY-MM-DD'));
+                            }}
+                            className={`px-3 py-1.5 rounded-lg transition-all cursor-pointer ${
+                              reportTimeFilter === 'year'
+                                ? 'bg-indigo-600 text-white shadow-xs'
+                                : 'text-slate-600 hover:text-slate-900'
+                            }`}
+                          >
+                            🏆 This Year
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* Direct Two-Date Selectors (From Date & To Date) */}
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 text-xs font-bold bg-slate-50 p-3 rounded-xl border border-slate-200">
+                        <div className="flex flex-wrap items-center gap-3 w-full sm:w-auto">
+                          <div className="flex items-center gap-2 bg-white px-3 py-1.5 rounded-xl border border-slate-200 shadow-2xs">
+                            <span className="text-slate-500 uppercase text-[10px] font-extrabold tracking-wider">From Date:</span>
+                            <input
+                              type="date"
+                              value={reportStartDate}
+                              onChange={(e) => {
+                                setReportStartDate(e.target.value);
+                                setReportTimeFilter('custom');
+                              }}
+                              className="font-bold text-slate-800 focus:outline-none cursor-pointer"
+                            />
+                          </div>
+
+                          <div className="flex items-center gap-2 bg-white px-3 py-1.5 rounded-xl border border-slate-200 shadow-2xs">
+                            <span className="text-slate-500 uppercase text-[10px] font-extrabold tracking-wider">To Date:</span>
+                            <input
+                              type="date"
+                              value={reportEndDate}
+                              onChange={(e) => {
+                                setReportEndDate(e.target.value);
+                                setReportTimeFilter('custom');
+                              }}
+                              className="font-bold text-slate-800 focus:outline-none cursor-pointer"
+                            />
+                          </div>
+
+                          {(reportStartDate || reportEndDate) && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setReportTimeFilter('all');
+                                setReportStartDate('');
+                                setReportEndDate('');
+                              }}
+                              className="px-3 py-1.5 bg-rose-50 hover:bg-rose-100 text-rose-700 rounded-xl text-xs font-extrabold transition-colors cursor-pointer border border-rose-200"
+                            >
+                              Reset Dates
+                            </button>
+                          )}
+                        </div>
+
+                        {/* Active Date Range Banner */}
+                        <div className="text-right">
+                          <span className="inline-flex items-center px-3 py-1 rounded-full text-[11px] font-black bg-indigo-100 text-indigo-800 border border-indigo-200">
+                            {(reportStartDate || reportEndDate) 
+                              ? `📅 Filtered: ${reportStartDate ? dayjs(reportStartDate).format('DD-MMM-YYYY') : 'Start'} to ${reportEndDate ? dayjs(reportEndDate).format('DD-MMM-YYYY') : 'Today'}`
+                              : '⚡ Report Range: All Time History'}
+                          </span>
+                        </div>
                       </div>
                     </div>
 
-                    <div className="mt-3 p-2 bg-slate-50 border border-slate-100 rounded-lg text-xs font-semibold text-slate-700">
-                      {lead.requirement}
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                      <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs">
+                        <span className="text-[11px] uppercase font-bold text-slate-400 block tracking-wider">Total Active Leads</span>
+                        <div className="flex items-baseline justify-between mt-1">
+                          <h3 className="text-2xl font-black text-slate-900">{totalActiveLeads}</h3>
+                          <span className="text-xs font-extrabold text-indigo-700 bg-indigo-50 px-2.5 py-0.5 rounded-full border border-indigo-200">
+                            {conversionRate}% Success Rate
+                          </span>
+                        </div>
+                      </div>
+
+                      <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs">
+                        <span className="text-[11px] uppercase font-bold text-slate-400 block tracking-wider">Total Proposals Value</span>
+                        <h3 className="text-2xl font-black text-slate-800 mt-1">₹{totalPipelineValue.toLocaleString('en-IN')}</h3>
+                      </div>
+
+                      <div className="bg-white p-5 rounded-2xl border-l-4 border-l-emerald-500 border-y border-r border-slate-200 shadow-xs">
+                        <span className="text-[11px] uppercase font-bold text-emerald-700 block tracking-wider">Payments Collected</span>
+                        <h3 className="text-2xl font-black text-emerald-600 mt-1">₹{totalCollectedValue.toLocaleString('en-IN')}</h3>
+                      </div>
+
+                      <div className="bg-white p-5 rounded-2xl border-l-4 border-l-amber-500 border-y border-r border-slate-200 shadow-xs">
+                        <span className="text-[11px] uppercase font-bold text-amber-700 block tracking-wider">Outstanding Pending Balance</span>
+                        <h3 className="text-2xl font-black text-amber-600 mt-1">₹{totalPendingValue.toLocaleString('en-IN')}</h3>
+                      </div>
                     </div>
-                    <p className="text-xs text-slate-400 mt-2 line-clamp-2">{lead.description}</p>
+
+                    {/* Pipeline Stage Counts Bar */}
+                    <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs space-y-3">
+                      <h4 className="text-xs font-extrabold uppercase text-slate-500 tracking-wider">Pipeline Stage Milestones Breakdown</h4>
+                      <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-7 gap-2.5 text-center text-xs">
+                        <div className="bg-slate-50 p-3 rounded-xl border border-slate-200">
+                          <span className="block text-[10px] font-bold text-slate-400 uppercase">New Leads</span>
+                          <span className="text-lg font-black text-slate-800 mt-0.5 block">{stageCounts.new}</span>
+                        </div>
+                        <div className="bg-blue-50 p-3 rounded-xl border border-blue-200">
+                          <span className="block text-[10px] font-bold text-blue-500 uppercase">Quotations</span>
+                          <span className="text-lg font-black text-blue-700 mt-0.5 block">{stageCounts.quotation_sent}</span>
+                        </div>
+                        <div className="bg-violet-50 p-3 rounded-xl border border-violet-200">
+                          <span className="block text-[10px] font-bold text-violet-500 uppercase">Confirmed</span>
+                          <span className="text-lg font-black text-violet-700 mt-0.5 block">{stageCounts.confirmed}</span>
+                        </div>
+                        <div className="bg-indigo-50 p-3 rounded-xl border border-indigo-200">
+                          <span className="block text-[10px] font-bold text-indigo-500 uppercase">Registered</span>
+                          <span className="text-lg font-black text-indigo-700 mt-0.5 block">{stageCounts.registered}</span>
+                        </div>
+                        <div className="bg-teal-50 p-3 rounded-xl border border-teal-200">
+                          <span className="block text-[10px] font-bold text-teal-500 uppercase">Installed</span>
+                          <span className="text-lg font-black text-teal-700 mt-0.5 block">{stageCounts.installed}</span>
+                        </div>
+                        <div className="bg-emerald-50 p-3 rounded-xl border border-emerald-200">
+                          <span className="block text-[10px] font-bold text-emerald-500 uppercase">Closed / Released</span>
+                          <span className="text-lg font-black text-emerald-700 mt-0.5 block">{stageCounts.closed}</span>
+                        </div>
+                        <div className="bg-rose-50 p-3 rounded-xl border border-rose-200">
+                          <span className="block text-[10px] font-bold text-rose-500 uppercase">Lost</span>
+                          <span className="text-lg font-black text-rose-700 mt-0.5 block">{stageCounts.lost}</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Filter & Search Controls */}
+                    <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs flex flex-col md:flex-row items-center justify-between gap-3 text-xs font-bold">
+                      <div className="relative w-full md:w-80">
+                        <Search className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
+                        <input
+                          type="text"
+                          placeholder="Search client by name or phone..."
+                          value={reportSearchTerm}
+                          onChange={(e) => setReportSearchTerm(e.target.value)}
+                          className="w-full pl-9 pr-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-semibold focus:outline-none focus:border-indigo-500"
+                        />
+                      </div>
+
+                      <div className="flex flex-wrap items-center gap-2 w-full md:w-auto">
+                        <select
+                          value={reportStageFilter}
+                          onChange={(e) => setReportStageFilter(e.target.value)}
+                          className="px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl font-bold text-slate-700 focus:outline-none cursor-pointer"
+                        >
+                          <option value="">All Pipeline Stages</option>
+                          <option value="new">New Lead</option>
+                          <option value="quotation_sent">Quotation Sent</option>
+                          <option value="confirmed">Confirmed</option>
+                          <option value="registered">Registered</option>
+                          <option value="installed">Installed</option>
+                          <option value="closed">Closed</option>
+                          <option value="lost">Lost</option>
+                        </select>
+
+                        <select
+                          value={reportPaymentFilter}
+                          onChange={(e) => setReportPaymentFilter(e.target.value)}
+                          className="px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl font-bold text-slate-700 focus:outline-none cursor-pointer"
+                        >
+                          <option value="">All Payment Statuses</option>
+                          <option value="Fully Paid">Fully Paid</option>
+                          <option value="Partially Paid">Partially Paid</option>
+                          <option value="Pending">Pending Payment</option>
+                          <option value="No Quote">No Quotation</option>
+                        </select>
+                      </div>
+                    </div>
+
+                    {/* Financial Summary Client List Table */}
+                    <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden shadow-xs">
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-left text-xs">
+                          <thead className="bg-slate-900 text-white font-extrabold uppercase text-[10px] tracking-wider">
+                            <tr>
+                              <th className="py-3.5 px-4">Client Name & Phone</th>
+                              <th className="py-3.5 px-4">Requirement</th>
+                              <th className="py-3.5 px-4">Pipeline Status</th>
+                              <th className="py-3.5 px-4 text-right">Contract Value (₹)</th>
+                              <th className="py-3.5 px-4 text-right">Amount Paid (₹)</th>
+                              <th className="py-3.5 px-4 text-right">Pending Balance (₹)</th>
+                              <th className="py-3.5 px-4 text-center">Payment Status</th>
+                              <th className="py-3.5 px-4">Assigned Staff</th>
+                              <th className="py-3.5 px-4 text-center">Action</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-slate-100 font-semibold text-slate-700">
+                            {filteredItems.map((item) => (
+                              <tr key={item.leadId} className="hover:bg-slate-50 transition-colors">
+                                <td className="py-3.5 px-4">
+                                  <span className="font-extrabold text-slate-900 block">{item.name}</span>
+                                  <span className="text-[10px] text-slate-400 font-medium">📞 +91 {item.phone}</span>
+                                </td>
+                                <td className="py-3.5 px-4 max-w-[180px] truncate text-slate-600" title={item.requirement}>
+                                  {item.requirement}
+                                </td>
+                                <td className="py-3.5 px-4">
+                                  {renderStatusBadge(item.status)}
+                                </td>
+                                <td className="py-3.5 px-4 text-right font-bold text-slate-800">
+                                  ₹{item.totalValue.toLocaleString('en-IN')}
+                                </td>
+                                <td className="py-3.5 px-4 text-right font-black text-emerald-600">
+                                  ₹{item.paidAmount.toLocaleString('en-IN')}
+                                  {item.installmentCount > 0 && (
+                                    <span className="text-[9px] font-bold text-slate-400 block">
+                                      ({item.installmentCount} payment{item.installmentCount > 1 ? 's' : ''})
+                                    </span>
+                                  )}
+                                </td>
+                                <td className={`py-3.5 px-4 text-right font-black ${item.pendingBalance > 0 ? 'text-amber-600' : 'text-slate-400'}`}>
+                                  ₹{item.pendingBalance.toLocaleString('en-IN')}
+                                </td>
+                                <td className="py-3.5 px-4 text-center">
+                                  <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-[10px] font-extrabold ${
+                                    item.paymentStatus === 'Fully Paid' ? 'bg-emerald-100 text-emerald-800 border border-emerald-200' :
+                                    item.paymentStatus === 'Partially Paid' ? 'bg-blue-100 text-blue-800 border border-blue-200' :
+                                    item.paymentStatus === 'Pending' ? 'bg-amber-100 text-amber-800 border border-amber-200' :
+                                    'bg-slate-100 text-slate-600'
+                                  }`}>
+                                    {item.paymentStatus}
+                                  </span>
+                                </td>
+                                <td className="py-3.5 px-4 text-[10px] text-slate-500 space-y-0.5">
+                                  <div>👤 Sales: <span className="font-bold text-slate-700">{item.assignedSalesName}</span></div>
+                                  <div>🏢 Admin: <span className="font-bold text-slate-700">{item.assignedAdminName}</span></div>
+                                </td>
+                                <td className="py-3.5 px-4 text-center">
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      const target = leads.find(l => l.id === item.leadId);
+                                      if (target) {
+                                        setMainTab('pipeline');
+                                        handleSelectLead(target);
+                                      }
+                                    }}
+                                    className="px-2.5 py-1 bg-slate-100 hover:bg-emerald-50 text-slate-700 hover:text-emerald-700 border border-slate-200 rounded-lg text-[10px] font-extrabold cursor-pointer transition-colors"
+                                  >
+                                    👁️ Stepper
+                                  </button>
+                                </td>
+                              </tr>
+                            ))}
+
+                            {filteredItems.length === 0 && (
+                              <tr>
+                                <td colSpan={9} className="py-12 text-center text-slate-400 italic">
+                                  No client entries matching the current search and filters.
+                                </td>
+                              </tr>
+                            )}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })()}
+            </div>
+          ) : (() => {
+            const pendingBalanceLeadsCount = leads.filter(l => {
+              const fin = leadFinancialMap[l.id];
+              return fin && fin.pendingBalance > 0;
+            }).length;
+
+            const filteredLeads = leads.filter(lead => {
+              const matchesSearch = !searchTerm || 
+                lead.name.toLowerCase().includes(searchTerm.toLowerCase()) || 
+                lead.phoneNumber.includes(searchTerm) ||
+                (lead.requirement || '').toLowerCase().includes(searchTerm.toLowerCase());
+
+              const matchesStatus = !statusFilter || lead.status === statusFilter;
+              const matchesEmployee = !employeeFilter || 
+                lead.assignedSalesPersonId === employeeFilter || 
+                lead.assignedAdminId === employeeFilter ||
+                lead.assignedEmployeeId === employeeFilter;
+
+              const isHot = lead.isHot || (lead.clientRating && lead.clientRating >= 4);
+              const matchesHot = hotFilter === 'all' || 
+                (hotFilter === 'hot' && isHot) || 
+                (hotFilter === 'normal' && !isHot);
+
+              const fin = leadFinancialMap[lead.id];
+              let matchesBalance = true;
+              if (balanceFilter === 'pending') {
+                matchesBalance = !!fin && fin.pendingBalance > 0;
+              } else if (balanceFilter === 'partially_paid') {
+                matchesBalance = !!fin && fin.paidAmount > 0 && fin.pendingBalance > 0;
+              } else if (balanceFilter === 'fully_paid') {
+                matchesBalance = !!fin && fin.paymentStatus === 'Fully Paid';
+              } else if (balanceFilter === 'no_quote') {
+                matchesBalance = !fin || fin.paymentStatus === 'No Quote';
+              }
+
+              return matchesSearch && matchesStatus && matchesEmployee && matchesHot && matchesBalance;
+            });
+
+            return (
+              <>
+                {/* Filters Bar */}
+                <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-xs flex flex-col md:flex-row items-stretch md:items-center justify-between gap-3 text-xs font-bold">
+                  <div className="flex-1 flex items-center space-x-3 bg-slate-50 rounded-lg p-2.5 border border-slate-100 min-w-[200px]">
+                    <Search className="w-4 h-4 text-slate-400 shrink-0" />
+                    <input
+                      type="text"
+                      placeholder="Search leads by name or phone..."
+                      value={searchTerm}
+                      onChange={(e) => setSearchTerm(e.target.value)}
+                      className="bg-transparent focus:outline-none w-full text-slate-800 font-medium"
+                    />
                   </div>
 
-                  <div className="mt-4 pt-4 border-t border-slate-100 flex flex-wrap justify-between items-center text-[10px] text-slate-500 font-bold gap-2">
-                    <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-                      <span className="inline-flex items-center gap-1 text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-100">
-                        💼 Sales: {employeeNames[lead.assignedSalesPersonId || lead.assignedEmployeeId || ''] || 'Unassigned'}
+                  <div className="flex flex-wrap items-center gap-2">
+                    {/* Quick Hot Lead Filter Toggle Pill */}
+                    <button
+                      type="button"
+                      onClick={() => setHotFilter(prev => prev === 'hot' ? 'all' : 'hot')}
+                      className={`px-3 py-2 rounded-lg border flex items-center gap-1.5 transition-all cursor-pointer ${
+                        hotFilter === 'hot'
+                          ? 'bg-amber-500 text-white border-amber-600 shadow-xs font-black'
+                          : 'bg-amber-50 text-amber-800 border-amber-200 hover:bg-amber-100 font-bold'
+                      }`}
+                      title="Filter Hot Leads Only"
+                    >
+                      <Flame className={`w-4 h-4 ${hotFilter === 'hot' ? 'text-white fill-white' : 'text-amber-500 fill-amber-500'}`} />
+                      <span>🔥 Hot Leads</span>
+                      <span className={`px-1.5 py-0.2 rounded-full text-[10px] ${
+                        hotFilter === 'hot' ? 'bg-white text-amber-700 font-black' : 'bg-amber-200/80 text-amber-900 font-black'
+                      }`}>
+                        {hotLeadsCount}
                       </span>
-                      <span className="inline-flex items-center gap-1 text-indigo-700 bg-indigo-50 px-2 py-0.5 rounded border border-indigo-100">
-                        🏢 Admin: {employeeNames[lead.assignedAdminId || ''] || 'Unassigned'}
+                    </button>
+
+                    {/* Quick Remaining Balance Filter Toggle Pill */}
+                    <button
+                      type="button"
+                      onClick={() => setBalanceFilter(prev => prev === 'pending' ? 'all' : 'pending')}
+                      className={`px-3 py-2 rounded-lg border flex items-center gap-1.5 transition-all cursor-pointer ${
+                        balanceFilter === 'pending'
+                          ? 'bg-rose-600 text-white border-rose-700 shadow-xs font-black'
+                          : 'bg-rose-50 text-rose-800 border-rose-200 hover:bg-rose-100 font-bold'
+                      }`}
+                      title="Filter Clients with Remaining Pending Balance"
+                    >
+                      <Wallet className={`w-4 h-4 ${balanceFilter === 'pending' ? 'text-white' : 'text-rose-600'}`} />
+                      <span>⏳ Pending Balance</span>
+                      <span className={`px-1.5 py-0.2 rounded-full text-[10px] ${
+                        balanceFilter === 'pending' ? 'bg-white text-rose-700 font-black' : 'bg-rose-200/80 text-rose-900 font-black'
+                      }`}>
+                        {pendingBalanceLeadsCount}
                       </span>
-                    </div>
-                    <span className="shrink-0 text-slate-400">{dayjs(lead.createdAt).format('DD MMM YYYY')}</span>
+                    </button>
+
+                    {/* Remaining Balance Filter Select */}
+                    <select
+                      value={balanceFilter}
+                      onChange={(e) => setBalanceFilter(e.target.value as any)}
+                      className="border border-slate-200 rounded-lg p-2.5 bg-slate-50 focus:outline-none cursor-pointer text-slate-700 font-bold"
+                    >
+                      <option value="all">All Payment Statuses</option>
+                      <option value="pending">⏳ Pending Balance (&gt; ₹0) ({pendingBalanceLeadsCount})</option>
+                      <option value="partially_paid">💳 Partially Paid</option>
+                      <option value="fully_paid">✅ Fully Paid</option>
+                      <option value="no_quote">📄 No Quotation Yet</option>
+                    </select>
+
+                    <select
+                      value={statusFilter}
+                      onChange={(e) => setStatusFilter(e.target.value)}
+                      className="border border-slate-200 rounded-lg p-2.5 bg-slate-50 focus:outline-none cursor-pointer text-slate-700"
+                    >
+                      <option value="">All Stages</option>
+                      <option value="new">New Lead</option>
+                      <option value="quotation_sent">Quotation Sent</option>
+                      <option value="confirmed">Confirmed</option>
+                      <option value="registered">Registered</option>
+                      <option value="installed">Installed</option>
+                      <option value="closed">Release Complete (Closed)</option>
+                      <option value="lost">Lost</option>
+                    </select>
+
+                    {currentRole !== 'field_employee' && (
+                      <select
+                        value={employeeFilter}
+                        onChange={(e) => setEmployeeFilter(e.target.value)}
+                        className="border border-slate-200 rounded-lg p-2.5 bg-slate-50 focus:outline-none cursor-pointer text-slate-700"
+                      >
+                        <option value="">All Assigned Staff</option>
+                        {employees.map(emp => (
+                          <option key={emp.id} value={emp.id}>{emp.fullName}</option>
+                        ))}
+                      </select>
+                    )}
                   </div>
                 </div>
-              );
-            })}
 
-            {filteredLeads.length === 0 && (
-              <div className="col-span-full bg-white border border-slate-200 text-center py-12 rounded-2xl">
-                <Compass className="w-8 h-8 text-slate-300 mx-auto mb-2" />
-                <p className="text-xs text-slate-400 font-bold">No leads found matching details.</p>
-              </div>
-            )}
-          </div>
-        </>
+                {/* Leads Cards Grid */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {filteredLeads.map((lead) => {
+                    const isHot = lead.isHot || (lead.clientRating && lead.clientRating >= 4);
+                    const rating = lead.clientRating || (lead.isHot ? 5 : 0);
+                    const fin = leadFinancialMap[lead.id];
+
+                    return (
+                      <div
+                        key={lead.id}
+                        onClick={() => handleSelectLead(lead)}
+                        className={`bg-white border ${
+                          isHot
+                            ? 'border-amber-400/90 bg-gradient-to-br from-amber-50/40 via-white to-orange-50/20 ring-1 ring-amber-300/50 shadow-xs'
+                            : 'border-slate-200'
+                        } rounded-2xl p-5 hover:shadow-md transition-all cursor-pointer relative flex flex-col justify-between min-h-52 group`}
+                      >
+                        <div>
+                          {/* Header Row: Lead Name, Hot Lead Toggle/Badge, Status & Delete */}
+                          <div className="flex justify-between items-start gap-2">
+                            <div className="space-y-1">
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <h3 className="text-sm font-bold text-slate-900 group-hover:text-emerald-700 transition-colors">{lead.name}</h3>
+
+                                {/* Hot Lead Badge / Toggle Button */}
+                                <button
+                                  type="button"
+                                  onClick={(e) => handleToggleHotLead(lead, e)}
+                                  className={`px-2.5 py-0.5 rounded-full text-[10px] font-black flex items-center gap-1 transition-all cursor-pointer border ${
+                                    isHot
+                                      ? 'bg-gradient-to-r from-amber-500 to-orange-500 text-white border-amber-600 shadow-2xs hover:brightness-105'
+                                      : 'bg-slate-100 text-slate-500 border-slate-200 hover:bg-amber-100 hover:text-amber-700 hover:border-amber-300'
+                                  }`}
+                                  title={isHot ? "Hot Lead! Click to remove Hot status" : "Click to mark as Hot Lead"}
+                                >
+                                  <Flame className={`w-3.5 h-3.5 ${isHot ? 'fill-white text-white' : 'text-slate-400'}`} />
+                                  <span>{isHot ? 'HOT LEAD' : 'Mark Hot'}</span>
+                                </button>
+                              </div>
+
+                              <p className="text-[10px] text-slate-400 font-semibold uppercase">📞 +91 {lead.phoneNumber}</p>
+                            </div>
+
+                            <div className="flex items-center space-x-1.5 shrink-0">
+                              {getStatusBadge(lead.status)}
+                              {currentRole !== 'field_employee' && (
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleDeleteLead(lead.id);
+                                  }}
+                                  className="p-1 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer"
+                                  title="Delete Lead"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              )}
+                            </div>
+                          </div>
+
+                          {/* Interactive Star Rating Row right inside Lead Card */}
+                          <div className="mt-2.5 flex items-center justify-between bg-slate-50/90 px-3 py-1.5 rounded-xl border border-slate-100">
+                            <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider flex items-center gap-1">
+                              <Star className="w-3 h-3 text-amber-500 fill-amber-500" />
+                              <span>Lead Rating:</span>
+                            </span>
+
+                            <div className="flex items-center gap-1">
+                              {[1, 2, 3, 4, 5].map((starNum) => (
+                                <button
+                                  key={starNum}
+                                  type="button"
+                                  onClick={(e) => handleRatingChange(lead, starNum as any, e)}
+                                  className="p-0.5 hover:scale-125 transition-transform cursor-pointer focus:outline-none"
+                                  title={`Set rating ${starNum} star${starNum > 1 ? 's' : ''}${starNum >= 4 ? ' (Marks as Hot Lead)' : ''}`}
+                                >
+                                  <Star
+                                    className={`w-4 h-4 ${
+                                      starNum <= rating
+                                        ? 'text-amber-400 fill-amber-400 drop-shadow-2xs'
+                                        : 'text-slate-300 hover:text-amber-300'
+                                    }`}
+                                  />
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+
+                          <div className="mt-3 p-2 bg-slate-50 border border-slate-100 rounded-lg text-xs font-semibold text-slate-700">
+                            {lead.requirement}
+                          </div>
+                          <p className="text-xs text-slate-400 mt-2 line-clamp-2">{lead.description}</p>
+
+                          {/* Prominent Financial & Remaining Pending Balance Box inside Card */}
+                          {fin && (fin.totalValue > 0 || fin.paidAmount > 0) ? (
+                            <div className="mt-3 p-3 bg-slate-900 text-white rounded-xl border border-slate-800 space-y-1.5 shadow-2xs">
+                              <div className="flex items-center justify-between text-xs">
+                                <span className="text-slate-400 font-bold">Total Contract:</span>
+                                <span className="font-black text-white">₹{fin.totalValue.toLocaleString('en-IN')}</span>
+                              </div>
+
+                              <div className="flex items-center justify-between text-xs">
+                                <span className="text-emerald-400 font-bold">Amount Paid:</span>
+                                <span className="font-black text-emerald-400">
+                                  ₹{fin.paidAmount.toLocaleString('en-IN')}
+                                  {fin.installmentCount > 0 && (
+                                    <span className="text-[9px] font-medium text-slate-400 ml-1">({fin.installmentCount} pay)</span>
+                                  )}
+                                </span>
+                              </div>
+
+                              <div className="flex items-center justify-between text-xs pt-1.5 border-t border-slate-800">
+                                <span className="text-amber-400 font-black uppercase text-[10px] tracking-wider flex items-center gap-1">
+                                  <Wallet className="w-3.5 h-3.5 text-amber-400" />
+                                  <span>Remaining Pending Balance:</span>
+                                </span>
+                                <span className={`font-black text-sm ${fin.pendingBalance > 0 ? 'text-amber-400' : 'text-emerald-400'}`}>
+                                  ₹{fin.pendingBalance.toLocaleString('en-IN')}
+                                </span>
+                              </div>
+                            </div>
+                          ) : (
+                            <div className="mt-3 p-2 px-3 bg-slate-50 border border-slate-200 rounded-xl flex items-center justify-between text-[11px] font-semibold text-slate-400">
+                              <span>💰 Payment Status:</span>
+                              <span className="italic font-bold text-slate-500">No Quotation Created Yet</span>
+                            </div>
+                          )}
+                        </div>
+
+                        <div className="mt-4 pt-4 border-t border-slate-100 flex flex-wrap justify-between items-center text-[10px] text-slate-500 font-bold gap-2">
+                          <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                            <span className="inline-flex items-center gap-1 text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-100">
+                              💼 Sales: {employeeNames[lead.assignedSalesPersonId || lead.assignedEmployeeId || ''] || 'Unassigned'}
+                            </span>
+                            <span className="inline-flex items-center gap-1 text-indigo-700 bg-indigo-50 px-2 py-0.5 rounded border border-indigo-100">
+                              🏢 Admin: {employeeNames[lead.assignedAdminId || ''] || 'Unassigned'}
+                            </span>
+                          </div>
+                          <span className="shrink-0 text-slate-400">{dayjs(lead.createdAt).format('DD MMM YYYY')}</span>
+                        </div>
+                      </div>
+                    );
+                  })}
+
+                  {filteredLeads.length === 0 && (
+                    <div className="col-span-1 md:col-span-2 py-16 text-center text-slate-400 italic bg-white rounded-2xl border border-slate-200">
+                      No lead records found matching the current search, stage, and remaining balance filters.
+                    </div>
+                  )}
+                </div>
+              </>
+            );
+          })()}
+        </div>
       )}
-    </div>
-  )}
 
       {/* New Lead Modal popup */}
       {showCreateModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 backdrop-blur-xs">
           <div className="bg-white rounded-2xl border border-slate-200 shadow-xl w-full max-w-md p-6 m-4 animate-scale-in">
-            <h3 className="text-lg font-black text-slate-900 mb-4">Create Lead Entry</h3>
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-black text-slate-900">Create Lead Entry</h3>
+              {hasLeadDraftRestored && (
+                <span className="px-2.5 py-1 rounded-lg bg-amber-50 text-amber-800 border border-amber-200 text-[10px] font-extrabold flex items-center gap-1 shadow-2xs">
+                  <Sparkles className="w-3 h-3 text-amber-600" />
+                  <span>Draft Auto-Restored</span>
+                </span>
+              )}
+            </div>
             <form onSubmit={handleCreateLead} className="space-y-4 text-xs font-semibold">
               <div>
                 <label className="block text-slate-500 mb-1">Lead Name</label>
@@ -2496,20 +3330,32 @@ export const Leads: React.FC = () => {
                 </div>
               </div>
 
-              <div className="flex justify-end gap-2 pt-4 border-t border-slate-100">
+              <div className="flex items-center justify-between pt-4 border-t border-slate-100">
                 <button
                   type="button"
-                  onClick={() => setShowCreateModal(false)}
-                  className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-xl font-bold cursor-pointer"
+                  onClick={handleClearLeadFormData}
+                  className="px-3 py-2 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 rounded-xl font-extrabold text-[11px] cursor-pointer flex items-center gap-1.5 transition-colors"
+                  title="Clear all entered fields and wipe saved draft"
                 >
-                  Cancel
+                  <RotateCcw className="w-3.5 h-3.5" />
+                  <span>Clear Form Data</span>
                 </button>
-                <button
-                  type="submit"
-                  className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white rounded-xl font-bold cursor-pointer"
-                >
-                  Save Lead
-                </button>
+
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setShowCreateModal(false)}
+                    className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-xl font-bold cursor-pointer"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white rounded-xl font-bold cursor-pointer shadow-xs"
+                  >
+                    Save Lead
+                  </button>
+                </div>
               </div>
             </form>
           </div>
@@ -2576,6 +3422,343 @@ export const Leads: React.FC = () => {
           </div>
         </div>
       )}
+
+      {/* Executive Financial & Pipeline Analytics Report Modal */}
+      {currentRole !== 'field_employee' && showReportModal && (() => {
+        const filteredReportItems = reportItems.filter(item => {
+          const searchStr = (reportSearchTerm || '').toLowerCase().trim();
+          const matchesSearch = !searchStr || 
+            (item.name || '').toLowerCase().includes(searchStr) ||
+            (item.phone || '').includes(searchStr) ||
+            (item.requirement || '').toLowerCase().includes(searchStr);
+          
+          const matchesStage = !reportStageFilter || item.status === reportStageFilter;
+          const matchesPayment = !reportPaymentFilter || item.paymentStatus === reportPaymentFilter;
+
+          let matchesTime = true;
+          if (item.createdAt && dayjs(item.createdAt).isValid()) {
+            const itemDate = dayjs(item.createdAt);
+            const now = dayjs();
+
+            if (reportTimeFilter === 'today') {
+              matchesTime = itemDate.isSame(now, 'day');
+            } else if (reportTimeFilter === 'week') {
+              matchesTime = itemDate.isSame(now, 'week') || itemDate.isAfter(now.subtract(7, 'day'));
+            } else if (reportTimeFilter === 'month') {
+              matchesTime = itemDate.isSame(now, 'month');
+            } else if (reportTimeFilter === 'year') {
+              matchesTime = itemDate.isSame(now, 'year');
+            } else if (reportTimeFilter === 'custom') {
+              if (reportStartDate) {
+                matchesTime = matchesTime && (itemDate.isSame(dayjs(reportStartDate), 'day') || itemDate.isAfter(dayjs(reportStartDate).startOf('day')));
+              }
+              if (reportEndDate) {
+                matchesTime = matchesTime && (itemDate.isSame(dayjs(reportEndDate), 'day') || itemDate.isBefore(dayjs(reportEndDate).endOf('day')));
+              }
+            }
+          }
+
+          return matchesSearch && matchesStage && matchesPayment && matchesTime;
+        });
+
+        const totalActiveLeads = reportItems.length;
+        const totalPipelineValue = reportItems.reduce((s, i) => s + i.totalValue, 0);
+        const totalCollectedValue = reportItems.reduce((s, i) => s + i.paidAmount, 0);
+        const totalPendingValue = reportItems.reduce((s, i) => s + i.pendingBalance, 0);
+        const totalClosed = reportItems.filter(i => ['confirmed', 'registered', 'installed', 'closed'].includes(i.status)).length;
+        const conversionRate = totalActiveLeads > 0 ? Math.round((totalClosed / totalActiveLeads) * 100) : 0;
+
+        const stageCounts = {
+          new: reportItems.filter(i => i.status === 'new').length,
+          quotation_sent: reportItems.filter(i => i.status === 'quotation_sent').length,
+          confirmed: reportItems.filter(i => i.status === 'confirmed').length,
+          registered: reportItems.filter(i => i.status === 'registered').length,
+          installed: reportItems.filter(i => i.status === 'installed').length,
+          closed: reportItems.filter(i => i.status === 'closed').length,
+          lost: reportItems.filter(i => i.status === 'lost').length,
+        };
+
+        return (
+          <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-slate-950/80 backdrop-blur-md p-2 sm:p-4 animate-in fade-in zoom-in-95 duration-200">
+            <div className="bg-white rounded-2xl w-full max-w-7xl max-h-[92vh] flex flex-col shadow-2xl overflow-hidden border border-slate-700">
+              
+              {/* Modal Header */}
+              <div className="bg-slate-900 text-white px-6 py-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-800 shrink-0">
+                <div className="flex items-center gap-3">
+                  <div className="bg-indigo-600/30 p-2 rounded-xl border border-indigo-500/40 text-indigo-400">
+                    <BarChart3 className="w-6 h-6" />
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <h2 className="text-lg font-black tracking-tight text-white">Lead Financial & Pipeline Analytics Report</h2>
+                      <span className="bg-emerald-500/20 text-emerald-300 text-[10px] font-extrabold px-2 py-0.5 rounded-full border border-emerald-500/30">
+                        LIVE REPORT
+                      </span>
+                    </div>
+                    <p className="text-xs text-slate-400 font-medium">Real-time payment tracking, contract values, and stage milestone report.</p>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2 flex-wrap">
+                  <button
+                    type="button"
+                    onClick={() => handleDownloadReportPDF(filteredReportItems)}
+                    className="px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-extrabold flex items-center gap-1.5 transition-all cursor-pointer shadow-sm"
+                    title="Download Official PDF Report with Letterhead"
+                  >
+                    <Download className="w-4 h-4" />
+                    <span>Download PDF</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => exportReportToCSV(filteredReportItems)}
+                    className="px-3.5 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-extrabold flex items-center gap-1.5 transition-all cursor-pointer shadow-sm"
+                    title="Export Data Table to Excel CSV File"
+                  >
+                    <FileSpreadsheet className="w-4 h-4" />
+                    <span>Export Excel</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={handlePrintReport}
+                    className="px-3.5 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-xl text-xs font-extrabold flex items-center gap-1.5 transition-all cursor-pointer border border-slate-700"
+                    title="Print Report Summary"
+                  >
+                    <Printer className="w-4 h-4" />
+                    <span>Print Sheet</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setShowReportModal(false)}
+                    className="p-1.5 text-slate-400 hover:text-white hover:bg-slate-800 rounded-xl transition-colors cursor-pointer ml-1"
+                  >
+                    <X className="w-5 h-5" />
+                  </button>
+                </div>
+              </div>
+
+              {/* Modal Content Body */}
+              <div className="p-6 overflow-y-auto space-y-6 flex-1 bg-slate-50/50">
+                {isGeneratingReport ? (
+                  <div className="flex flex-col items-center justify-center py-20 text-slate-400 space-y-3">
+                    <div className="w-8 h-8 border-4 border-indigo-600 border-t-transparent rounded-full animate-spin"></div>
+                    <p className="text-xs font-bold uppercase tracking-wider text-slate-500">Compiling Financial & Payment History Reports...</p>
+                  </div>
+                ) : (
+                  <>
+                    {/* Top KPI Cards */}
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
+                      {/* Active Leads */}
+                      <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-2xs">
+                        <span className="text-[10px] uppercase font-bold text-slate-400 block tracking-wider">Total Active Leads</span>
+                        <div className="flex items-baseline justify-between mt-1">
+                          <h3 className="text-2xl font-black text-slate-900">{totalActiveLeads}</h3>
+                          <span className="text-[10px] font-extrabold text-indigo-700 bg-indigo-50 px-2 py-0.5 rounded-full border border-indigo-200">
+                            {conversionRate}% Won Rate
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* Total Proposal Value */}
+                      <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-2xs">
+                        <span className="text-[10px] uppercase font-bold text-slate-400 block tracking-wider">Total Proposals Value</span>
+                        <h3 className="text-2xl font-black text-slate-800 mt-1">₹{totalPipelineValue.toLocaleString('en-IN')}</h3>
+                      </div>
+
+                      {/* Total Payments Received */}
+                      <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-2xs border-l-4 border-l-emerald-500">
+                        <span className="text-[10px] uppercase font-bold text-emerald-700 block tracking-wider">Payments Collected</span>
+                        <h3 className="text-2xl font-black text-emerald-600 mt-1">₹{totalCollectedValue.toLocaleString('en-IN')}</h3>
+                      </div>
+
+                      {/* Pending Balance */}
+                      <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-2xs border-l-4 border-l-amber-500">
+                        <span className="text-[10px] uppercase font-bold text-amber-700 block tracking-wider">Outstanding Balance</span>
+                        <h3 className="text-2xl font-black text-amber-600 mt-1">₹{totalPendingValue.toLocaleString('en-IN')}</h3>
+                      </div>
+
+                      {/* Pipeline Milestone Breakdown */}
+                      <div className="bg-slate-900 text-white p-4 rounded-xl shadow-2xs flex flex-col justify-between">
+                        <span className="text-[10px] uppercase font-bold text-slate-400 tracking-wider">Pipeline Progress</span>
+                        <div className="flex items-center justify-between text-xs font-bold mt-1">
+                          <span className="text-emerald-400">🏆 {stageCounts.closed} Closed</span>
+                          <span className="text-blue-400">⚡ {stageCounts.confirmed + stageCounts.registered + stageCounts.installed} Active</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Pipeline Stage Bar */}
+                    <div className="bg-white p-4 rounded-xl border border-slate-200 space-y-2 shadow-2xs">
+                      <h4 className="text-xs font-extrabold uppercase text-slate-500 tracking-wider">Stage Breakdown Meter</h4>
+                      <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-7 gap-2 text-center text-xs">
+                        <div className="bg-slate-50 p-2 rounded-lg border border-slate-200">
+                          <span className="block text-[10px] font-bold text-slate-400 uppercase">New</span>
+                          <span className="text-sm font-black text-slate-700">{stageCounts.new}</span>
+                        </div>
+                        <div className="bg-blue-50 p-2 rounded-lg border border-blue-200">
+                          <span className="block text-[10px] font-bold text-blue-500 uppercase">Quotation</span>
+                          <span className="text-sm font-black text-blue-700">{stageCounts.quotation_sent}</span>
+                        </div>
+                        <div className="bg-violet-50 p-2 rounded-lg border border-violet-200">
+                          <span className="block text-[10px] font-bold text-violet-500 uppercase">Confirmed</span>
+                          <span className="text-sm font-black text-violet-700">{stageCounts.confirmed}</span>
+                        </div>
+                        <div className="bg-indigo-50 p-2 rounded-lg border border-indigo-200">
+                          <span className="block text-[10px] font-bold text-indigo-500 uppercase">Registered</span>
+                          <span className="text-sm font-black text-indigo-700">{stageCounts.registered}</span>
+                        </div>
+                        <div className="bg-teal-50 p-2 rounded-lg border border-teal-200">
+                          <span className="block text-[10px] font-bold text-teal-500 uppercase">Installed</span>
+                          <span className="text-sm font-black text-teal-700">{stageCounts.installed}</span>
+                        </div>
+                        <div className="bg-emerald-50 p-2 rounded-lg border border-emerald-200">
+                          <span className="block text-[10px] font-bold text-emerald-500 uppercase">Closed</span>
+                          <span className="text-sm font-black text-emerald-700">{stageCounts.closed}</span>
+                        </div>
+                        <div className="bg-rose-50 p-2 rounded-lg border border-rose-200">
+                          <span className="block text-[10px] font-bold text-rose-500 uppercase">Lost</span>
+                          <span className="text-sm font-black text-rose-700">{stageCounts.lost}</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Filter & Search Bar inside Report */}
+                    <div className="bg-white p-3 rounded-xl border border-slate-200 flex flex-col md:flex-row items-center justify-between gap-3 shadow-2xs">
+                      <div className="relative w-full md:w-80">
+                        <Search className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
+                        <input
+                          type="text"
+                          placeholder="Search client by name or phone..."
+                          value={reportSearchTerm}
+                          onChange={(e) => setReportSearchTerm(e.target.value)}
+                          className="w-full pl-9 pr-4 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-xs font-semibold focus:outline-none focus:border-indigo-500"
+                        />
+                      </div>
+
+                      <div className="flex flex-wrap items-center gap-2 w-full md:w-auto text-xs">
+                        <select
+                          value={reportStageFilter}
+                          onChange={(e) => setReportStageFilter(e.target.value)}
+                          className="px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-lg font-bold text-slate-700 focus:outline-none cursor-pointer"
+                        >
+                          <option value="">All Pipeline Stages</option>
+                          <option value="new">New Lead</option>
+                          <option value="quotation_sent">Quotation Sent</option>
+                          <option value="confirmed">Confirmed</option>
+                          <option value="registered">Registered</option>
+                          <option value="installed">Installed</option>
+                          <option value="closed">Closed</option>
+                          <option value="lost">Lost</option>
+                        </select>
+
+                        <select
+                          value={reportPaymentFilter}
+                          onChange={(e) => setReportPaymentFilter(e.target.value)}
+                          className="px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-lg font-bold text-slate-700 focus:outline-none cursor-pointer"
+                        >
+                          <option value="">All Payment Statuses</option>
+                          <option value="Fully Paid">Fully Paid</option>
+                          <option value="Partially Paid">Partially Paid</option>
+                          <option value="Pending">Pending Payment</option>
+                          <option value="No Quote">No Quotation</option>
+                        </select>
+                      </div>
+                    </div>
+
+                    {/* Interactive Report Data Table */}
+                    <div className="bg-white rounded-xl border border-slate-200 overflow-hidden shadow-2xs">
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-left text-xs">
+                          <thead className="bg-slate-100 text-slate-600 font-extrabold uppercase text-[10px] tracking-wider border-b border-slate-200">
+                            <tr>
+                              <th className="py-3 px-4">Client Name & Phone</th>
+                              <th className="py-3 px-4">Project Requirement</th>
+                              <th className="py-3 px-4">Pipeline Progress</th>
+                              <th className="py-3 px-4 text-right">Total Value (₹)</th>
+                              <th className="py-3 px-4 text-right">Amount Paid (₹)</th>
+                              <th className="py-3 px-4 text-right">Pending Balance (₹)</th>
+                              <th className="py-3 px-4 text-center">Payment Status</th>
+                              <th className="py-3 px-4">Assigned Team</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-slate-100 font-semibold text-slate-700">
+                            {filteredReportItems.map((item) => (
+                              <tr key={item.leadId} className="hover:bg-slate-50/80 transition-colors">
+                                <td className="py-3 px-4">
+                                  <span className="font-extrabold text-slate-900 block">{item.name}</span>
+                                  <span className="text-[10px] text-slate-400 font-medium">📞 +91 {item.phone}</span>
+                                </td>
+                                <td className="py-3 px-4 max-w-[200px] truncate text-slate-600" title={item.requirement}>
+                                  {item.requirement}
+                                </td>
+                                <td className="py-3 px-4">
+                                  {renderStatusBadge(item.status)}
+                                </td>
+                                <td className="py-3 px-4 text-right font-bold text-slate-800">
+                                  ₹{item.totalValue.toLocaleString('en-IN')}
+                                </td>
+                                <td className="py-3 px-4 text-right font-black text-emerald-600">
+                                  ₹{item.paidAmount.toLocaleString('en-IN')}
+                                  {item.installmentCount > 0 && (
+                                    <span className="text-[9px] font-bold text-slate-400 block">
+                                      ({item.installmentCount} payment{item.installmentCount > 1 ? 's' : ''})
+                                    </span>
+                                  )}
+                                </td>
+                                <td className={`py-3 px-4 text-right font-black ${item.pendingBalance > 0 ? 'text-amber-600' : 'text-slate-400'}`}>
+                                  ₹{item.pendingBalance.toLocaleString('en-IN')}
+                                </td>
+                                <td className="py-3 px-4 text-center">
+                                  <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-extrabold ${
+                                    item.paymentStatus === 'Fully Paid' ? 'bg-emerald-100 text-emerald-800 border border-emerald-200' :
+                                    item.paymentStatus === 'Partially Paid' ? 'bg-blue-100 text-blue-800 border border-blue-200' :
+                                    item.paymentStatus === 'Pending' ? 'bg-amber-100 text-amber-800 border border-amber-200' :
+                                    'bg-slate-100 text-slate-600'
+                                  }`}>
+                                    {item.paymentStatus}
+                                  </span>
+                                </td>
+                                <td className="py-3 px-4 text-[10px] text-slate-500 space-y-0.5">
+                                  <div>👤 Sales: <span className="font-bold text-slate-700">{item.assignedSalesName}</span></div>
+                                  <div>🏢 Admin: <span className="font-bold text-slate-700">{item.assignedAdminName}</span></div>
+                                </td>
+                              </tr>
+                            ))}
+
+                            {filteredReportItems.length === 0 && (
+                              <tr>
+                                <td colSpan={8} className="py-8 text-center text-slate-400 italic">
+                                  No matching client leads found for the current search and filter selection.
+                                </td>
+                              </tr>
+                            )}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  </>
+                )}
+              </div>
+
+              {/* Modal Footer */}
+              <div className="bg-slate-100 px-6 py-3 border-t border-slate-200 flex justify-between items-center text-xs text-slate-500 font-bold shrink-0">
+                <span>Showing {filteredReportItems.length} of {reportItems.length} active entries</span>
+                <button
+                  type="button"
+                  onClick={() => setShowReportModal(false)}
+                  className="px-4 py-1.5 bg-slate-900 hover:bg-slate-800 text-white rounded-lg font-extrabold cursor-pointer"
+                >
+                  Close Report
+                </button>
+              </div>
+
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 };

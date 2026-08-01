@@ -7,7 +7,8 @@ import { mapService } from '../../services/mapService';
 import type { Coordinates } from '../../services/mapService';
 import type { FieldVisitReport, Lead, Profile } from '../../types';
 import { LeafletMap } from '../../components/Map/LeafletMap';
-import { Plus, MapPin, User, Compass, Upload, Search, ChevronDown, ChevronUp, Trash2 } from 'lucide-react';
+import { pdfService } from '../../services/pdfService';
+import { Plus, MapPin, User, Compass, Upload, Search, ChevronDown, ChevronUp, Trash2, Download, RotateCcw, CheckCircle2, Clock, Sparkles } from 'lucide-react';
 import { compressImage } from '../../services/imageCompressionService';
 import { uploadImageToFirebase } from '../../services/firebase';
 import dayjs from 'dayjs';
@@ -37,6 +38,126 @@ export const Visits: React.FC = () => {
   const [placeName, setPlaceName] = useState('');
   const [isLocating, setIsLocating] = useState(false);
   const [uploadedPhotos, setUploadedPhotos] = useState<Blob[]>([]);
+
+  // Check-In / Check-Out Duty States
+  const [isCheckedIn, setIsCheckedIn] = useState<boolean>(false);
+  const [checkInTime, setCheckInTime] = useState<string>('');
+  const [checkOutTime, setCheckOutTime] = useState<string>('');
+  const [checkInLocation, setCheckInLocation] = useState<string>('');
+  const [isCheckInLoading, setIsCheckInLoading] = useState<boolean>(false);
+  const [hasRestoredDraft, setHasRestoredDraft] = useState<boolean>(false);
+
+  // Restore Check-In Status & Form Draft on Mount
+  useEffect(() => {
+    // 1. Restore Check-In State
+    const savedCheckIn = localStorage.getItem('field_checkin_data');
+    if (savedCheckIn) {
+      try {
+        const parsed = JSON.parse(savedCheckIn);
+        setIsCheckedIn(!!parsed.isCheckedIn);
+        setCheckInTime(parsed.checkInTime || '');
+        setCheckOutTime(parsed.checkOutTime || '');
+        setCheckInLocation(parsed.checkInLocation || '');
+      } catch (_) {}
+    }
+
+    // 2. Restore Form Draft if available
+    const savedDraft = localStorage.getItem('draft_field_visit_form');
+    if (savedDraft) {
+      try {
+        const d = JSON.parse(savedDraft);
+        if (d.personMetName) setPersonMetName(d.personMetName);
+        if (d.personMetContact) setPersonMetContact(d.personMetContact);
+        if (d.linkedLeadId) setLinkedLeadId(d.linkedLeadId);
+        if (d.description) setDescription(d.description);
+        if (d.placeName) setPlaceName(d.placeName);
+        if (d.gpsLocation) setGpsLocation(d.gpsLocation);
+        setHasRestoredDraft(true);
+      } catch (_) {}
+    }
+  }, []);
+
+  // Auto-Save Form Draft to localStorage whenever inputs change
+  useEffect(() => {
+    if (personMetName || personMetContact || description || linkedLeadId || placeName) {
+      localStorage.setItem('draft_field_visit_form', JSON.stringify({
+        personMetName,
+        personMetContact,
+        linkedLeadId,
+        description,
+        placeName,
+        gpsLocation
+      }));
+    }
+  }, [personMetName, personMetContact, description, linkedLeadId, placeName, gpsLocation]);
+
+  const handleClearFormData = () => {
+    if (confirm('🧹 Clear all entered form data and reset fields & Check-In/Out timestamps to blank?')) {
+      localStorage.removeItem('draft_field_visit_form');
+      localStorage.removeItem('field_checkin_data');
+      setPersonMetName('');
+      setPersonMetContact('');
+      setLinkedLeadId('');
+      setDescription('');
+      setPlaceName('');
+      setGpsLocation(null);
+      setUploadedPhotos([]);
+      setHasRestoredDraft(false);
+      setIsCheckedIn(false);
+      setCheckInTime('');
+      setCheckOutTime('');
+      setCheckInLocation('');
+    }
+  };
+
+  const handleCheckInAction = async () => {
+    setIsCheckInLoading(true);
+    try {
+      const coords = await mapService.getCurrentCoordinates();
+      const address = await mapService.reverseGeocode(coords.latitude, coords.longitude);
+      const nowStr = dayjs().format('DD MMM YYYY, hh:mm A');
+      const locStr = address || `${coords.latitude.toFixed(4)}, ${coords.longitude.toFixed(4)}`;
+
+      const data = {
+        isCheckedIn: true,
+        checkInTime: nowStr,
+        checkOutTime: checkOutTime,
+        checkInLocation: locStr
+      };
+
+      localStorage.setItem('field_checkin_data', JSON.stringify(data));
+      setIsCheckedIn(true);
+      setCheckInTime(nowStr);
+      setCheckInLocation(locStr);
+      alert(`📍 Duty Check-In Successful!\n\nIn Time: ${nowStr}\nLocation: ${locStr}`);
+    } catch (err) {
+      alert('Location Error: GPS access is required for Duty Check-In. Please turn on location services.');
+    } finally {
+      setIsCheckInLoading(false);
+    }
+  };
+
+  const handleCheckOutAction = async () => {
+    if (!isCheckedIn && !checkInTime) {
+      alert('You have not checked in yet!');
+      return;
+    }
+
+    const nowStr = dayjs().format('DD MMM YYYY, hh:mm A');
+    if (confirm(`🏁 Confirm Duty Check-Out?\n\nIn Time: ${checkInTime || 'N/A'}\nOut Time: ${nowStr}`)) {
+      const data = {
+        isCheckedIn: false,
+        checkInTime: checkInTime,
+        checkOutTime: nowStr,
+        checkInLocation: checkInLocation
+      };
+
+      localStorage.setItem('field_checkin_data', JSON.stringify(data));
+      setIsCheckedIn(false);
+      setCheckOutTime(nowStr);
+      alert(`🏁 Duty Check-Out Recorded!\n\nIn Time: ${checkInTime}\nOut Time: ${nowStr}`);
+    }
+  };
 
   const loadData = async () => {
     // Load visits
@@ -153,7 +274,9 @@ export const Visits: React.FC = () => {
         placeName,
         capturedAt: new Date().toISOString()
       },
-      photoBlobs: uploadedPhotos
+      photoBlobs: uploadedPhotos,
+      checkInTime: checkInTime || undefined,
+      checkOutTime: checkOutTime || undefined
     };
 
     if (linkedLeadId) {
@@ -162,7 +285,9 @@ export const Visits: React.FC = () => {
 
     await visitService.createVisitReport(reportData);
 
-    // Reset fields
+    // Reset fields & clear draft
+    localStorage.removeItem('draft_field_visit_form');
+    setHasRestoredDraft(false);
     setPersonMetName('');
     setPersonMetContact('');
     setDescription('');
@@ -228,15 +353,44 @@ export const Visits: React.FC = () => {
             {currentRole === 'field_employee' ? 'Log and review your site inspections.' : 'Monitor site inspection details and logs.'}
           </p>
         </div>
-        {currentRole === 'field_employee' && (
-          <button
-            onClick={() => setShowLogForm(true)}
-            className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white font-bold text-xs rounded-xl shadow-md flex items-center gap-2 cursor-pointer transition-all self-start sm:self-auto"
-          >
-            <Plus className="w-4 h-4" />
-            <span>Log a Visit</span>
-          </button>
-        )}
+        <div className="flex items-center gap-2 self-start sm:self-auto">
+          {currentRole !== 'field_employee' && (
+            <button
+              type="button"
+              onClick={async () => {
+                try {
+                  const blob = await pdfService.generateVisitsReportPDF(filteredVisits);
+                  const url = URL.createObjectURL(blob);
+                  const a = document.createElement('a');
+                  a.href = url;
+                  a.download = `Green_Energy_Field_Visits_Report_${dayjs().format('YYYY_MM_DD')}.pdf`;
+                  document.body.appendChild(a);
+                  a.click();
+                  document.body.removeChild(a);
+                  setTimeout(() => URL.revokeObjectURL(url), 10000);
+                } catch (e) {
+                  console.error('PDF error:', e);
+                  alert('Error generating PDF Report');
+                }
+              }}
+              className="px-3.5 py-2 bg-indigo-600 hover:bg-indigo-700 active:bg-indigo-800 text-white font-bold text-xs rounded-xl shadow-md flex items-center gap-1.5 cursor-pointer transition-all"
+              title="Download Field Visits PDF Report"
+            >
+              <Download className="w-4 h-4" />
+              <span>Download Report PDF</span>
+            </button>
+          )}
+
+          {currentRole === 'field_employee' && (
+            <button
+              onClick={() => setShowLogForm(true)}
+              className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white font-bold text-xs rounded-xl shadow-md flex items-center gap-2 cursor-pointer transition-all"
+            >
+              <Plus className="w-4 h-4" />
+              <span>Log a Visit</span>
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Advanced Full-Text Search Input Bar */}
@@ -336,6 +490,23 @@ export const Visits: React.FC = () => {
                       <span className="truncate">{visit.location.placeName}</span>
                     </span>
                   </div>
+
+                  {(visit.checkInTime || visit.checkOutTime) && (
+                    <div className="flex flex-wrap items-center gap-2 pt-1">
+                      {visit.checkInTime && (
+                        <span className="inline-flex items-center gap-1 text-[10px] font-extrabold text-emerald-800 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-md">
+                          <MapPin className="w-3 h-3 text-emerald-600" />
+                          <span>In Time: {visit.checkInTime}</span>
+                        </span>
+                      )}
+                      {visit.checkOutTime && (
+                        <span className="inline-flex items-center gap-1 text-[10px] font-extrabold text-rose-800 bg-rose-50 border border-rose-200 px-2 py-0.5 rounded-md">
+                          <Clock className="w-3 h-3 text-rose-600" />
+                          <span>Out Time: {visit.checkOutTime}</span>
+                        </span>
+                      )}
+                    </div>
+                  )}
                 </div>
 
                 <div className="text-slate-400 p-1 hover:text-slate-700 transition-colors shrink-0">
@@ -420,7 +591,15 @@ export const Visits: React.FC = () => {
       {showLogForm && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 backdrop-blur-xs">
           <div className="bg-white rounded-2xl border border-slate-200 shadow-xl w-full max-w-lg p-6 m-4 max-h-[90vh] overflow-y-auto animate-scale-in">
-            <h3 className="text-lg font-black text-slate-900 mb-4">Log Field Visit</h3>
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-black text-slate-900">Log Field Visit</h3>
+              {hasRestoredDraft && (
+                <span className="px-2.5 py-1 rounded-lg bg-amber-50 text-amber-800 border border-amber-200 text-[10px] font-extrabold flex items-center gap-1 shadow-2xs">
+                  <Sparkles className="w-3 h-3 text-amber-600" />
+                  <span>Draft Auto-Restored</span>
+                </span>
+              )}
+            </div>
             <form onSubmit={handleLogVisitSubmit} className="space-y-4 text-xs font-semibold">
               <div className="grid grid-cols-2 gap-4">
                 <div>
@@ -471,6 +650,68 @@ export const Visits: React.FC = () => {
                   placeholder="Summarize coordinates measurements, roof shadings, electricity details, power cuts, etc."
                   className="w-full border border-slate-200 rounded-xl px-3 py-2.5 bg-slate-50 focus:outline-none resize-none"
                 />
+              </div>
+
+              {/* Duty Check-In & Check-Out Timestamps Section (Inside Form) */}
+              <div className="bg-slate-50 p-4 border border-slate-200 rounded-xl space-y-3">
+                <div className="flex justify-between items-center">
+                  <span className="block text-slate-800 font-extrabold uppercase text-[10px] tracking-tight">Duty Check-In & Check-Out Status</span>
+                  <span className={`text-[10px] font-black uppercase px-2.5 py-0.5 rounded-full border ${
+                    isCheckedIn ? 'bg-emerald-100 text-emerald-800 border-emerald-300' : 'bg-slate-200 text-slate-700 border-slate-300'
+                  }`}>
+                    {isCheckedIn ? '🟢 Checked In' : '🔴 Checked Out'}
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={handleCheckInAction}
+                    disabled={isCheckInLoading || isCheckedIn}
+                    className={`px-3.5 py-2 text-white font-extrabold text-xs rounded-xl shadow-2xs flex items-center justify-center gap-1.5 cursor-pointer transition-all ${
+                      isCheckedIn
+                        ? 'bg-slate-300 text-slate-500 cursor-not-allowed opacity-70'
+                        : 'bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800'
+                    }`}
+                    title="Perform Duty Check-In"
+                  >
+                    <MapPin className="w-3.5 h-3.5" />
+                    <span>📍 Check In</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={handleCheckOutAction}
+                    disabled={isCheckInLoading || !isCheckedIn}
+                    className={`px-3.5 py-2 text-white font-extrabold text-xs rounded-xl shadow-2xs flex items-center justify-center gap-1.5 cursor-pointer transition-all ${
+                      !isCheckedIn
+                        ? 'bg-slate-300 text-slate-500 cursor-not-allowed opacity-70'
+                        : 'bg-rose-600 hover:bg-rose-700 active:bg-rose-800'
+                    }`}
+                    title="Perform Duty Check-Out"
+                  >
+                    <Clock className="w-3.5 h-3.5" />
+                    <span>🏁 Check Out</span>
+                  </button>
+                </div>
+
+                {/* Timestamps Display Box */}
+                <div className="bg-white p-3 rounded-xl border border-slate-200 text-xs font-extrabold space-y-1.5 shadow-2xs">
+                  <div className="flex justify-between items-center text-slate-700">
+                    <span className="flex items-center gap-1 text-emerald-800">
+                      <MapPin className="w-3.5 h-3.5 text-emerald-600" />
+                      <span>In Time (Check-In):</span>
+                    </span>
+                    <span className="font-mono text-emerald-700">{checkInTime || 'Not Checked In Yet'}</span>
+                  </div>
+                  <div className="flex justify-between items-center text-slate-700 pt-1.5 border-t border-slate-100">
+                    <span className="flex items-center gap-1 text-rose-800">
+                      <Clock className="w-3.5 h-3.5 text-rose-600" />
+                      <span>Out Time (Check-Out):</span>
+                    </span>
+                    <span className="font-mono text-rose-700">{checkOutTime || (isCheckedIn ? 'Active (Pending Check-Out)' : 'Not Checked Out')}</span>
+                  </div>
+                </div>
               </div>
 
               {/* Geolocation fetcher */}
@@ -540,20 +781,32 @@ export const Visits: React.FC = () => {
                 )}
               </div>
 
-              <div className="flex justify-end gap-2 pt-4 border-t border-slate-100">
+              <div className="flex items-center justify-between pt-4 border-t border-slate-100">
                 <button
                   type="button"
-                  onClick={() => setShowLogForm(false)}
-                  className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-xl font-bold cursor-pointer"
+                  onClick={handleClearFormData}
+                  className="px-3 py-2 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 rounded-xl font-extrabold text-[11px] cursor-pointer flex items-center gap-1.5 transition-colors"
+                  title="Clear all entered fields and wipe saved draft"
                 >
-                  Cancel
+                  <RotateCcw className="w-3.5 h-3.5" />
+                  <span>Clear Form Data</span>
                 </button>
-                <button
-                  type="submit"
-                  className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white rounded-xl font-bold cursor-pointer"
-                >
-                  Save Log
-                </button>
+
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setShowLogForm(false)}
+                    className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-xl font-bold cursor-pointer"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white rounded-xl font-bold cursor-pointer shadow-xs"
+                  >
+                    Save Log
+                  </button>
+                </div>
               </div>
             </form>
           </div>

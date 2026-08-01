@@ -89,3 +89,16 @@ button, a, input, select, textarea, .quotation-document-page, .animate-scale-in 
   border-radius: 4px !important;
   margin-bottom: 8px !important;
 }
+
+@media print {
+  body {
+    background: white !important;
+  }
+  aside, nav, header, .print\:hidden {
+    display: none !important;
+  }
+  .print-report-container {
+    display: block !important;
+    width: 100% !important;
+  }
+}

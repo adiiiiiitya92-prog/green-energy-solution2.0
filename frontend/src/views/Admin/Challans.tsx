@@ -5,7 +5,7 @@ import { leadService } from '../../services/leadService';
 import { employeeService } from '../../services/employeeService';
 import { productService } from '../../services/productService';
 import { pdfService } from '../../services/pdfService';
-import { Plus, Search, Truck, Trash2, ClipboardList, X } from 'lucide-react';
+import { Plus, Search, Truck, Trash2, ClipboardList, X, Download } from 'lucide-react';
 import dayjs from 'dayjs';
 import logoImg from '../../assets/Green-Energy-Solution.png';
 
@@ -410,13 +410,41 @@ export const Challans: React.FC = () => {
           <h1 className="text-2xl font-black text-slate-900 tracking-tight">Delivery Challans</h1>
           <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Record materials dispatch, vehicle assignments, and adjust stock counts.</p>
         </div>
-        <button
-          onClick={() => setShowAddModal(true)}
-          className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white font-bold text-xs rounded-xl shadow-md flex items-center gap-2 cursor-pointer transition-all self-start sm:self-auto"
-        >
-          <Plus className="w-4 h-4" />
-          <span>New Dispatch Challan</span>
-        </button>
+        <div className="flex items-center gap-2 self-start sm:self-auto">
+          <button
+            type="button"
+            onClick={async () => {
+              try {
+                const blob = await pdfService.generateChallansReportPDF(filteredChallans);
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `Green_Energy_Delivery_Challans_Report_${dayjs().format('YYYY_MM_DD')}.pdf`;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                setTimeout(() => URL.revokeObjectURL(url), 10000);
+              } catch (e) {
+                console.error('PDF error:', e);
+                alert('Error generating PDF Report');
+              }
+            }}
+            className="px-3.5 py-2 bg-indigo-600 hover:bg-indigo-700 active:bg-indigo-800 text-white font-bold text-xs rounded-xl shadow-md flex items-center gap-1.5 cursor-pointer transition-all"
+            title="Download Delivery Challans PDF Report"
+          >
+            <Download className="w-4 h-4" />
+            <span>Download Report PDF</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setShowAddModal(true)}
+            className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white font-bold text-xs rounded-xl shadow-md flex items-center gap-2 cursor-pointer transition-all"
+          >
+            <Plus className="w-4 h-4" />
+            <span>New Dispatch Challan</span>
+          </button>
+        </div>
       </div>
 
       {/* Search Controls & Date Filters */}

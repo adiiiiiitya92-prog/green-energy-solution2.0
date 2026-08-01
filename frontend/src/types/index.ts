@@ -193,6 +193,8 @@ export interface FieldVisitReport {
   location: GeoLocation;
   photoBlobs: (Blob | string)[];
   visitedAt: string;
+  checkInTime?: string;
+  checkOutTime?: string;
 }
 
 export interface ProductUnit {

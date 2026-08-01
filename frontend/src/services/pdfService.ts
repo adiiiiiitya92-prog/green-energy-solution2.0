@@ -4,7 +4,9 @@ import dayjs from 'dayjs';
 import logoImg from '../assets/Green-Energy-Solution.png';
 import solarCoverImg from '../assets/solar_rooftop_cover.png';
 import solarEngineerImg from '../assets/solar_engineer_installing.png';
-import customPage4Img from '../assets/image.png';
+import customPage4Img from '../assets/pannel.png';
+import solar2dTopImg from '../assets/solar_2d_top_view.png';
+import solar3dFrameImg from '../assets/solar_3d_frame_view.png';
 import qoutation1Img from '../assets/qoutation 1.png';
 import stampImg from '../assets/stamp.png';
 import paymentQrImg from '../assets/payment_qr.png';
@@ -140,6 +142,8 @@ export function createNewQuotationProposalHtml(q: any, lead: any, creatorName: s
   const cover = getAbsUrl(solarCoverImg);
   const engineer = getAbsUrl(solarEngineerImg);
   const page4Img = getAbsUrl(customPage4Img);
+  const top2dImg = getAbsUrl(solar2dTopImg);
+  const frame3dImg = getAbsUrl(solar3dFrameImg);
   const qoutationCover = getAbsUrl(qoutation1Img);
   const stamp = getAbsUrl(stampImg);
   const paymentQr = getAbsUrl(paymentQrImg);
@@ -509,15 +513,18 @@ export function createNewQuotationProposalHtml(q: any, lead: any, creatorName: s
 
     <!-- PAGE 4: ARCHITECTURAL ROOFTOP SOLAR SYSTEM DESIGN LAYOUT -->
     <div class="quotation-document-page" style="width: 210mm; height: 297mm; min-width: 210mm; min-height: 297mm; max-width: 210mm; max-height: 297mm; background: #ffffff; display: flex; flex-direction: column; justify-content: space-between; box-sizing: border-box; font-family: Arial, sans-serif; position: relative; overflow: hidden; flex-shrink: 0;">
-      <div style="padding: 30px 40px 0 40px; flex: 1; display: flex; flex-direction: column;">
-        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
-          <h3 style="font-size: 14px; font-weight: 900; color: #0f172a; text-transform: uppercase; margin: 0;">Technical System Design & Layout</h3>
-          <img src="${logo}" style="height: 60px; max-width: 210px; object-fit: contain;" />
+      <div style="padding: 28px 36px 0 36px; flex: 1; display: flex; flex-direction: column;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px; border-bottom: 2px solid #0f172a; padding-bottom: 8px;">
+          <div>
+            <h3 style="font-size: 16px; font-weight: 900; color: #0f172a; text-transform: uppercase; margin: 0; letter-spacing: 0.5px;">Architectural Solar System Design & Layout</h3>
+            <p style="font-size: 10.5px; color: #64748b; margin: 2px 0 0 0; font-weight: 700;">Minimalist Technical Engineering Blueprint & Array Placement Diagram</p>
+          </div>
+          <img src="${logo}" style="height: 52px; max-width: 190px; object-fit: contain;" />
         </div>
         
-        <!-- Large Centered High-Resolution 70% Area Design Layout Image -->
-        <div style="flex: 1; display: flex; justify-content: center; align-items: center; background: #ffffff; border: 1px solid #cbd5e1; border-radius: 8px; overflow: hidden; padding: 16px; margin-bottom: 16px; max-height: 200mm;">
-          <img src="${page4Img}" style="width: 100%; height: 100%; max-height: 190mm; object-fit: contain; border-radius: 6px;" />
+        <!-- Minimalist High-Resolution 80% Area CAD Layout Container -->
+        <div style="flex: 1; display: flex; justify-content: center; align-items: center; background: #ffffff; border: 1px solid #cbd5e1; border-radius: 12px; overflow: hidden; padding: 14px; margin-bottom: 16px; max-height: 210mm; box-shadow: 0 4px 14px rgba(0,0,0,0.04);">
+          <img src="${page4Img}" style="width: 100%; height: 100%; max-height: 200mm; object-fit: contain; border-radius: 8px;" />
         </div>
       </div>
       ${renderPageFooter(4)}
@@ -1394,6 +1401,535 @@ export const pdfService = {
     doc.setFont('helvetica', 'normal');
     doc.setFontSize(7);
     doc.text("Authorized Dispatch Officer", 146, signY + 3.5);
+
+    return doc.output('blob');
+  },
+
+  async generateExecutiveReportPDF(items: any[]): Promise<Blob> {
+    const doc = new jsPDF('p', 'mm', 'a4');
+    const logoData = await getLogoBase64();
+
+    const slateDark = [15, 23, 42];
+    const slateGray = [100, 116, 139];
+
+    // Page 1 Header Banner
+    doc.setFillColor(15, 23, 42); // Dark Navy Banner
+    doc.rect(0, 0, 210, 28, 'F');
+
+    if (logoData) {
+      doc.addImage(logoData, 'PNG', 12, 4, 38, 19);
+    }
+
+    doc.setTextColor(255, 255, 255);
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(14);
+    doc.text("GREEN ENERGY SOLUTIONS", 54, 12);
+    doc.setFontSize(8);
+    doc.setFont('helvetica', 'normal');
+    doc.setTextColor(16, 185, 129);
+    doc.text("GO SOLAR, SAVE NATURE | EXECUTIVE ANALYTICS REPORT", 54, 17);
+    doc.setTextColor(203, 213, 225);
+    doc.text("Address: Nagpur, Maharashtra | Phone: +91 7057433822 | Email: info@greenenergysolutions.in", 54, 22);
+
+    // Title & Date Header
+    doc.setTextColor(slateDark[0], slateDark[1], slateDark[2]);
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(12);
+    doc.text("EXECUTIVE LEAD FINANCIAL & PIPELINE PROGRESS REPORT", 14, 38);
+
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(8);
+    doc.setTextColor(slateGray[0], slateGray[1], slateGray[2]);
+    doc.text(`Generated Date: ${dayjs().format('DD MMMM YYYY, hh:mm A [IST]')}`, 14, 43);
+
+    // Calculate Summary Financial Metrics
+    const totalLeads = items.length;
+    const totalVal = items.reduce((s, i) => s + (i.totalValue || 0), 0);
+    const totalPaid = items.reduce((s, i) => s + (i.paidAmount || 0), 0);
+    const totalPending = items.reduce((s, i) => s + (i.pendingBalance || 0), 0);
+    const totalClosed = items.filter(i => ['confirmed', 'registered', 'installed', 'closed'].includes(i.status)).length;
+    const winRate = totalLeads > 0 ? Math.round((totalClosed / totalLeads) * 100) : 0;
+
+    // KPI Summary Box
+    doc.setFillColor(248, 250, 252);
+    doc.roundedRect(14, 47, 182, 22, 2, 2, 'F');
+    doc.setDrawColor(226, 232, 240);
+    doc.roundedRect(14, 47, 182, 22, 2, 2, 'D');
+
+    // KPI Columns inside Summary Box
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(7.5);
+    doc.setTextColor(slateGray[0], slateGray[1], slateGray[2]);
+    doc.text("TOTAL LEADS", 20, 54);
+    doc.setFontSize(11);
+    doc.setTextColor(slateDark[0], slateDark[1], slateDark[2]);
+    doc.text(`${totalLeads} (${winRate}% Win)`, 20, 62);
+
+    doc.setFontSize(7.5);
+    doc.setTextColor(slateGray[0], slateGray[1], slateGray[2]);
+    doc.text("CONTRACT VALUE", 62, 54);
+    doc.setFontSize(11);
+    doc.setTextColor(slateDark[0], slateDark[1], slateDark[2]);
+    doc.text(`Rs.${totalVal.toLocaleString('en-IN')}`, 62, 62);
+
+    doc.setFontSize(7.5);
+    doc.setTextColor(16, 185, 129);
+    doc.text("COLLECTED AMOUNT", 112, 54);
+    doc.setFontSize(11);
+    doc.setTextColor(16, 185, 129);
+    doc.text(`Rs.${totalPaid.toLocaleString('en-IN')}`, 112, 62);
+
+    doc.setFontSize(7.5);
+    doc.setTextColor(217, 119, 6);
+    doc.text("PENDING BALANCE", 156, 54);
+    doc.setFontSize(11);
+    doc.setTextColor(217, 119, 6);
+    doc.text(`Rs.${totalPending.toLocaleString('en-IN')}`, 156, 62);
+
+    // Table Headers
+    let startY = 76;
+    doc.setFillColor(15, 23, 42);
+    doc.rect(14, startY, 182, 8, 'F');
+
+    doc.setTextColor(255, 255, 255);
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(7.5);
+    doc.text("SR", 16, startY + 5.5);
+    doc.text("CLIENT NAME & CONTACT", 26, startY + 5.5);
+    doc.text("REQUIREMENT", 74, startY + 5.5);
+    doc.text("STAGE", 114, startY + 5.5);
+    doc.text("VALUE (Rs)", 144, startY + 5.5, { align: 'right' });
+    doc.text("PAID (Rs)", 168, startY + 5.5, { align: 'right' });
+    doc.text("STATUS", 192, startY + 5.5, { align: 'right' });
+
+    let currentY = startY + 8;
+    const rowHeight = 9;
+
+    items.forEach((item, idx) => {
+      if (currentY > 270) {
+        doc.addPage();
+        currentY = 20;
+
+        doc.setFillColor(15, 23, 42);
+        doc.rect(14, currentY, 182, 8, 'F');
+
+        doc.setTextColor(255, 255, 255);
+        doc.setFont('helvetica', 'bold');
+        doc.setFontSize(7.5);
+        doc.text("SR", 16, currentY + 5.5);
+        doc.text("CLIENT NAME & CONTACT", 26, currentY + 5.5);
+        doc.text("REQUIREMENT", 74, currentY + 5.5);
+        doc.text("STAGE", 114, currentY + 5.5);
+        doc.text("VALUE (Rs)", 144, currentY + 5.5, { align: 'right' });
+        doc.text("PAID (Rs)", 168, currentY + 5.5, { align: 'right' });
+        doc.text("STATUS", 192, currentY + 5.5, { align: 'right' });
+
+        currentY += 8;
+      }
+
+      if (idx % 2 === 1) {
+        doc.setFillColor(248, 250, 252);
+        doc.rect(14, currentY, 182, rowHeight, 'F');
+      }
+
+      doc.setDrawColor(241, 245, 249);
+      doc.line(14, currentY + rowHeight, 196, currentY + rowHeight);
+
+      doc.setTextColor(slateDark[0], slateDark[1], slateDark[2]);
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(7.5);
+      doc.text(`${idx + 1}`, 16, currentY + 5.5);
+
+      const clientText = (item.name || 'Unnamed').length > 24 ? (item.name || '').substring(0, 22) + '..' : (item.name || '');
+      doc.text(clientText, 26, currentY + 4);
+
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(6.5);
+      doc.setTextColor(slateGray[0], slateGray[1], slateGray[2]);
+      doc.text(`Ph: +91 ${item.phone || 'N/A'}`, 26, currentY + 7.5);
+
+      doc.setFontSize(7);
+      doc.setTextColor(slateDark[0], slateDark[1], slateDark[2]);
+      const reqText = (item.requirement || 'Solar System').length > 22 ? (item.requirement || '').substring(0, 20) + '..' : (item.requirement || '');
+      doc.text(reqText, 74, currentY + 5.5);
+
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(6.5);
+      doc.setTextColor(slateGray[0], slateGray[1], slateGray[2]);
+      doc.text((item.status || 'NEW').toUpperCase().replace('_', ' '), 114, currentY + 5.5);
+
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(7.5);
+      doc.setTextColor(slateDark[0], slateDark[1], slateDark[2]);
+      doc.text(`Rs.${(item.totalValue || 0).toLocaleString('en-IN')}`, 144, currentY + 5.5, { align: 'right' });
+
+      doc.setTextColor(16, 185, 129);
+      doc.text(`Rs.${(item.paidAmount || 0).toLocaleString('en-IN')}`, 168, currentY + 5.5, { align: 'right' });
+
+      doc.setFontSize(6.5);
+      if (item.paymentStatus === 'Fully Paid') {
+        doc.setTextColor(16, 185, 129);
+      } else if (item.paymentStatus === 'Partially Paid') {
+        doc.setTextColor(37, 99, 235);
+      } else {
+        doc.setTextColor(217, 119, 6);
+      }
+      doc.text((item.paymentStatus || 'Pending').toUpperCase(), 192, currentY + 5.5, { align: 'right' });
+
+      currentY += rowHeight;
+    });
+
+    // Stamp & Signature block on last page
+    if (currentY > 240) {
+      doc.addPage();
+      currentY = 30;
+    } else {
+      currentY += 12;
+    }
+
+    try {
+      const stampData = await convertImageToBase64(stampImg);
+      if (stampData) {
+        doc.addImage(stampData, 'PNG', 148, currentY, 34, 17);
+      }
+    } catch (_) {}
+
+    doc.line(142, currentY + 16, 194, currentY + 16);
+    doc.setTextColor(slateDark[0], slateDark[1], slateDark[2]);
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(8);
+    doc.text("FOR GREEN ENERGY SOLUTION", 142, currentY + 20);
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(7);
+    doc.text("Authorized Accounts & Operations Officer", 142, currentY + 23.5);
+
+    return doc.output('blob');
+  },
+
+  async generateChallansReportPDF(challans: any[]): Promise<Blob> {
+    const doc = new jsPDF('p', 'mm', 'a4');
+    const logoData = await getLogoBase64();
+
+    const slateDark = [15, 23, 42];
+    const slateGray = [100, 116, 139];
+
+    // Page Header Banner
+    doc.setFillColor(15, 23, 42);
+    doc.rect(0, 0, 210, 28, 'F');
+
+    if (logoData) {
+      doc.addImage(logoData, 'PNG', 12, 4, 38, 19);
+    }
+
+    doc.setTextColor(255, 255, 255);
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(14);
+    doc.text("GREEN ENERGY SOLUTIONS", 54, 12);
+    doc.setFontSize(8);
+    doc.setFont('helvetica', 'normal');
+    doc.setTextColor(16, 185, 129);
+    doc.text("DELIVERY CHALLANS & DISPATCH EXECUTIVE REPORT", 54, 17);
+    doc.setTextColor(203, 213, 225);
+    doc.text("Address: Nagpur, Maharashtra | Phone: +91 7057433822 | Email: info@greenenergysolutions.in", 54, 22);
+
+    doc.setTextColor(slateDark[0], slateDark[1], slateDark[2]);
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(12);
+    doc.text("DELIVERY CHALLANS SUMMARY REPORT", 14, 38);
+
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(8);
+    doc.setTextColor(slateGray[0], slateGray[1], slateGray[2]);
+    doc.text(`Generated Date: ${dayjs().format('DD MMMM YYYY, hh:mm A [IST]')}`, 14, 43);
+
+    const totalChallans = challans.length;
+    const totalItems = challans.reduce((s, c) => s + (c.items ? c.items.reduce((is: number, i: any) => is + (i.qty || 0), 0) : 0), 0);
+
+    // KPI Summary Box
+    doc.setFillColor(248, 250, 252);
+    doc.roundedRect(14, 47, 182, 18, 2, 2, 'F');
+    doc.setDrawColor(226, 232, 240);
+    doc.roundedRect(14, 47, 182, 18, 2, 2, 'D');
+
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(8);
+    doc.setTextColor(slateGray[0], slateGray[1], slateGray[2]);
+    doc.text("TOTAL CHALLANS ISSUED", 20, 54);
+    doc.setFontSize(11);
+    doc.setTextColor(slateDark[0], slateDark[1], slateDark[2]);
+    doc.text(`${totalChallans} Challans`, 20, 60);
+
+    doc.setFontSize(8);
+    doc.setTextColor(slateGray[0], slateGray[1], slateGray[2]);
+    doc.text("TOTAL UNITS DISPATCHED", 110, 54);
+    doc.setFontSize(11);
+    doc.setTextColor(16, 185, 129);
+    doc.text(`${totalItems} Units`, 110, 60);
+
+    // Table Header
+    let startY = 72;
+    doc.setFillColor(15, 23, 42);
+    doc.rect(14, startY, 182, 8, 'F');
+
+    doc.setTextColor(255, 255, 255);
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(7.5);
+    doc.text("SR", 16, startY + 5.5);
+    doc.text("CHALLAN NO", 26, startY + 5.5);
+    doc.text("CUSTOMER / LEAD NAME", 66, startY + 5.5);
+    doc.text("DRIVER & VEHICLE", 120, startY + 5.5);
+    doc.text("ITEMS", 165, startY + 5.5);
+    doc.text("DATE", 192, startY + 5.5, { align: 'right' });
+
+    let currentY = startY + 8;
+    const rowHeight = 9;
+
+    challans.forEach((ch, idx) => {
+      if (currentY > 270) {
+        doc.addPage();
+        currentY = 20;
+
+        doc.setFillColor(15, 23, 42);
+        doc.rect(14, currentY, 182, 8, 'F');
+
+        doc.setTextColor(255, 255, 255);
+        doc.setFont('helvetica', 'bold');
+        doc.setFontSize(7.5);
+        doc.text("SR", 16, currentY + 5.5);
+        doc.text("CHALLAN NO", 26, currentY + 5.5);
+        doc.text("CUSTOMER / LEAD NAME", 66, currentY + 5.5);
+        doc.text("DRIVER & VEHICLE", 120, currentY + 5.5);
+        doc.text("ITEMS", 165, currentY + 5.5);
+        doc.text("DATE", 192, currentY + 5.5, { align: 'right' });
+
+        currentY += 8;
+      }
+
+      if (idx % 2 === 1) {
+        doc.setFillColor(248, 250, 252);
+        doc.rect(14, currentY, 182, rowHeight, 'F');
+      }
+
+      doc.setDrawColor(241, 245, 249);
+      doc.line(14, currentY + rowHeight, 196, currentY + rowHeight);
+
+      doc.setTextColor(slateDark[0], slateDark[1], slateDark[2]);
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(7.5);
+      doc.text(`${idx + 1}`, 16, currentY + 5.5);
+      doc.text(ch.challanNumber || `CH-${idx+1}`, 26, currentY + 5.5);
+
+      const custName = (ch.leadName || 'Customer').length > 25 ? (ch.leadName || '').substring(0, 23) + '..' : (ch.leadName || 'Customer');
+      doc.text(custName, 66, currentY + 5.5);
+
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(7);
+      doc.setTextColor(slateGray[0], slateGray[1], slateGray[2]);
+      doc.text(`${ch.driverName || 'N/A'} (${ch.vehicleNumber || 'N/A'})`, 120, currentY + 5.5);
+
+      doc.setFont('helvetica', 'bold');
+      doc.setTextColor(16, 185, 129);
+      const itemCount = ch.items ? ch.items.reduce((s: number, i: any) => s + (i.qty || 0), 0) : 0;
+      doc.text(`${itemCount} items`, 165, currentY + 5.5);
+
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(6.5);
+      doc.setTextColor(slateGray[0], slateGray[1], slateGray[2]);
+      doc.text(ch.createdAt ? dayjs(ch.createdAt).format('DD-MMM-YYYY') : 'N/A', 192, currentY + 5.5, { align: 'right' });
+
+      currentY += rowHeight;
+    });
+
+    if (currentY > 240) {
+      doc.addPage();
+      currentY = 30;
+    } else {
+      currentY += 12;
+    }
+
+    try {
+      const stampData = await convertImageToBase64(stampImg);
+      if (stampData) {
+        doc.addImage(stampData, 'PNG', 148, currentY, 34, 17);
+      }
+    } catch (_) {}
+
+    doc.setDrawColor(203, 213, 225);
+    doc.line(142, currentY + 16, 194, currentY + 16);
+    doc.setTextColor(slateDark[0], slateDark[1], slateDark[2]);
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(8);
+    doc.text("FOR GREEN ENERGY SOLUTION", 142, currentY + 20);
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(7);
+    doc.text("Authorized Dispatch Officer", 142, currentY + 23.5);
+
+    return doc.output('blob');
+  },
+
+  async generateVisitsReportPDF(visits: any[]): Promise<Blob> {
+    const doc = new jsPDF('p', 'mm', 'a4');
+    const logoData = await getLogoBase64();
+
+    const slateDark = [15, 23, 42];
+    const slateGray = [100, 116, 139];
+
+    // Page Header Banner
+    doc.setFillColor(15, 23, 42);
+    doc.rect(0, 0, 210, 28, 'F');
+
+    if (logoData) {
+      doc.addImage(logoData, 'PNG', 12, 4, 38, 19);
+    }
+
+    doc.setTextColor(255, 255, 255);
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(14);
+    doc.text("GREEN ENERGY SOLUTIONS", 54, 12);
+    doc.setFontSize(8);
+    doc.setFont('helvetica', 'normal');
+    doc.setTextColor(16, 185, 129);
+    doc.text("FIELD SITE VISITS & SURVEY EXECUTIVE REPORT", 54, 17);
+    doc.setTextColor(203, 213, 225);
+    doc.text("Address: Nagpur, Maharashtra | Phone: +91 7057433822 | Email: info@greenenergysolutions.in", 54, 22);
+
+    doc.setTextColor(slateDark[0], slateDark[1], slateDark[2]);
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(12);
+    doc.text("FIELD SITE VISITS REPORT", 14, 38);
+
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(8);
+    doc.setTextColor(slateGray[0], slateGray[1], slateGray[2]);
+    doc.text(`Generated Date: ${dayjs().format('DD MMMM YYYY, hh:mm A [IST]')}`, 14, 43);
+
+    const totalVisits = visits.length;
+    const completedVisits = visits.filter(v => v.status === 'completed' || v.status === 'done').length;
+
+    // KPI Summary Box
+    doc.setFillColor(248, 250, 252);
+    doc.roundedRect(14, 47, 182, 18, 2, 2, 'F');
+    doc.setDrawColor(226, 232, 240);
+    doc.roundedRect(14, 47, 182, 18, 2, 2, 'D');
+
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(8);
+    doc.setTextColor(slateGray[0], slateGray[1], slateGray[2]);
+    doc.text("TOTAL SITE VISITS", 20, 54);
+    doc.setFontSize(11);
+    doc.setTextColor(slateDark[0], slateDark[1], slateDark[2]);
+    doc.text(`${totalVisits} Visits`, 20, 60);
+
+    doc.setFontSize(8);
+    doc.setTextColor(slateGray[0], slateGray[1], slateGray[2]);
+    doc.text("COMPLETED VISITS", 110, 54);
+    doc.setFontSize(11);
+    doc.setTextColor(16, 185, 129);
+    doc.text(`${completedVisits} Completed`, 110, 60);
+
+    // Table Header
+    let startY = 72;
+    doc.setFillColor(15, 23, 42);
+    doc.rect(14, startY, 182, 8, 'F');
+
+    doc.setTextColor(255, 255, 255);
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(7.5);
+    doc.text("SR", 16, startY + 5.5);
+    doc.text("CLIENT & CONTACT", 24, startY + 5.5);
+    doc.text("ENGINEER", 70, startY + 5.5);
+    doc.text("IN TIME (CHECK-IN)", 105, startY + 5.5);
+    doc.text("OUT TIME (CHECK-OUT)", 148, startY + 5.5);
+    doc.text("DATE", 192, startY + 5.5, { align: 'right' });
+
+    let currentY = startY + 8;
+    const rowHeight = 9;
+
+    visits.forEach((v, idx) => {
+      if (currentY > 270) {
+        doc.addPage();
+        currentY = 20;
+
+        doc.setFillColor(15, 23, 42);
+        doc.rect(14, currentY, 182, 8, 'F');
+
+        doc.setTextColor(255, 255, 255);
+        doc.setFont('helvetica', 'bold');
+        doc.setFontSize(7.5);
+        doc.text("SR", 16, currentY + 5.5);
+        doc.text("CLIENT & CONTACT", 24, currentY + 5.5);
+        doc.text("ENGINEER", 70, currentY + 5.5);
+        doc.text("IN TIME (CHECK-IN)", 105, currentY + 5.5);
+        doc.text("OUT TIME (CHECK-OUT)", 148, currentY + 5.5);
+        doc.text("DATE", 192, currentY + 5.5, { align: 'right' });
+
+        currentY += 8;
+      }
+
+      if (idx % 2 === 1) {
+        doc.setFillColor(248, 250, 252);
+        doc.rect(14, currentY, 182, rowHeight, 'F');
+      }
+
+      doc.setDrawColor(241, 245, 249);
+      doc.line(14, currentY + rowHeight, 196, currentY + rowHeight);
+
+      doc.setTextColor(slateDark[0], slateDark[1], slateDark[2]);
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(7);
+      doc.text(`${idx + 1}`, 16, currentY + 5.5);
+
+      const clientName = (v.personMetName || v.leadName || v.clientName || 'Unnamed Client').length > 20 
+        ? (v.personMetName || v.leadName || v.clientName || '').substring(0, 18) + '..' 
+        : (v.personMetName || v.leadName || v.clientName || 'Unnamed Client');
+      doc.text(clientName, 24, currentY + 5.5);
+
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(6.5);
+      doc.setTextColor(slateGray[0], slateGray[1], slateGray[2]);
+      doc.text(v.employeeName || v.engineerName || 'Field Officer', 70, currentY + 5.5);
+
+      // Check-In Time
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(6.5);
+      doc.setTextColor(16, 185, 129);
+      doc.text(v.checkInTime || 'Not Recorded', 105, currentY + 5.5);
+
+      // Check-Out Time
+      doc.setTextColor(225, 29, 72);
+      doc.text(v.checkOutTime || 'Not Recorded', 148, currentY + 5.5);
+
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(6.5);
+      doc.setTextColor(slateGray[0], slateGray[1], slateGray[2]);
+      doc.text(v.visitedAt ? dayjs(v.visitedAt).format('DD-MMM-YYYY') : (v.createdAt ? dayjs(v.createdAt).format('DD-MMM-YYYY') : 'N/A'), 192, currentY + 5.5, { align: 'right' });
+
+      currentY += rowHeight;
+    });
+
+    if (currentY > 240) {
+      doc.addPage();
+      currentY = 30;
+    } else {
+      currentY += 12;
+    }
+
+    try {
+      const stampData = await convertImageToBase64(stampImg);
+      if (stampData) {
+        doc.addImage(stampData, 'PNG', 148, currentY, 34, 17);
+      }
+    } catch (_) {}
+
+    doc.setDrawColor(203, 213, 225);
+    doc.line(142, currentY + 16, 194, currentY + 16);
+    doc.setTextColor(slateDark[0], slateDark[1], slateDark[2]);
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(8);
+    doc.text("FOR GREEN ENERGY SOLUTION", 142, currentY + 20);
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(7);
+    doc.text("Authorized Operations Officer", 142, currentY + 23.5);
 
     return doc.output('blob');
   }

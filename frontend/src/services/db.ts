@@ -14,6 +14,12 @@ import type {
   ShadowAnalysisRecord
 } from '../types';
 
+export interface DeletedRecord {
+  id: string;
+  collectionName: string;
+  deletedAt: string;
+}
+
 export class SolarCRMDatabase extends Dexie {
   profiles!: Table<Profile>;
   leads!: Table<Lead>;
@@ -27,6 +33,7 @@ export class SolarCRMDatabase extends Dexie {
   products!: Table<Product>;
   challans!: Table<Challan>;
   shadowAnalyses!: Table<ShadowAnalysisRecord>;
+  deletedRecords!: Table<DeletedRecord>;
 
   constructor() {
     super('GreenEnergyCRMDatabase');
@@ -44,10 +51,47 @@ export class SolarCRMDatabase extends Dexie {
       challans: 'id, leadId, assignedEmployeeId, challanNumber, createdAt',
       shadowAnalyses: 'id, leadId, projectName, createdAt'
     });
+    this.version(4).stores({
+      profiles: 'id, role, isActive',
+      leads: 'id, assignedEmployeeId, status, createdAt',
+      quotations: 'id, leadId, quotationNumber, createdAt',
+      orderConfirmations: 'id, leadId, quotationId',
+      clientDocuments: 'id, leadId, docType',
+      clientRegistrations: 'leadId',
+      installationPhotos: 'id, leadId, photoType',
+      releaseDocuments: 'id, leadId',
+      fieldVisitReports: 'id, employeeId, leadId, visitedAt',
+      products: 'id, name, category',
+      challans: 'id, leadId, assignedEmployeeId, challanNumber, createdAt',
+      shadowAnalyses: 'id, leadId, projectName, createdAt',
+      deletedRecords: 'id, collectionName, deletedAt'
+    });
   }
 }
 
 export const db = new SolarCRMDatabase();
+
+export async function markRecordAsDeleted(id: string, collectionName: string): Promise<void> {
+  if (!id) return;
+  try {
+    await db.deletedRecords.put({
+      id,
+      collectionName,
+      deletedAt: new Date().toISOString()
+    });
+  } catch (err) {
+    console.warn(`Error marking ${collectionName}/${id} as deleted:`, err);
+  }
+}
+
+export async function getDeletedRecordIdsSet(): Promise<Set<string>> {
+  try {
+    const list = await db.deletedRecords.toArray();
+    return new Set(list.map(item => item.id));
+  } catch (_) {
+    return new Set();
+  }
+}
 
 export const DEFAULT_DEMO_PROFILES: Profile[] = [
   {
@@ -161,7 +205,8 @@ export async function seedDemoData(_force = false) {
     db.fieldVisitReports,
     db.products,
     db.challans,
-    db.shadowAnalyses
+    db.shadowAnalyses,
+    db.deletedRecords
   ], async () => {
     await db.leads.clear();
     await db.quotations.clear();
@@ -174,6 +219,7 @@ export async function seedDemoData(_force = false) {
     await db.products.clear();
     await db.challans.clear();
     await db.shadowAnalyses.clear();
+    await db.deletedRecords.clear();
 
     await db.profiles.bulkPut(DEFAULT_DEMO_PROFILES);
   });

@@ -51,7 +51,7 @@ export const Layout: React.FC<LayoutProps> = ({ children }) => {
     {
       name: 'Lead Pipeline',
       path: '/leads',
-      roles: ['super_admin', 'admin'],
+      roles: ['super_admin', 'admin', 'field_employee'],
       icon: Compass
     },
     {
@@ -73,9 +73,9 @@ export const Layout: React.FC<LayoutProps> = ({ children }) => {
       icon: Truck
     },
     {
-      name: 'Field Visit Reports',
+      name: 'Field Visits',
       path: '/visits',
-      roles: ['super_admin', 'admin'],
+      roles: ['super_admin', 'admin', 'field_employee'],
       icon: MapPin
     },
     {
@@ -145,27 +145,23 @@ export const Layout: React.FC<LayoutProps> = ({ children }) => {
       {/* Main Header Bar */}
       <header className="sticky top-0 z-50 bg-white text-slate-800 border-b border-slate-200/80 px-4 py-2.5 flex justify-between items-center shadow-xs select-none">
         <div className="flex items-center space-x-2">
-          {!isEmployee && (
-            <>
-              {/* Mobile menu toggle */}
-              <button
-                onClick={() => setMobileMenuOpen(true)}
-                className="p-1.5 hover:bg-slate-100 rounded-lg md:hidden text-slate-600 transition-colors cursor-pointer"
-                title="Open Navigation"
-              >
-                <Menu className="w-5 h-5" />
-              </button>
+          {/* Mobile menu toggle */}
+          <button
+            onClick={() => setMobileMenuOpen(true)}
+            className="p-1.5 hover:bg-slate-100 rounded-lg md:hidden text-slate-600 transition-colors cursor-pointer"
+            title="Open Navigation"
+          >
+            <Menu className="w-5 h-5" />
+          </button>
 
-              {/* Desktop sidebar collapse toggle */}
-              <button
-                onClick={() => setIsNavCollapsed(!isNavCollapsed)}
-                className="p-1.5 hover:bg-slate-100 text-slate-500 hover:text-slate-700 rounded-lg hidden md:inline-block transition-colors cursor-pointer"
-                title={isNavCollapsed ? "Expand Sidebar" : "Collapse Sidebar"}
-              >
-                <ChevronLeft className={`w-5 h-5 transition-transform duration-300 ${isNavCollapsed ? 'rotate-180' : ''}`} />
-              </button>
-            </>
-          )}
+          {/* Desktop sidebar collapse toggle */}
+          <button
+            onClick={() => setIsNavCollapsed(!isNavCollapsed)}
+            className="p-1.5 hover:bg-slate-100 text-slate-500 hover:text-slate-700 rounded-lg hidden md:inline-block transition-colors cursor-pointer"
+            title={isNavCollapsed ? "Expand Sidebar" : "Collapse Sidebar"}
+          >
+            <ChevronLeft className={`w-5 h-5 transition-transform duration-300 ${isNavCollapsed ? 'rotate-180' : ''}`} />
+          </button>
           <Link to="/" className="flex items-center">
             <img
               src={logoImg}
@@ -203,11 +199,10 @@ export const Layout: React.FC<LayoutProps> = ({ children }) => {
       </header>
 
       <div className="flex-1 flex overflow-hidden">
-        {/* Sidebar Navigation - Desktop only (Super Admin + Admin) */}
-        {!isEmployee && (
-          <aside className={`bg-white border-r border-slate-200 hidden md:flex flex-col justify-between shrink-0 transition-all duration-300 ${
-            isNavCollapsed ? 'w-16' : 'w-64'
-          }`}>
+        {/* Sidebar Navigation - Desktop */}
+        <aside className={`bg-white border-r border-slate-200 hidden md:flex flex-col justify-between shrink-0 transition-all duration-300 ${
+          isNavCollapsed ? 'w-16' : 'w-64'
+        }`}>
             <div className={`space-y-6 ${isNavCollapsed ? 'p-2' : 'p-4'}`}>
               {/* Navigation Menu */}
               <nav className="space-y-1">
@@ -250,7 +245,6 @@ export const Layout: React.FC<LayoutProps> = ({ children }) => {
               )}
             </div>
           </aside>
-        )}
 
         {/* Main Content Area */}
         <main className="flex-1 overflow-y-auto px-3 sm:px-6 py-6 pb-20 md:pb-8 transition-all">
@@ -282,8 +276,8 @@ export const Layout: React.FC<LayoutProps> = ({ children }) => {
         </nav>
       )}
 
-      {/* Mobile drawer sidebar - only for Admin / Super Admin */}
-      {!isEmployee && mobileMenuOpen && (
+      {/* Mobile drawer sidebar */}
+      {mobileMenuOpen && (
         <div className="fixed inset-0 z-50 flex md:hidden bg-slate-900/40 backdrop-blur-xs">
           <div className="w-64 bg-white h-full flex flex-col justify-between p-4 shadow-2xl">
             <div className="space-y-6">

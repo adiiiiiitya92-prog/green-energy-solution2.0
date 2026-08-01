@@ -344,16 +344,18 @@ export const Leads: React.FC = () => {
       const items: LeadReportItem[] = [];
       const finMap: Record<string, { totalValue: number; paidAmount: number; pendingBalance: number; paymentStatus: string; installmentCount: number }> = {};
       for (const l of leads) {
+        let totalValue = 0;
+        let paidAmount = 0;
+        let installmentCount = 0;
+
         const oc = await orderService.getOrderConfirmationByLeadId(l.id);
         const quotes = await quotationService.getQuotationsByLeadId(l.id);
         const mainQuote = quotes[0];
 
         const quoteTotal = mainQuote ? (mainQuote.grandTotal || mainQuote.total || mainQuote.subtotal || 0) : 0;
-        if (quoteTotal > 0) {
-          totalValue = quoteTotal;
-        } else if (oc) {
-          totalValue = oc.subtotal || 0;
-        }
+        const ocSubtotal = oc ? (oc.subtotal || (oc.itemsConfirmed ? oc.itemsConfirmed.reduce((s, i) => s + (i.amount || 0), 0) : 0) || oc.advanceAmount || 0) : 0;
+
+        totalValue = quoteTotal > 0 ? quoteTotal : ocSubtotal;
 
         if (oc) {
           const pList = (oc.payments && oc.payments.length > 0)
@@ -363,6 +365,10 @@ export const Leads: React.FC = () => {
             : [];
           paidAmount = pList.reduce((s, p) => s + (p.amount || 0), 0);
           installmentCount = pList.length;
+
+          if (totalValue <= 0 && paidAmount > 0) {
+            totalValue = paidAmount;
+          }
         }
 
         const pendingBalance = Math.max(0, totalValue - paidAmount);
@@ -3205,7 +3211,9 @@ export const Leads: React.FC = () => {
                           ) : (
                             <div className="mt-3 p-2 px-3 bg-slate-50 border border-slate-200 rounded-xl flex items-center justify-between text-[11px] font-semibold text-slate-400">
                               <span>💰 Payment Status:</span>
-                              <span className="italic font-bold text-slate-500">No Quotation Created Yet</span>
+                              <span className="italic font-bold text-slate-500">
+                                {lead.status === 'quotation_sent' || lead.status === 'confirmed' ? 'Quotation Sent (Pending Order Booking)' : 'No Quotation Created Yet'}
+                              </span>
                             </div>
                           )}
                         </div>

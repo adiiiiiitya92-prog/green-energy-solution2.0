@@ -230,36 +230,51 @@ export function sortAndFormatBomItems(items: BomItem[]): BomItem[] {
   });
 }
 
-function sanitizeQuotationRecord(qData: any): Quotation {
-  if (!qData) return qData;
-  const { pdfBlob, ...cleanObj } = qData;
-  return cleanObj as Quotation;
+export function getQuotationTotalAmount(q: any): number {
+  if (!q) return 0;
+  if (typeof q.grandTotal === 'number' && q.grandTotal > 0) return q.grandTotal;
+  if (typeof q.total === 'number' && q.total > 0) return q.total;
+  if (typeof q.subtotal === 'number' && q.subtotal > 0) return q.subtotal;
+  if (Array.isArray(q.items) && q.items.length > 0) {
+    const sum = q.items.reduce((s: number, i: any) => s + (Number(i.amount) || Number(i.rate) || 0), 0);
+    if (sum > 0) return sum;
+  }
+  return 0;
+}
+
+export function sanitizeQuotationRecord(q: Quotation): Quotation {
+  if (!q) return q;
+  const tot = getQuotationTotalAmount(q);
+  return {
+    ...q,
+    grandTotal: tot,
+    subtotal: q.subtotal || tot,
+    total: q.total || tot
+  };
 }
 
 export const quotationService = {
-  async getQuotations(): Promise<Quotation[]> {
+  async getAllQuotations(): Promise<Quotation[]> {
     const deletedRecordIds = await getDeletedRecordIdsSet();
-    const localLeads = await db.leads.toArray();
-    const validLeadIds = new Set(localLeads.map(l => l.id).filter(id => !deletedRecordIds.has(id)));
-
-    const cachedQuotes = await db.quotations.orderBy('createdAt').reverse().toArray();
-    const filteredCached = cachedQuotes.filter(q => !deletedRecordIds.has(q.id) && (!q.leadId || validLeadIds.has(q.leadId)));
+    const allLocal = await db.quotations.orderBy('createdAt').reverse().toArray();
+    const validLocal = allLocal.filter(q => !deletedRecordIds.has(q.id) && q.items && q.items.length > 0 && getQuotationTotalAmount(q) > 0);
 
     const syncRemote = async () => {
       try {
         const remoteQuotes = await fetchCollectionFromFirestore<Quotation>('quotations');
         if (Array.isArray(remoteQuotes) && remoteQuotes.length > 0) {
           const freshDeleted = await getDeletedRecordIdsSet();
-          const validRemote = remoteQuotes.filter(q => !freshDeleted.has(q.id) && (!q.leadId || validLeadIds.has(q.leadId)));
+          const validRemote = remoteQuotes.filter(q => !freshDeleted.has(q.id) && q.items && q.items.length > 0 && getQuotationTotalAmount(q) > 0);
           const remoteIds = new Set(validRemote.map(q => q.id));
+
           const currentLocal = await db.quotations.toArray();
-          const deletedIds = currentLocal.filter(q => !remoteIds.has(q.id) || freshDeleted.has(q.id)).map(q => q.id);
+          const toDelete = currentLocal.filter(q => !remoteIds.has(q.id) || freshDeleted.has(q.id)).map(q => q.id);
 
           if (validRemote.length > 0) {
             await db.quotations.bulkPut(validRemote.map(sanitizeQuotationRecord));
           }
-          if (deletedIds.length > 0) {
-            await db.quotations.bulkDelete(deletedIds);
+          if (toDelete.length > 0) {
+            await db.quotations.bulkDelete(toDelete);
           }
         }
       } catch (err) {
@@ -267,15 +282,15 @@ export const quotationService = {
       }
     };
 
-    if (filteredCached.length > 0) {
+    if (validLocal.length > 0) {
       syncRemote();
-      return filteredCached;
+      return validLocal.map(sanitizeQuotationRecord);
     }
 
     await syncRemote();
+    const refreshed = await db.quotations.orderBy('createdAt').reverse().toArray();
     const freshDeleted = await getDeletedRecordIdsSet();
-    const finalQuotes = await db.quotations.orderBy('createdAt').reverse().toArray();
-    return finalQuotes.filter(q => !freshDeleted.has(q.id) && (!q.leadId || validLeadIds.has(q.leadId)));
+    return refreshed.filter(q => !freshDeleted.has(q.id) && q.items && q.items.length > 0 && getQuotationTotalAmount(q) > 0).map(sanitizeQuotationRecord);
   },
 
   async getQuotationById(id: string): Promise<Quotation | undefined> {
@@ -299,10 +314,10 @@ export const quotationService = {
       }
     }
 
-    if (q && (!q.items || q.items.length === 0 || q.grandTotal <= 0)) {
+    if (q && (!q.items || q.items.length === 0 || getQuotationTotalAmount(q) <= 0)) {
       return undefined;
     }
-    return q;
+    return q ? sanitizeQuotationRecord(q) : undefined;
   },
 
   async getQuotationsByLeadId(leadId: string): Promise<Quotation[]> {
@@ -310,7 +325,7 @@ export const quotationService = {
     if (deletedRecordIds.has(leadId)) return [];
 
     let quotes = await db.quotations.where({ leadId }).reverse().sortBy('createdAt');
-    let validQuotes = quotes.filter(q => !deletedRecordIds.has(q.id) && q.items && q.items.length > 0 && q.grandTotal > 0);
+    let validQuotes = quotes.filter(q => !deletedRecordIds.has(q.id) && q.items && q.items.length > 0 && getQuotationTotalAmount(q) > 0);
 
     // If local cache is empty, sync from Firestore first (handles reload/signout scenarios)
     if (validQuotes.length === 0) {
@@ -318,13 +333,13 @@ export const quotationService = {
         const remoteQuotes = await fetchCollectionFromFirestore<Quotation>('quotations');
         if (Array.isArray(remoteQuotes) && remoteQuotes.length > 0) {
           const freshDeleted = await getDeletedRecordIdsSet();
-          const forThisLead = remoteQuotes.filter(q => !freshDeleted.has(q.id) && q.leadId === leadId);
+          const forThisLead = remoteQuotes.filter(q => !freshDeleted.has(q.id) && q.leadId === leadId && q.items && q.items.length > 0 && getQuotationTotalAmount(q) > 0);
           if (forThisLead.length > 0) {
             await db.quotations.bulkPut(forThisLead.map(sanitizeQuotationRecord));
           }
           // Re-read after sync
           quotes = await db.quotations.where({ leadId }).reverse().sortBy('createdAt');
-          validQuotes = quotes.filter(q => !freshDeleted.has(q.id) && q.items && q.items.length > 0 && q.grandTotal > 0);
+          validQuotes = quotes.filter(q => !freshDeleted.has(q.id) && q.items && q.items.length > 0 && getQuotationTotalAmount(q) > 0);
         }
       } catch (err) {
         console.warn("Firestore quotation sync for lead note:", err);
@@ -334,7 +349,7 @@ export const quotationService = {
       fetchCollectionFromFirestore<Quotation>('quotations').then(async (remoteQuotes) => {
         if (Array.isArray(remoteQuotes) && remoteQuotes.length > 0) {
           const freshDeleted = await getDeletedRecordIdsSet();
-          const forThisLead = remoteQuotes.filter(q => !freshDeleted.has(q.id) && q.leadId === leadId);
+          const forThisLead = remoteQuotes.filter(q => !freshDeleted.has(q.id) && q.leadId === leadId && q.items && q.items.length > 0 && getQuotationTotalAmount(q) > 0);
           if (forThisLead.length > 0) {
             db.quotations.bulkPut(forThisLead.map(sanitizeQuotationRecord)).catch(() => {});
           }
@@ -343,7 +358,7 @@ export const quotationService = {
     }
 
     // Purge any orphan zero-total / zero-item quotations from local & remote DB
-    const zeroQuotes = quotes.filter(q => !q.items || q.items.length === 0 || q.grandTotal <= 0);
+    const zeroQuotes = quotes.filter(q => !q.items || q.items.length === 0 || getQuotationTotalAmount(q) <= 0);
     if (zeroQuotes.length > 0) {
       for (const zq of zeroQuotes) {
         db.quotations.delete(zq.id).catch(() => {});
@@ -351,17 +366,17 @@ export const quotationService = {
         deleteRecordFromFirestore('quotations', zq.id).catch(() => {});
       }
     }
-    return validQuotes;
+    return validQuotes.map(sanitizeQuotationRecord);
   },
 
   async createQuotation(qData: Omit<Quotation, 'id' | 'createdAt'> & { id?: string }): Promise<string> {
-    if (!qData.items || qData.items.length === 0 || (qData.grandTotal !== undefined && qData.grandTotal <= 0)) {
+    if (!qData.items || qData.items.length === 0 || getQuotationTotalAmount(qData) <= 0) {
       console.warn("⚠️ Cannot create/save quotation without commercial product items or with 0 grand total.");
       return '';
     }
 
     const existingQuotes = await db.quotations.where({ leadId: qData.leadId }).toArray();
-    const validExisting = existingQuotes.filter(q => q.items && q.items.length > 0 && q.grandTotal > 0);
+    const validExisting = existingQuotes.filter(q => q.items && q.items.length > 0 && getQuotationTotalAmount(q) > 0);
     
     const existingById = qData.id ? validExisting.find(q => q.id === qData.id) : null;
     const existingByNum = qData.quotationNumber ? validExisting.find(q => q.quotationNumber === qData.quotationNumber) : null;

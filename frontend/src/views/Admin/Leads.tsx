@@ -1402,7 +1402,15 @@ export const Leads: React.FC = () => {
 
                 {/* 9-Page Full Turnkey Solar Quotation Document Generator */}
                 <div className="border border-slate-200 rounded-2xl overflow-hidden shadow-md bg-slate-900/5">
-                  <QuotationDocument defaultLeadId={selectedLead?.id} isEmbedded={true} onNavigateToOrderKyc={() => switchTab('order')} />
+                  <QuotationDocument
+                    defaultLeadId={selectedLead?.id}
+                    isEmbedded={true}
+                    onNavigateToOrderKyc={() => switchTab('order')}
+                    onQuotationSaved={() => {
+                      loadData();
+                      if (selectedLead) handleSelectLead(selectedLead);
+                    }}
+                  />
                 </div>
 
                 {/* Generated Quotations History */}

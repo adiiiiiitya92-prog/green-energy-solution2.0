@@ -42,7 +42,8 @@ export const QuotationDocument: React.FC<{
   onClosePreview?: () => void;
   onNavigateToOrderKyc?: () => void;
   onSwitchToEdit?: () => void;
-}> = ({ defaultLeadId, isEmbedded, readOnlyQuotation, viewOnly = false, onClosePreview, onNavigateToOrderKyc, onSwitchToEdit }) => {
+  onQuotationSaved?: () => void;
+}> = ({ defaultLeadId, isEmbedded, readOnlyQuotation, viewOnly = false, onClosePreview, onNavigateToOrderKyc, onSwitchToEdit, onQuotationSaved }) => {
   const [isViewOnlyMode, setIsViewOnlyMode] = useState<boolean>(viewOnly);
   const [leads, setLeads] = useState<Lead[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
@@ -660,6 +661,20 @@ export const QuotationDocument: React.FC<{
       };
 
       const qId = await quotationService.createQuotation(quotationRecord);
+
+      // Ensure lead status is updated to quotation_sent in DB & Firestore
+      if (targetLeadId) {
+        try {
+          const targetLead = await leadService.getLeadById(targetLeadId);
+          if (targetLead && targetLead.status === 'new') {
+            await leadService.updateLeadStatus(targetLeadId, 'quotation_sent');
+          }
+        } catch (_) {}
+      }
+
+      if (onQuotationSaved) {
+        onQuotationSaved();
+      }
       if (!qId) return null;
       const fullQuotation = await quotationService.getQuotationById(qId);
       

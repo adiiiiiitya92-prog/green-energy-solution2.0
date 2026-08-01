@@ -347,12 +347,14 @@ export const Leads: React.FC = () => {
         const quotes = await quotationService.getQuotationsByLeadId(l.id);
         const mainQuote = quotes[0];
 
-        let totalValue = 0;
-        let paidAmount = 0;
-        let installmentCount = 0;
+        const quoteTotal = mainQuote ? (mainQuote.grandTotal || mainQuote.total || mainQuote.subtotal || 0) : 0;
+        if (quoteTotal > 0) {
+          totalValue = quoteTotal;
+        } else if (oc) {
+          totalValue = oc.subtotal || 0;
+        }
 
         if (oc) {
-          totalValue = oc.subtotal || mainQuote?.grandTotal || 0;
           const pList = (oc.payments && oc.payments.length > 0)
             ? oc.payments
             : (oc.advanceAmount && oc.advanceAmount > 0)
@@ -360,8 +362,6 @@ export const Leads: React.FC = () => {
             : [];
           paidAmount = pList.reduce((s, p) => s + (p.amount || 0), 0);
           installmentCount = pList.length;
-        } else if (mainQuote) {
-          totalValue = mainQuote.grandTotal || 0;
         }
 
         const pendingBalance = Math.max(0, totalValue - paidAmount);
@@ -559,14 +559,24 @@ export const Leads: React.FC = () => {
     if (quotations.length > 0) {
       const q = quotations[0];
       setBookingItems(q.items || []);
-      if (!oc) {
+      const latestQuoteTotal = q.grandTotal || q.total || q.subtotal || 0;
+
+      if (oc && latestQuoteTotal > 0 && oc.subtotal !== latestQuoteTotal) {
+        oc.subtotal = latestQuoteTotal;
+        oc.itemsConfirmed = q.items || oc.itemsConfirmed || [];
+        try {
+          await orderService.updateOrderConfirmation(oc);
+        } catch (e) {
+          console.warn("OC sync note:", e);
+        }
+      } else if (!oc) {
         const ocId = 'oc_' + Math.random().toString(36).substring(2, 11);
         const newOc: OrderConfirmation = {
           id: ocId,
           leadId: lead.id,
           quotationId: q.id,
           itemsConfirmed: q.items || [],
-          subtotal: q.grandTotal || q.subtotal || 0,
+          subtotal: latestQuoteTotal,
           advanceAmount: 0,
           paymentMode: 'transaction_id',
           clientSignatureBlob: '',
@@ -1388,7 +1398,8 @@ export const Leads: React.FC = () => {
             {/* Tab 3: Order Booking & KYC */}
             {activeTab === 'order' && (() => {
               const paymentsList = getPaymentsList(existingOc);
-              const orderSubtotal = existingOc?.subtotal || bookingItems.reduce((s, i) => s + i.amount, 0);
+              const itemsSubtotal = bookingItems.reduce((s, i) => s + (i.amount || 0), 0);
+              const orderSubtotal = existingOc?.subtotal || (itemsSubtotal > 0 ? itemsSubtotal : 0);
               const totalPaid = paymentsList.reduce((s, p) => s + p.amount, 0);
               const remainingBalance = Math.max(0, orderSubtotal - totalPaid);
               const nextInstallmentNo = paymentsList.length + 1;

@@ -342,6 +342,7 @@ export const Leads: React.FC = () => {
   const compileReportItems = async () => {
     try {
       const items: LeadReportItem[] = [];
+      const finMap: Record<string, { totalValue: number; paidAmount: number; pendingBalance: number; paymentStatus: string; installmentCount: number }> = {};
       for (const l of leads) {
         const oc = await orderService.getOrderConfirmationByLeadId(l.id);
         const quotes = await quotationService.getQuotationsByLeadId(l.id);
@@ -372,7 +373,7 @@ export const Leads: React.FC = () => {
           else paymentStatus = 'Pending';
         }
 
-        items.push({
+        const itemData = {
           leadId: l.id,
           name: l.name || 'Unnamed Client',
           phone: l.phoneNumber || '',
@@ -386,9 +387,19 @@ export const Leads: React.FC = () => {
           pendingBalance,
           paymentStatus,
           installmentCount
-        });
+        };
+
+        items.push(itemData);
+        finMap[l.id] = {
+          totalValue,
+          paidAmount,
+          pendingBalance,
+          paymentStatus,
+          installmentCount
+        };
       }
       setReportItems(items);
+      setLeadFinancialMap(finMap);
     } catch (err) {
       console.error("Error generating lead report items:", err);
     }
@@ -518,7 +529,7 @@ export const Leads: React.FC = () => {
     if (leads.length > 0) {
       compileReportItems();
     }
-  }, [leads.length]);
+  }, [leads]);
 
   // Helper to normalize payments list for backward compatibility
   const getPaymentsList = (oc: OrderConfirmation | null): PaymentInstallment[] => {
@@ -2924,10 +2935,18 @@ export const Leads: React.FC = () => {
             }).length;
 
             const filteredLeads = leads.filter(lead => {
-              const matchesSearch = !searchTerm || 
-                lead.name.toLowerCase().includes(searchTerm.toLowerCase()) || 
-                lead.phoneNumber.includes(searchTerm) ||
-                (lead.requirement || '').toLowerCase().includes(searchTerm.toLowerCase());
+              const searchStr = (searchTerm || '').toLowerCase().trim();
+              const fin = leadFinancialMap[lead.id];
+              const matchesSearch = !searchStr || 
+                lead.name.toLowerCase().includes(searchStr) || 
+                lead.phoneNumber.includes(searchStr) ||
+                (lead.requirement || '').toLowerCase().includes(searchStr) ||
+                (fin && (
+                  fin.pendingBalance.toString().includes(searchStr) ||
+                  fin.totalValue.toString().includes(searchStr) ||
+                  fin.paidAmount.toString().includes(searchStr) ||
+                  fin.paymentStatus.toLowerCase().includes(searchStr)
+                ));
 
               const matchesStatus = !statusFilter || lead.status === statusFilter;
               const matchesEmployee = !employeeFilter || 
@@ -2940,7 +2959,6 @@ export const Leads: React.FC = () => {
                 (hotFilter === 'hot' && isHot) || 
                 (hotFilter === 'normal' && !isHot);
 
-              const fin = leadFinancialMap[lead.id];
               let matchesBalance = true;
               if (balanceFilter === 'pending') {
                 matchesBalance = !!fin && fin.pendingBalance > 0;

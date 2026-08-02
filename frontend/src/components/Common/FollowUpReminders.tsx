@@ -63,7 +63,7 @@ export const FollowUpReminders: React.FC<{
     try {
       const [leads, quotations] = await Promise.all([
         leadService.getLeads(),
-        quotationService.getQuotations()
+        quotationService.getAllQuotations()
       ]);
 
       const leadMap = new Map<string, Lead>();
@@ -72,6 +72,8 @@ export const FollowUpReminders: React.FC<{
       // Group by leadId / clientMobile to keep ONLY 1 latest follow-up card per client
       const latestItemPerClientMap = new Map<string, FollowUpItem>();
 
+      const isValidDate = (d?: string) => Boolean(d && typeof d === 'string' && d.trim() !== '' && dayjs(d).isValid());
+
       // 1. Process Quotations (sorted newest first)
       const sortedQuotations = [...quotations].sort((a, b) => 
         dayjs(b.createdAt || b.proposalDate).valueOf() - dayjs(a.createdAt || a.proposalDate).valueOf()
@@ -79,7 +81,8 @@ export const FollowUpReminders: React.FC<{
 
       sortedQuotations.forEach(q => {
         const lead = leadMap.get(q.leadId);
-        const fDate = q.followUpDate ? dayjs(q.followUpDate).format('YYYY-MM-DD') : '';
+        const rawDate = q.followUpDate || lead?.nextFollowUpDate;
+        const fDate = isValidDate(rawDate) ? dayjs(rawDate).format('YYYY-MM-DD') : '';
         const cleanPhone = (q.consumerMobile || lead?.phoneNumber || '').replace(/\D/g, '');
         const clientKey = q.leadId || cleanPhone || q.id;
 
@@ -97,7 +100,7 @@ export const FollowUpReminders: React.FC<{
             followUpSetAt: q.followUpSetAt || q.createdAt,
             followUpSetBy: q.createdBy || q.preparedBy || 'Admin',
             notes: q.followUpNotes || `Quotation ${q.quotationNumber} issued. Follow up for order finalization.`,
-            completed: q.followUpCompleted || false,
+            completed: q.followUpCompleted || lead?.followUpCompleted || false,
             quotationNumber: q.quotationNumber,
             systemCapacity: q.systemCapacity,
             grandTotal: q.grandTotal,
@@ -109,13 +112,15 @@ export const FollowUpReminders: React.FC<{
         }
       });
 
-      // 2. Process Leads without quotation follow-up
+      // 2. Process Leads (Lead nextFollowUpDate takes primary precedence)
       leads.forEach(lead => {
-        const fDate = lead.nextFollowUpDate ? dayjs(lead.nextFollowUpDate).format('YYYY-MM-DD') : '';
+        const rawDate = lead.nextFollowUpDate;
+        const fDate = isValidDate(rawDate) ? dayjs(rawDate).format('YYYY-MM-DD') : '';
         const cleanPhone = (lead.phoneNumber || '').replace(/\D/g, '');
         const clientKey = lead.id || cleanPhone;
 
-        if (fDate && !latestItemPerClientMap.has(clientKey)) {
+        if (fDate) {
+          const existingQ = latestItemPerClientMap.get(clientKey);
           latestItemPerClientMap.set(clientKey, {
             id: `l_${lead.id}`,
             leadId: lead.id,
@@ -123,16 +128,20 @@ export const FollowUpReminders: React.FC<{
             clientMobile: lead.phoneNumber,
             clientEmail: lead.email,
             city: lead.description ? lead.description.split(',')[0] : 'Nagpur',
-            requirement: lead.requirement || 'Solar Power System',
+            requirement: existingQ?.requirement || lead.requirement || 'Solar Power System',
             status: lead.status,
             followUpDate: fDate,
             followUpSetAt: lead.followUpSetAt || lead.createdAt,
             followUpSetBy: lead.followUpSetBy || lead.createdBy || 'Admin',
-            notes: lead.followUpNotes || 'Scheduled lead follow-up call.',
+            notes: lead.followUpNotes || existingQ?.notes || 'Scheduled lead follow-up call.',
             completed: lead.followUpCompleted || false,
+            quotationNumber: existingQ?.quotationNumber,
+            systemCapacity: existingQ?.systemCapacity,
+            grandTotal: existingQ?.grandTotal,
+            subsidyAmount: existingQ?.subsidyAmount,
             assignedSalesPersonId: lead.assignedSalesPersonId,
             assignedAdminId: lead.assignedAdminId,
-            sourceType: 'lead'
+            sourceType: existingQ ? 'quotation' : 'lead'
           });
         }
       });
@@ -150,6 +159,13 @@ export const FollowUpReminders: React.FC<{
 
   useEffect(() => {
     fetchFollowUps();
+    const handleRealtimeUpdate = () => {
+      fetchFollowUps();
+    };
+    window.addEventListener('app-realtime-update', handleRealtimeUpdate);
+    return () => {
+      window.removeEventListener('app-realtime-update', handleRealtimeUpdate);
+    };
   }, []);
 
   const todayStr = dayjs().format('YYYY-MM-DD');
@@ -437,7 +453,7 @@ export const FollowUpReminders: React.FC<{
             <p className="text-xs text-slate-400 font-medium animate-pulse">Loading Client Follow-up Reminders...</p>
           </div>
         ) : currentList.length === 0 ? (
-          <div className="py-12 text-center bg-slate-50/70 border border-dashed border-slate-200 rounded-2xl space-y-2">
+          <div className="py-12 text-center bg-slate-50/70 border border-dashed border-slate-200 rounded-2xl space-y-3">
             <CalendarCheck className="w-10 h-10 text-slate-300 mx-auto" />
             <h4 className="text-sm font-bold text-slate-700">No {activeTab} follow-up reminders found</h4>
             <p className="text-xs text-slate-400 max-w-sm mx-auto">
@@ -445,6 +461,30 @@ export const FollowUpReminders: React.FC<{
                 ? "Awesome! No follow-up calls are due for today."
                 : `No client follow-up reminders in the "${activeTab}" category.`}
             </p>
+            {activeTab === 'today' && upcomingReminders.length > 0 && (
+              <div className="pt-2">
+                <button
+                  type="button"
+                  onClick={() => setActiveTab('upcoming')}
+                  className="inline-flex items-center gap-2 px-4 py-2 bg-blue-50 hover:bg-blue-100 border border-blue-200 text-blue-700 font-extrabold text-xs rounded-xl transition-all cursor-pointer shadow-xs"
+                >
+                  <span>📅 View {upcomingReminders.length} Upcoming Scheduled Follow-up(s)</span>
+                  <ChevronRight className="w-4 h-4 text-blue-600" />
+                </button>
+              </div>
+            )}
+            {activeTab === 'today' && overdueReminders.length > 0 && (
+              <div className="pt-2">
+                <button
+                  type="button"
+                  onClick={() => setActiveTab('overdue')}
+                  className="inline-flex items-center gap-2 px-4 py-2 bg-amber-50 hover:bg-amber-100 border border-amber-200 text-amber-800 font-extrabold text-xs rounded-xl transition-all cursor-pointer shadow-xs"
+                >
+                  <span>⚠️ View {overdueReminders.length} Overdue Follow-up(s)</span>
+                  <ChevronRight className="w-4 h-4 text-amber-600" />
+                </button>
+              </div>
+            )}
           </div>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5">

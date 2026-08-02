@@ -19,13 +19,14 @@ import { QuotationDocument } from './views/Admin/QuotationDocument';
 
 import { InventoryPanel } from './views/InventoryManager/InventoryPanel';
 
-import { syncAllLocalDataToFirestore } from './services/firebase';
+import { syncAllLocalDataToFirestore, initializeRealtimeFirestoreSync } from './services/firebase';
 
 export const App: React.FC = () => {
   const { currentRole, initAuth, isLoading, isAuthenticated } = useAuthStore();
 
   useEffect(() => {
     initAuth();
+    initializeRealtimeFirestoreSync();
     syncAllLocalDataToFirestore();
 
     // Auto-purge legacy PWA Service Worker caches that lock old JS bundles

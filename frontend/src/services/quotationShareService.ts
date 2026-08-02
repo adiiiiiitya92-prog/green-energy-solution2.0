@@ -1,6 +1,6 @@
 import type { Quotation, Lead } from '../types';
-import { quotationService } from './quotationService';
-import { pdfService } from './pdfService';
+import { quotationService, getCleanWhatsAppPhone } from './quotationService';
+import { ensurePdfBlobForQuotation } from './pdfCacheService';
 
 export interface ShareQuotationParams {
   quotation: Quotation;
@@ -10,32 +10,20 @@ export interface ShareQuotationParams {
 
 /**
  * Ultra-fast WhatsApp PDF share.
- * Just shares the PDF file directly — no text, no links, no cloud upload.
- * Uses navigator.share() to open WhatsApp with the PDF attached.
+ * Shares the PDF file directly via native Web Share API on mobile without requiring prior download.
+ * Uses persistent PDF Blob Cache to instantly retrieve cached PDF blob in 0ms.
  */
 export async function shareQuotationViaWhatsapp(params: ShareQuotationParams): Promise<{ success: boolean; method: 'native' | 'fallback' }> {
   const { quotation, lead } = params;
   let pdfBlob = params.pdfBlob;
 
-  // Get PDF blob — use cached/provided blob for instant speed
+  // Retrieve or ensure PDF blob is cached for instant speed
   if (!pdfBlob) {
-    if (quotation.pdfBlob) {
-      pdfBlob = quotation.pdfBlob;
-    } else {
-      const mockLead: Lead = lead || {
-        id: quotation.leadId || '',
-        name: quotation.consumerName || 'Valued Customer',
-        phoneNumber: quotation.consumerMobile || '',
-        email: quotation.consumerEmail || '',
-        requirement: `${quotation.systemCapacity || 'Solar Rooftop'} System`,
-        description: quotation.city || '',
-        createdBy: quotation.preparedBy || quotation.createdBy || 'Admin',
-        status: 'quotation_sent',
-        createdAt: quotation.createdAt || new Date().toISOString(),
-        updatedAt: new Date().toISOString()
-      };
-      pdfBlob = await pdfService.generateQuotationPDF(quotation, mockLead, quotation.preparedBy || quotation.createdBy || 'Admin');
-    }
+    pdfBlob = await ensurePdfBlobForQuotation(
+      quotation,
+      lead,
+      quotation.preparedBy || quotation.createdBy || 'Admin'
+    );
   }
 
   if (!pdfBlob) {
@@ -48,28 +36,54 @@ export async function shareQuotationViaWhatsapp(params: ShareQuotationParams): P
   const pdfFileName = `Solar_Quotation_${sanitizedPropNo}.pdf`;
   const pdfFile = new File([pdfBlob], pdfFileName, { type: 'application/pdf' });
 
-  // Native Share API — directly opens WhatsApp with PDF file attached
+  const rawMobile = quotation.consumerMobile || lead?.phoneNumber;
+  const cleanPhone = getCleanWhatsAppPhone(rawMobile);
+  const consumerName = quotation.consumerName || lead?.name || 'Valued Customer';
+  
+  let shareText = `Dear ${consumerName}, Greetings from Green Energy Solutions! ☀️\n\nPlease find attached our official Solar Rooftop Proposal (${propNo}) for your reference.`;
+  if (quotation.pdfUrl && typeof quotation.pdfUrl === 'string' && quotation.pdfUrl.startsWith('http')) {
+    shareText += `\n📄 Download Proposal PDF: ${quotation.pdfUrl}`;
+  }
+
+  // Native Web Share API (Mobile Android / iOS):
+  // Immediately opens WhatsApp / WhatsApp Business directly with PDF attached
   if (typeof navigator !== 'undefined' && (navigator as any).canShare && (navigator as any).canShare({ files: [pdfFile] })) {
     try {
-      await (navigator as any).share({ files: [pdfFile] });
-      // Fire-and-forget DB update
-      if (quotation.id) quotationService.markQuotationAsSent(quotation.id).catch(() => {});
+      await (navigator as any).share({
+        files: [pdfFile],
+        title: `Solar Proposal - ${sanitizedPropNo}`,
+        text: shareText
+      });
+      if (quotation.id && quotation.id !== 'temp') {
+        quotationService.markQuotationAsSent(quotation.id).catch(() => {});
+      }
       return { success: true, method: 'native' };
     } catch (err: any) {
       if (err?.name === 'AbortError') return { success: false, method: 'native' };
+      console.warn('Native share fallback note:', err);
     }
   }
 
-  // Fallback for desktop: auto-download PDF + open WhatsApp
-  const blobUrl = URL.createObjectURL(pdfBlob);
-  const a = document.createElement('a');
-  a.href = blobUrl;
-  a.download = pdfFileName;
-  a.click();
-  setTimeout(() => URL.revokeObjectURL(blobUrl), 5000);
+  // Desktop / Web Fallback:
+  // Opens WhatsApp Web chat directly with phone number & text pre-filled
+  const whatsappUrl = cleanPhone
+    ? `https://api.whatsapp.com/send?phone=${cleanPhone}&text=${encodeURIComponent(shareText)}`
+    : `https://web.whatsapp.com/`;
 
-  window.open('https://web.whatsapp.com/', '_blank');
+  // Only download local file as backup if cloud link is not available
+  if (!quotation.pdfUrl) {
+    const blobUrl = URL.createObjectURL(pdfBlob);
+    const a = document.createElement('a');
+    a.href = blobUrl;
+    a.download = pdfFileName;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(blobUrl), 5000);
+  }
 
-  if (quotation.id) quotationService.markQuotationAsSent(quotation.id).catch(() => {});
+  window.open(whatsappUrl, '_blank');
+
+  if (quotation.id && quotation.id !== 'temp') {
+    quotationService.markQuotationAsSent(quotation.id).catch(() => {});
+  }
   return { success: true, method: 'fallback' };
 }

@@ -6,9 +6,10 @@ import { orderService } from '../../services/orderService';
 import { visitService } from '../../services/visitService';
 import { employeeService } from '../../services/employeeService';
 import { productService } from '../../services/productService';
+import { useAuthStore } from '../../store/authStore';
 import { FollowUpReminders } from '../../components/Common/FollowUpReminders';
-import type { Lead, Quotation, OrderConfirmation, Profile, Product, PaymentInstallment } from '../../types';
-import { TrendingUp, DollarSign, Award, ClipboardList, PackageCheck, ShieldAlert } from 'lucide-react';
+import type { Lead, Quotation, OrderConfirmation, Profile, Product, PaymentInstallment, DeletionRequest } from '../../types';
+import { TrendingUp, DollarSign, Award, ClipboardList, PackageCheck, ShieldAlert, Boxes, Check, X } from 'lucide-react';
 
 export const Dashboard: React.FC = () => {
   const [leads, setLeads] = useState<Lead[]>([]);
@@ -16,7 +17,9 @@ export const Dashboard: React.FC = () => {
   const [confirmations, setConfirmations] = useState<OrderConfirmation[]>([]);
   const [employees, setEmployees] = useState<Profile[]>([]);
   const [visitsCount, setVisitsCount] = useState(0);
+  const [products, setProducts] = useState<Product[]>([]);
   const [lowStockProducts, setLowStockProducts] = useState<Product[]>([]);
+  const [pendingDeleteRequests, setPendingDeleteRequests] = useState<DeletionRequest[]>([]);
 
   const getPaymentsList = (c: OrderConfirmation): PaymentInstallment[] => {
     if (c.payments && c.payments.length > 0) return c.payments;
@@ -65,8 +68,15 @@ export const Dashboard: React.FC = () => {
 
       try {
         const pList = await productService.getProducts();
+        setProducts(pList || []);
         const lowStock = (pList || []).filter(p => p.stockQuantity <= p.minStockThreshold);
         setLowStockProducts(lowStock);
+      } catch (_) {}
+
+      try {
+        const { deletionRequestService } = await import('../../services/deletionRequestService');
+        const pending = await deletionRequestService.getPendingRequests();
+        setPendingDeleteRequests(pending);
       } catch (_) {}
     } catch (err) {
       console.error("Error loading Dashboard metrics:", err);
@@ -75,6 +85,13 @@ export const Dashboard: React.FC = () => {
 
   useEffect(() => {
     loadData();
+    const handleRealtimeUpdate = () => {
+      loadData();
+    };
+    window.addEventListener('app-realtime-update', handleRealtimeUpdate);
+    return () => {
+      window.removeEventListener('app-realtime-update', handleRealtimeUpdate);
+    };
   }, []);
 
   // 1. Pipeline stages calculation
@@ -98,7 +115,14 @@ export const Dashboard: React.FC = () => {
   }, 0);
   const outstandingBalance = Math.max(0, totalConfirmedValue - totalPaymentsCollected);
 
-  // 3. Employee performance metrics
+  const { currentRole, currentUser } = useAuthStore();
+  const isSuperAdmin = currentRole === 'super_admin' || currentUser?.role === 'super_admin';
+
+  // 3. Inventory valuation calculation (Unit Price x Available Stock Quantity)
+  const grandTotalInventoryValue = products.reduce((sum, p) => sum + ((p.rate || p.bomRate || 0) * (p.stockQuantity || 0)), 0);
+  const totalStockUnitsCount = products.reduce((sum, p) => sum + (p.stockQuantity || 0), 0);
+
+  // 4. Employee performance metrics
   const employeePerformance = employees.map(emp => {
     const assignedLeads = leads.filter(l => l.assignedSalesPersonId === emp.id || l.assignedAdminId === emp.id || l.assignedEmployeeId === emp.id);
     const convertedLeads = assignedLeads.filter(l => ['confirmed', 'registered', 'installed', 'closed'].includes(l.status));
@@ -120,6 +144,60 @@ export const Dashboard: React.FC = () => {
         <p className="text-sm text-slate-500 font-medium">Real-time installation pipeline metrics & revenue insights.</p>
       </div>
 
+      {/* Super Admin Pending Delete Requests Alert Banner */}
+      {isSuperAdmin && pendingDeleteRequests.length > 0 && (
+        <div className="bg-gradient-to-br from-rose-950 via-slate-900 to-rose-950 text-white p-5 rounded-2xl border border-rose-500/40 shadow-xl space-y-3 animate-fade-in">
+          <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
+            <div className="flex items-center space-x-3">
+              <div className="p-2.5 rounded-xl bg-rose-500/20 border border-rose-500/40 text-rose-300 shrink-0">
+                <ShieldAlert className="w-6 h-6" />
+              </div>
+              <div>
+                <span className="text-[10px] font-black text-rose-300 uppercase tracking-widest block">
+                  ACTION REQUIRED • {pendingDeleteRequests.length} PENDING DELETE REQUEST(S)
+                </span>
+                <h3 className="text-base font-black text-white">Super Admin Deletion Approvals Needed</h3>
+              </div>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5 pt-1">
+            {pendingDeleteRequests.slice(0, 3).map(req => (
+              <div key={req.id} className="bg-black/40 p-3 rounded-xl border border-rose-500/30 text-xs flex justify-between items-center gap-2">
+                <div className="truncate">
+                  <span className="text-[10px] uppercase font-bold text-rose-300 block truncate">{req.entityType}: {req.entityName}</span>
+                  <span className="text-[10px] text-slate-300 font-medium block truncate">By {req.requestedByUserName} ({req.requestedByUserRole.replace('_', ' ')})</span>
+                </div>
+                <div className="flex items-center space-x-1.5 shrink-0">
+                  <button
+                    onClick={async () => {
+                      const { deletionRequestService } = await import('../../services/deletionRequestService');
+                      await deletionRequestService.approveRequest(req.id);
+                      loadData();
+                    }}
+                    className="p-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg transition-colors cursor-pointer font-bold flex items-center text-[10px]"
+                    title="Approve & Delete"
+                  >
+                    <Check className="w-3.5 h-3.5" />
+                  </button>
+                  <button
+                    onClick={async () => {
+                      const { deletionRequestService } = await import('../../services/deletionRequestService');
+                      await deletionRequestService.rejectRequest(req.id);
+                      loadData();
+                    }}
+                    className="p-1.5 bg-slate-700 hover:bg-slate-600 text-white rounded-lg transition-colors cursor-pointer font-bold flex items-center text-[10px]"
+                    title="Reject Request"
+                  >
+                    <X className="w-3.5 h-3.5 text-rose-400" />
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* Low Stock Warning Alert */}
       {lowStockProducts.length > 0 && (
         <div className="bg-red-50 border-l-4 border-red-500 p-4 rounded-xl shadow-xs flex items-start space-x-3">
@@ -138,8 +216,8 @@ export const Dashboard: React.FC = () => {
         </div>
       )}
 
-      {/* Financial Metrics Cards */}
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      {/* Financial Metrics & Inventory Valuation Cards */}
+      <div className={`grid grid-cols-1 gap-4 sm:grid-cols-2 ${isSuperAdmin ? 'lg:grid-cols-5' : 'lg:grid-cols-4'}`}>
         {/* Total Proposals Value - Grey */}
         <div className="bg-slate-50/70 p-5 rounded-2xl border-l-4 border-slate-400 border-y border-r border-slate-200 shadow-xs flex items-center justify-between hover:shadow-md transition-shadow">
           <div>
@@ -165,7 +243,7 @@ export const Dashboard: React.FC = () => {
         {/* Advance & Payments Collected - Orange */}
         <div className="bg-orange-50/40 p-5 rounded-2xl border-l-4 border-orange-500 border-y border-r border-orange-100 shadow-xs flex items-center justify-between hover:shadow-md transition-shadow">
           <div>
-            <p className="text-xs text-orange-600/80 font-bold uppercase tracking-wider">Total Payments Collected</p>
+            <p className="text-xs text-orange-600/80 font-bold uppercase tracking-wider">Total Payments</p>
             <h3 className="text-xl font-extrabold text-orange-700 mt-1">₹{totalPaymentsCollected.toLocaleString('en-IN')}</h3>
           </div>
           <div className="bg-orange-100 text-orange-700 rounded-xl p-3">
@@ -183,6 +261,20 @@ export const Dashboard: React.FC = () => {
             <PackageCheck className="w-6 h-6" />
           </div>
         </div>
+
+        {/* Grand Total Inventory Value - Purple (Super Admin Exclusive) */}
+        {isSuperAdmin && (
+          <div className="bg-purple-50/60 p-5 rounded-2xl border-l-4 border-purple-600 border-y border-r border-purple-200 shadow-xs flex items-center justify-between hover:shadow-md transition-shadow">
+            <div>
+              <p className="text-xs text-purple-700 font-bold uppercase tracking-wider">Total Inventory Value</p>
+              <h3 className="text-xl font-black text-purple-950 mt-1">₹{grandTotalInventoryValue.toLocaleString('en-IN')}</h3>
+              <p className="text-[10px] font-bold text-purple-600 mt-0.5">{totalStockUnitsCount.toLocaleString('en-IN')} Total Units</p>
+            </div>
+            <div className="bg-purple-100 text-purple-700 rounded-xl p-3">
+              <Boxes className="w-6 h-6" />
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Main Grid: Pipeline Funnel + Performance */}

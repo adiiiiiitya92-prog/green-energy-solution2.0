@@ -13,129 +13,7 @@ export const BOM_CATEGORY_ORDER = [
   'Other Accessories'
 ];
 
-export const DEFAULT_BOM_ITEMS: BomItem[] = [
-  {
-    srNo: "1",
-    itemName: "Solar Panels (PV Modules)",
-    qty: 1,
-    unit: "Set",
-    brand: "As specified in Quote",
-    category: "Solar Panels (PV Modules)"
-  },
-  {
-    srNo: "2",
-    itemName: "Solar String Inverter",
-    qty: 1,
-    unit: "Nos",
-    brand: "As specified in Quote",
-    category: "Solar String Inverter"
-  },
-  {
-    srNo: "3",
-    itemName: "Solar 80 micron HDGI Structure*",
-    description: "60 x 40 mm x 2 mm For Leg , Rafters\n40 x 40 mm x 2 mm For purlins",
-    qty: 1,
-    unit: "Set",
-    brand: "As specified in Quote",
-    category: "Solar 80 micron HDGI Structure*"
-  },
-  {
-    srNo: "4.1",
-    itemName: "ACDB (IP65) - With SPD, Fuse & MCB\nDCDB (IP65) - With SPD, Fuse & MCB",
-    qty: 1,
-    unit: "Nos",
-    brand: "polycab / schineder",
-    category: "Protection Devices"
-  },
-  {
-    srNo: "5.1",
-    itemName: "4 SQ MM DC Solar Copper Cable, XLS-R, UV RESISTANT, 1100V Grade, Double Insulated",
-    qty: 30,
-    unit: "Mtr",
-    brand: "Polycab / RR",
-    category: "Cables"
-  },
-  {
-    srNo: "5.2",
-    itemName: "4 SQ MM or 6 SQ MM AC Wire , XLS- R",
-    qty: 30,
-    unit: "Mtr",
-    brand: "Polycab / RR",
-    category: "Cables"
-  },
-  {
-    srNo: "5.3",
-    itemName: "4 SQ MM Copper Earthing wire for AC & DC",
-    qty: 30,
-    unit: "Mtr",
-    brand: "Polycab / RR",
-    category: "Cables"
-  },
-  {
-    srNo: "5.4",
-    itemName: "16 SQ MM Aluminium Wire For LA",
-    qty: 30,
-    unit: "Mtr",
-    brand: "Polycab / RR",
-    category: "Cables"
-  },
-  {
-    srNo: "5.5",
-    itemName: "UPVC Conduit Pipe for wiring",
-    qty: 1,
-    unit: "Mtr",
-    brand: "Polycab / RR",
-    category: "Cables"
-  },
-  {
-    srNo: "6.1",
-    itemName: "200 Micron Copper Coated 1 Meter Earthing Rod for AC / DC & LA",
-    qty: 3,
-    unit: "Set",
-    brand: "Polycab / RR",
-    category: "Earthing / LA - lightning arrestor"
-  },
-  {
-    srNo: "6.2",
-    itemName: "1 Meter copper LA with 3 spike & insulator",
-    qty: 1,
-    unit: "Set",
-    brand: "Standard",
-    category: "Earthing / LA - lightning arrestor"
-  },
-  {
-    srNo: "7.1",
-    itemName: "Wifi Stick : Data Loger for Oniline Monitoring",
-    qty: 1,
-    unit: "Nos",
-    brand: "As per inverter",
-    category: "Data Logger"
-  },
-  {
-    srNo: "8.1",
-    itemName: "Cable tie, SS304 300mm (100Pcs/Pkt)",
-    qty: 1,
-    unit: "Set",
-    brand: "Ss304",
-    category: "Other Accessories"
-  },
-  {
-    srNo: "8.2",
-    itemName: "Ferules & Cable Tags",
-    qty: 1,
-    unit: "Set",
-    brand: "Standard",
-    category: "Other Accessories"
-  },
-  {
-    srNo: "8.3",
-    itemName: "Lugs Ring Type As per wiring requirements",
-    qty: 1,
-    unit: "Set",
-    brand: "Coper",
-    category: "Other Accessories"
-  }
-];
+export const DEFAULT_BOM_ITEMS: BomItem[] = [];
 
 export function getBomCategoryIndex(categoryOrName?: string, itemName?: string): number {
   const text = `${categoryOrName || ''} ${itemName || ''}`.toLowerCase().trim();
@@ -192,7 +70,7 @@ export function getStandardCategoryName(categoryOrName?: string, itemName?: stri
 }
 
 export function sortAndFormatBomItems(items: BomItem[]): BomItem[] {
-  if (!items || items.length === 0) return [];
+  if (!Array.isArray(items) || items.length === 0) return [];
 
   const list = items.map(i => ({ ...i }));
 
@@ -390,10 +268,15 @@ export const quotationService = {
       await db.quotations.put(finalQuotation);
 
       if (qData.leadId) {
-        // 1. Update Lead status
+        // 1. Update Lead status & sync Follow-up Date
         const lead = await db.leads.get(qData.leadId);
         if (lead) {
           lead.status = 'quotation_sent';
+          if (finalQuotation.followUpDate) {
+            lead.nextFollowUpDate = finalQuotation.followUpDate;
+            lead.followUpCompleted = false;
+            lead.followUpSetAt = finalQuotation.followUpSetAt || new Date().toISOString();
+          }
           lead.updatedAt = new Date().toISOString();
           await db.leads.put(lead);
           saveRecordToFirestore('leads', lead.id, lead);
@@ -445,16 +328,51 @@ export const quotationService = {
     });
 
     saveRecordToFirestore('quotations', id, finalQuotation);
+    window.dispatchEvent(new CustomEvent('app-realtime-update'));
     return id;
   },
 
   async updateQuotation(quotation: Quotation): Promise<void> {
     const finalQuotation = sanitizeQuotationRecord(quotation);
     await db.quotations.put(finalQuotation);
+    if (finalQuotation.leadId) {
+      const lead = await db.leads.get(finalQuotation.leadId);
+      if (lead) {
+        if (finalQuotation.followUpDate) {
+          lead.nextFollowUpDate = finalQuotation.followUpDate;
+          lead.followUpCompleted = finalQuotation.followUpCompleted || false;
+          lead.updatedAt = new Date().toISOString();
+          await db.leads.put(lead);
+          saveRecordToFirestore('leads', lead.id, lead);
+        }
+      }
+    }
     saveRecordToFirestore('quotations', finalQuotation.id, finalQuotation);
+    window.dispatchEvent(new CustomEvent('app-realtime-update'));
   },
 
-  async deleteQuotation(id: string): Promise<void> {
+  async deleteQuotation(id: string, skipApprovalCheck = false): Promise<{ success: boolean; requiresApproval?: boolean }> {
+    if (!id) return { success: false };
+
+    const { useAuthStore } = await import('../store/authStore');
+    const currentRole = useAuthStore.getState().currentRole;
+    const currentUser = useAuthStore.getState().currentUser;
+    const isSuperAdmin = currentRole === 'super_admin' || currentUser?.role === 'super_admin';
+
+    if (!isSuperAdmin && !skipApprovalCheck) {
+      const q = await db.quotations.get(id);
+      const qName = q ? `Quotation ${q.quotationNumber || '#' + id}` : `Quotation #${id}`;
+      const { deletionRequestService } = await import('./deletionRequestService');
+      await deletionRequestService.requestDeletion({
+        entityType: 'quotation',
+        entityId: id,
+        entityName: qName,
+        metadata: { leadId: q?.leadId },
+        reason: `Delete quotation requested by ${currentUser?.fullName || 'Admin/Employee'}`
+      });
+      return { success: true, requiresApproval: true };
+    }
+
     const q = await db.quotations.get(id);
     if (q && q.leadId) {
       try {
@@ -467,6 +385,7 @@ export const quotationService = {
     await db.quotations.delete(id);
     await markRecordAsDeleted(id, 'quotations');
     deleteRecordFromFirestore('quotations', id);
+    return { success: true };
   },
 
   async markQuotationAsSent(id: string): Promise<void> {

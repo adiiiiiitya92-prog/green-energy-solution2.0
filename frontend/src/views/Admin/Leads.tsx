@@ -18,6 +18,7 @@ import { WcrDocument } from './WcrDocument';
 import { ModelAgreementDocument } from './ModelAgreementDocument';
 import { AnnexureProformaDocument } from './AnnexureProformaDocument';
 import { QuotationDocument } from './QuotationDocument';
+import { getCachedPdfBlob, setCachedPdfBlob, ensurePdfBlobForQuotation } from '../../services/pdfCacheService';
 import { FollowUpReminders } from '../../components/Common/FollowUpReminders';
 import {
   Search, Plus, Camera, CheckSquare, UploadCloud,
@@ -87,6 +88,7 @@ export const Leads: React.FC = () => {
   // Quotation Creator States
   const [quoteFollowUp, setQuoteFollowUp] = useState('');
   const [quoteRating, setQuoteRating] = useState<1 | 2 | 3 | 4 | 5>(3);
+  const [followUpSavedToast, setFollowUpSavedToast] = useState(false);
 
   // PDF Preview Modal State
   const [selectedQuotationForPreview, setSelectedQuotationForPreview] = useState<Quotation | null>(null);
@@ -109,67 +111,20 @@ export const Leads: React.FC = () => {
   };
 
   /** Try to get a PDF Blob from saved data, otherwise regenerate it on-the-fly.
-   *  Uses in-memory cache for instant repeat access (download/share). */
+   *  Uses persistent CacheStorage for instant 0ms repeat access across screens and refreshes. */
   const resolvePdfBlob = async (q: Quotation): Promise<Blob> => {
-    // 0. Check in-memory cache first (instant)
-    const cached = pdfBlobCache.current.get(q.id);
-    if (cached && cached.size > 100) return cached;
+    // 0. Check persistent CacheStorage & memory cache first (instant 0ms)
+    const propNo = q.quotationNumber || q.proposalId || q.id;
+    const cached = (await getCachedPdfBlob(propNo)) || (await getCachedPdfBlob(q.id)) || pdfBlobCache.current.get(q.id);
+    if (cached && cached.size > 100) {
+      pdfBlobCache.current.set(q.id, cached);
+      return cached;
+    }
 
-    const cacheAndReturn = (blob: Blob): Blob => {
-      pdfBlobCache.current.set(q.id, blob);
-      return blob;
-    };
-
-    // 1. Try pdfDataUrl (base64 stored in IndexedDB)
-    if (q.pdfDataUrl && typeof q.pdfDataUrl === 'string' && q.pdfDataUrl.startsWith('data:')) {
-      const blob = dataUrlToBlob(q.pdfDataUrl);
-      if (blob.size > 100) return cacheAndReturn(blob);
-    }
-    // 2. Try pdfBlob (raw Blob in memory)
-    if (q.pdfBlob && ((q.pdfBlob as any) instanceof Blob || (q.pdfBlob as any) instanceof File)) {
-      return cacheAndReturn(q.pdfBlob);
-    }
-    // 3. Try fetching from Firebase Storage URL
-    if (q.pdfUrl && typeof q.pdfUrl === 'string' && q.pdfUrl.startsWith('http')) {
-      try {
-        const res = await fetch(q.pdfUrl);
-        if (res.ok) {
-          const ct = res.headers.get('content-type') || '';
-          if (ct.includes('pdf') || ct.includes('octet')) {
-            const blob = await res.blob();
-            return cacheAndReturn(blob);
-          }
-        }
-      } catch (_) { /* network error, will regenerate */ }
-    }
-    // 4. Try localStorage backup
-    try {
-      const lsKey = `quotation_${q.leadId}`;
-      const lsData = localStorage.getItem(lsKey);
-      if (lsData) {
-        const parsed = JSON.parse(lsData);
-        if (parsed.pdfDataUrl && typeof parsed.pdfDataUrl === 'string' && parsed.pdfDataUrl.startsWith('data:')) {
-          const blob = dataUrlToBlob(parsed.pdfDataUrl);
-          if (blob.size > 100) return cacheAndReturn(blob);
-        }
-      }
-    } catch (_) {}
-    // 5. Final fallback: regenerate PDF from quotation data
-    console.log('⚡ Regenerating PDF on-the-fly for', q.quotationNumber);
-    const mockLead: Lead = {
-      id: q.leadId || 'lead_default',
-      name: (q as any).consumerName || selectedLead?.name || 'Customer',
-      phoneNumber: (q as any).consumerMobile?.replace(/\D/g, '') || selectedLead?.phoneNumber || '',
-      email: (q as any).consumerEmail || selectedLead?.email || '',
-      requirement: `${(q as any).systemCapacity || '5.0'} kW Solar Rooftop`,
-      description: `${(q as any).city || 'Nagpur'}, ${(q as any).statePin || 'Maharashtra'}`,
-      createdBy: q.createdBy || 'Admin',
-      status: 'quotation_sent',
-      createdAt: q.createdAt || new Date().toISOString(),
-      updatedAt: new Date().toISOString()
-    };
-    const blob = await pdfService.generateQuotationPDF(q, mockLead, q.createdBy || 'Admin');
-    return cacheAndReturn(blob);
+    const leadMatch = leads.find(l => l.id === q.leadId) || selectedLead;
+    const blob = await ensurePdfBlobForQuotation(q, leadMatch, q.createdBy || 'Admin');
+    if (blob) pdfBlobCache.current.set(q.id, blob);
+    return blob;
   };
 
   const handleViewPdf = async (q: Quotation) => {
@@ -343,27 +298,29 @@ export const Leads: React.FC = () => {
     try {
       const items: LeadReportItem[] = [];
       const finMap: Record<string, { totalValue: number; paidAmount: number; pendingBalance: number; paymentStatus: string; installmentCount: number }> = {};
-      for (const l of leads) {
+      const validLeads = Array.isArray(leads) ? leads : [];
+      for (const l of validLeads) {
+        if (!l || !l.id) continue;
         let totalValue = 0;
         let paidAmount = 0;
         let installmentCount = 0;
 
         const oc = await orderService.getOrderConfirmationByLeadId(l.id);
         const quotes = await quotationService.getQuotationsByLeadId(l.id);
-        const mainQuote = quotes[0];
+        const mainQuote = Array.isArray(quotes) && quotes.length > 0 ? quotes[0] : undefined;
 
         const quoteTotal = mainQuote ? (mainQuote.grandTotal || mainQuote.total || mainQuote.subtotal || 0) : 0;
-        const ocSubtotal = oc ? (oc.subtotal || (oc.itemsConfirmed ? oc.itemsConfirmed.reduce((s, i) => s + (i.amount || 0), 0) : 0) || oc.advanceAmount || 0) : 0;
+        const ocSubtotal = oc ? (oc.subtotal || (Array.isArray(oc.itemsConfirmed) ? oc.itemsConfirmed.reduce((s, i) => s + (i.amount || 0), 0) : 0) || oc.advanceAmount || 0) : 0;
 
         totalValue = quoteTotal > 0 ? quoteTotal : ocSubtotal;
 
         if (oc) {
-          const pList = (oc.payments && oc.payments.length > 0)
+          const pList = (Array.isArray(oc.payments) && oc.payments.length > 0)
             ? oc.payments
             : (oc.advanceAmount && oc.advanceAmount > 0)
             ? [{ amount: oc.advanceAmount }]
             : [];
-          paidAmount = pList.reduce((s, p) => s + (p.amount || 0), 0);
+          paidAmount = pList.reduce((s, p) => s + (p?.amount || 0), 0);
           installmentCount = pList.length;
 
           if (totalValue <= 0 && paidAmount > 0) {
@@ -379,14 +336,15 @@ export const Leads: React.FC = () => {
           else paymentStatus = 'Pending';
         }
 
+        const empNames = employeeNames || {};
         const itemData = {
           leadId: l.id,
           name: l.name || 'Unnamed Client',
           phone: l.phoneNumber || '',
           requirement: l.requirement || 'Solar Installation',
           status: l.status,
-          assignedSalesName: employeeNames[l.assignedSalesPersonId || l.assignedEmployeeId || ''] || 'Unassigned',
-          assignedAdminName: employeeNames[l.assignedAdminId || ''] || 'Unassigned',
+          assignedSalesName: empNames[l.assignedSalesPersonId || l.assignedEmployeeId || ''] || 'Unassigned',
+          assignedAdminName: empNames[l.assignedAdminId || ''] || 'Unassigned',
           createdAt: l.createdAt || new Date().toISOString(),
           totalValue,
           paidAmount,
@@ -405,7 +363,6 @@ export const Leads: React.FC = () => {
         };
       }
       setReportItems(items);
-      setLeadFinancialMap(finMap);
     } catch (err) {
       console.error("Error generating lead report items:", err);
     }
@@ -529,6 +486,14 @@ export const Leads: React.FC = () => {
         } catch (_) {}
       }
     });
+
+    const handleRealtimeUpdate = () => {
+      loadData();
+    };
+    window.addEventListener('app-realtime-update', handleRealtimeUpdate);
+    return () => {
+      window.removeEventListener('app-realtime-update', handleRealtimeUpdate);
+    };
   }, [currentRole, currentUser]);
 
   useEffect(() => {
@@ -559,6 +524,7 @@ export const Leads: React.FC = () => {
 
   // Load contextual data for details panel
   const handleSelectLead = async (lead: Lead, preserveTab?: boolean) => {
+    if (!lead || !lead.id) return;
     const shouldPreserveTab = preserveTab !== undefined ? preserveTab : (selectedLead?.id === lead.id);
     setSelectedLead(lead);
     // Persist to sessionStorage so refresh restores same lead + tab
@@ -566,6 +532,18 @@ export const Leads: React.FC = () => {
     if (!shouldPreserveTab) {
       setActiveTab('timeline');
       sessionStorage.setItem('leads_activeTab', 'timeline');
+    }
+
+    // Sync Follow-up inspection date state
+    if (lead.nextFollowUpDate) {
+      setQuoteFollowUp(dayjs(lead.nextFollowUpDate).format('YYYY-MM-DD'));
+    } else {
+      const existingQuotes = await quotationService.getQuotationsByLeadId(lead.id);
+      if (existingQuotes.length > 0 && existingQuotes[0].followUpDate) {
+        setQuoteFollowUp(dayjs(existingQuotes[0].followUpDate).format('YYYY-MM-DD'));
+      } else {
+        setQuoteFollowUp('');
+      }
     }
     
     // Load Order Confirmation & Payment History
@@ -633,6 +611,47 @@ export const Leads: React.FC = () => {
       await leadService.updateLeadStatus(lead.id, 'confirmed');
       lead.status = 'confirmed';
       setSelectedLead({ ...lead, status: 'confirmed' });
+    }
+  };
+
+  const handleUpdateFollowUpDate = async (newDateStr: string) => {
+    setQuoteFollowUp(newDateStr);
+    if (!selectedLead) return;
+
+    const formattedDate = newDateStr ? dayjs(newDateStr).format('YYYY-MM-DD') : undefined;
+    const updatedLead: Lead = {
+      ...selectedLead,
+      nextFollowUpDate: formattedDate,
+      followUpCompleted: false,
+      followUpSetAt: new Date().toISOString()
+    };
+
+    setSelectedLead(updatedLead);
+    setLeads(prev => prev.map(l => l.id === selectedLead.id ? updatedLead : l));
+
+    try {
+      await leadService.updateLead(selectedLead.id, {
+        nextFollowUpDate: formattedDate,
+        followUpCompleted: false,
+        followUpSetAt: new Date().toISOString()
+      });
+
+      const quotes = await quotationService.getQuotationsByLeadId(selectedLead.id);
+      if (quotes && quotes.length > 0) {
+        for (const q of quotes) {
+          q.followUpDate = formattedDate || '';
+          q.followUpCompleted = false;
+          q.followUpSetAt = new Date().toISOString();
+          await quotationService.updateQuotation(q);
+        }
+      }
+
+      setFollowUpSavedToast(true);
+      setTimeout(() => setFollowUpSavedToast(false), 2500);
+
+      window.dispatchEvent(new CustomEvent('app-realtime-update'));
+    } catch (err) {
+      console.error("Error updating follow-up date:", err);
     }
   };
 
@@ -708,9 +727,19 @@ export const Leads: React.FC = () => {
   };
 
   const handleDeleteLead = async (id: string) => {
-    if (confirm('WARNING: Are you sure you want to delete this lead? All associated quotations, contracts, photos, and files will be permanently erased.')) {
-      await leadService.deleteLead(id);
-      setSelectedLead(null);
+    const isSuperAdmin = currentRole === 'super_admin' || currentUser?.role === 'super_admin';
+    const confirmMsg = isSuperAdmin
+      ? 'WARNING: Are you sure you want to permanently delete this lead?'
+      : 'Submit deletion request to Super Admin for approval?';
+
+    if (confirm(confirmMsg)) {
+      const res = await leadService.deleteLead(id);
+      if (res?.requiresApproval) {
+        alert('🔒 Deletion request submitted successfully! This item will be deleted once approved by Super Admin.');
+      } else {
+        alert('Lead permanently deleted.');
+        setSelectedLead(null);
+      }
       loadData();
     }
   };
@@ -796,15 +825,15 @@ export const Leads: React.FC = () => {
         sigUrl = await uploadImageToFirebase(signatureBlob, `signatures/${selectedLead.id}_${Date.now()}.png`);
       }
 
-      // Compile receipt PDF
-      const pdf = await pdfService.generateConfirmationPDF(
+      // Fast synchronous receipt PDF generation (~20ms)
+      const pdfBlob = await pdfService.generateConfirmationPDF(
         ocDraft as any,
         selectedLead,
         currentUser?.fullName || 'Booking Manager',
-        sigUrl
+        signatureUrl || sigUrl || (typeof signatureBlob === 'string' ? signatureBlob : '')
       );
 
-      const pdfUrl = await uploadImageToFirebase(pdf, `orders/${selectedLead.id}/receipt_${Date.now()}.pdf`);
+      const localPdfUrl = URL.createObjectURL(pdfBlob);
 
       if (existingOc) {
         const updatedOc: OrderConfirmation = {
@@ -812,20 +841,36 @@ export const Leads: React.FC = () => {
           advanceAmount,
           paymentMode,
           paymentReference: paymentReference || undefined,
-          clientSignatureBlob: sigUrl || existingOc.clientSignatureBlob || '',
-          confirmationPdfBlob: pdfUrl || existingOc.confirmationPdfBlob || '',
+          clientSignatureBlob: sigUrl || signatureUrl || existingOc.clientSignatureBlob || '',
+          confirmationPdfBlob: localPdfUrl,
           payments: [initialPayment]
         };
         await orderService.updateOrderConfirmation(updatedOc);
         setExistingOc(updatedOc);
+
+        // Background non-blocking upload to Firebase Storage
+        uploadImageToFirebase(pdfBlob, `orders/${selectedLead.id}/receipt_${Date.now()}.pdf`).then(async (remotePdfUrl) => {
+          if (remotePdfUrl) {
+            updatedOc.confirmationPdfBlob = remotePdfUrl;
+            await orderService.updateOrderConfirmation(updatedOc);
+          }
+        }).catch(err => console.warn('Background receipt upload note:', err));
       } else {
         await orderService.createOrderConfirmation({
           ...ocDraft,
-          clientSignatureBlob: sigUrl as any,
-          confirmationPdfBlob: pdfUrl as any
+          clientSignatureBlob: (sigUrl || signatureUrl) as any,
+          confirmationPdfBlob: localPdfUrl as any
         });
         const createdOc = await orderService.getOrderConfirmationByLeadId(selectedLead.id);
-        if (createdOc) setExistingOc(createdOc);
+        if (createdOc) {
+          setExistingOc(createdOc);
+          uploadImageToFirebase(pdfBlob, `orders/${selectedLead.id}/receipt_${Date.now()}.pdf`).then(async (remotePdfUrl) => {
+            if (remotePdfUrl) {
+              createdOc.confirmationPdfBlob = remotePdfUrl;
+              await orderService.updateOrderConfirmation(createdOc);
+            }
+          }).catch(err => console.warn('Background receipt upload note:', err));
+        }
       }
 
       await leadService.updateLeadStatus(selectedLead.id, 'confirmed');
@@ -880,6 +925,9 @@ export const Leads: React.FC = () => {
       };
       const label = getOrdinalLabel(nextNo);
 
+      const totalPaidAfterThis = totalPaidSoFar + subsequentAmount;
+      const isFullyPaidNow = totalPaidAfterThis >= subtotal;
+
       const newPayment: PaymentInstallment = {
         id: `pay_${Date.now()}`,
         installmentNo: nextNo,
@@ -900,25 +948,33 @@ export const Leads: React.FC = () => {
         payments: updatedPayments
       };
 
-      // Regenerate updated receipt PDF
+      // Fast synchronous receipt PDF generation (~20ms)
       try {
-        const sigUrl = typeof existingOc.clientSignatureBlob === 'string' ? existingOc.clientSignatureBlob : '';
-        const pdf = await pdfService.generateConfirmationPDF(
+        const sigUrl = signatureUrl || (typeof existingOc.clientSignatureBlob === 'string' ? existingOc.clientSignatureBlob : '');
+        const pdfBlob = await pdfService.generateConfirmationPDF(
           updatedOc,
           selectedLead,
           currentUser?.fullName || 'Booking Manager',
           sigUrl
         );
-        const pdfUrl = await uploadImageToFirebase(pdf, `orders/${selectedLead.id}/receipt_${Date.now()}.pdf`);
-        updatedOc.confirmationPdfBlob = pdfUrl;
+        const localPdfUrl = URL.createObjectURL(pdfBlob);
+        updatedOc.confirmationPdfBlob = localPdfUrl;
+
+        // Non-blocking background upload to Firebase Storage
+        uploadImageToFirebase(pdfBlob, `orders/${selectedLead.id}/receipt_${Date.now()}.pdf`).then(async (remotePdfUrl) => {
+          if (remotePdfUrl) {
+            updatedOc.confirmationPdfBlob = remotePdfUrl;
+            await orderService.updateOrderConfirmation(updatedOc);
+          }
+        }).catch(pdfErr => console.warn('Background receipt upload note:', pdfErr));
       } catch (pdfErr) {
-        console.warn('PDF regeneration error:', pdfErr);
+        console.warn('PDF generation note:', pdfErr);
       }
 
       await orderService.updateOrderConfirmation(updatedOc);
       setExistingOc(updatedOc);
 
-      // Maintain confirmed status on payment recording (Closed is ONLY set when Release NOC is uploaded)
+      // Maintain confirmed status on payment recording
       const targetStatus = selectedLead.status === 'closed' ? 'closed' : 'confirmed';
       await leadService.updateLeadStatus(selectedLead.id, targetStatus);
       selectedLead.status = targetStatus;
@@ -928,7 +984,7 @@ export const Leads: React.FC = () => {
       setSubsequentReference('');
       setSubsequentNotes('');
 
-      alert(`✅ ${label} of ₹${subsequentAmount.toLocaleString('en-IN')} recorded successfully! ${isFullyPaidNow ? '🎉 Full Payment Completed! Lead status updated to Release Complete (Closed).' : ''}`);
+      alert(`✅ ${label} of ₹${subsequentAmount.toLocaleString('en-IN')} recorded successfully! ${isFullyPaidNow ? '🎉 Full Payment Completed! All dues for this order have been settled.' : ''}`);
 
       const refreshedLead = await leadService.getLeadById(selectedLead.id);
       if (refreshedLead) setSelectedLead(refreshedLead);
@@ -1394,15 +1450,27 @@ export const Leads: React.FC = () => {
             {activeTab === 'quotation' && (
               <div className="space-y-6 text-xs font-semibold">
                 {/* Top Control Bar: Follow-up Inspection Date */}
-                <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 flex flex-col sm:flex-row justify-between items-center gap-4 shadow-xs">
-                  <div className="space-y-1 w-full sm:w-auto min-w-[240px]">
-                    <label className="text-slate-700 font-extrabold block">Follow-up Inspection Date</label>
-                    <input
-                      type="date"
-                      value={quoteFollowUp}
-                      onChange={(e) => setQuoteFollowUp(e.target.value)}
-                      className="w-full border border-slate-300 rounded-lg p-2 focus:outline-none bg-white font-bold text-slate-800 shadow-xs"
-                    />
+                <div className="bg-emerald-50/60 border border-emerald-200/80 rounded-xl p-4 flex flex-col sm:flex-row justify-between items-center gap-4 shadow-xs">
+                  <div className="space-y-1 w-full sm:w-auto min-w-[280px]">
+                    <label className="text-slate-800 font-extrabold block flex items-center gap-1.5 text-xs">
+                      <span>📅 Follow-up Inspection Date (Lead Reminder)</span>
+                    </label>
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="date"
+                        value={quoteFollowUp}
+                        onChange={(e) => handleUpdateFollowUpDate(e.target.value)}
+                        className="w-full border border-emerald-300 rounded-lg p-2 focus:outline-none bg-white font-bold text-slate-800 shadow-2xs"
+                      />
+                      {followUpSavedToast && (
+                        <span className="text-[11px] font-extrabold text-emerald-700 bg-emerald-100 border border-emerald-300 px-2.5 py-1 rounded-lg animate-fade-in whitespace-nowrap shadow-2xs">
+                          ✓ Saved to Reminders!
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                  <div className="text-[11px] text-slate-500 font-medium">
+                    Setting this date automatically schedules this lead under <strong className="text-slate-700 font-bold">Today</strong> or <strong className="text-slate-700 font-bold">Upcoming</strong> in Lead Reminders.
                   </div>
                 </div>
 
@@ -1764,7 +1832,6 @@ export const Leads: React.FC = () => {
                           <SignatureCapture onSave={(blob, dataUrl) => {
                             setSignatureBlob(blob);
                             setSignatureUrl(dataUrl);
-                            alert('Client signature saved successfully!');
                           }} />
 
                           {signatureBlob && (
@@ -3829,7 +3896,13 @@ const LeadQuotationsTimeline: React.FC<{
   const [quotes, setQuotes] = useState<Quotation[]>([]);
 
   const loadQuotes = () => {
-    quotationService.getQuotationsByLeadId(leadId).then(setQuotes);
+    quotationService.getQuotationsByLeadId(leadId).then(qList => {
+      setQuotes(qList);
+      // Pre-cache PDF Blobs in background for instant 0ms sharing
+      qList.forEach(q => {
+        ensurePdfBlobForQuotation(q, undefined, q.createdBy || 'Admin').catch(() => {});
+      });
+    });
   };
 
   useEffect(() => {
@@ -3887,6 +3960,8 @@ const LeadQuotationsTimeline: React.FC<{
             <button
               type="button"
               onClick={() => onShare(q)}
+              onMouseEnter={() => ensurePdfBlobForQuotation(q, undefined, q.createdBy || 'Admin')}
+              onTouchStart={() => ensurePdfBlobForQuotation(q, undefined, q.createdBy || 'Admin')}
               className="px-3 py-1.5 bg-slate-100 hover:bg-emerald-50 text-slate-700 hover:text-emerald-700 border border-slate-200 hover:border-emerald-200 rounded-lg text-[10px] font-bold flex items-center gap-1 cursor-pointer transition-colors"
             >
               <Send className="w-3 h-3" />

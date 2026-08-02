@@ -1,7 +1,7 @@
 import { initializeApp, getApps, getApp } from 'firebase/app';
 import { getAuth, setPersistence, browserLocalPersistence } from 'firebase/auth';
 import { getStorage, ref, uploadBytes, getDownloadURL, deleteObject } from 'firebase/storage';
-import { getFirestore, doc, setDoc, getDocs, collection, deleteDoc } from 'firebase/firestore';
+import { getFirestore, doc, setDoc, getDocs, collection, deleteDoc, onSnapshot } from 'firebase/firestore';
 import { compressImage, compressDataUrl, type ImageCompressionConfig } from './imageCompressionService';
 
 // Firebase Project Configuration
@@ -465,30 +465,51 @@ export async function deleteRecordFromFirestore(collectionName: string, id: stri
  */
 export async function syncAllLocalDataToFirestore(): Promise<void> {
   try {
-    const { db, getDeletedRecordIdsSet } = await import('./db');
+    const { db, getDeletedRecordIdsSet, markRecordAsDeleted } = await import('./db');
     const deletedIds = await getDeletedRecordIdsSet();
+
+    // Fetch remote deletedRecords tombstones first so locally cached deleted items are purged and never re-uploaded
+    try {
+      const remoteDeleted = await fetchCollectionFromFirestore<{ id: string; collectionName: string }>('deletedRecords', 3000);
+      if (Array.isArray(remoteDeleted)) {
+        for (const rd of remoteDeleted) {
+          if (rd.id) {
+            deletedIds.add(rd.id);
+            await markRecordAsDeleted(rd.id, rd.collectionName || 'leads');
+          }
+        }
+      }
+    } catch (_) {}
 
     const leads = await db.leads.toArray();
     for (const l of leads) {
-      if (!deletedIds.has(l.id)) {
+      if (deletedIds.has(l.id)) {
+        await db.leads.delete(l.id);
+      } else {
         await saveRecordToFirestore('leads', l.id, l);
       }
     }
     const quotations = await db.quotations.toArray();
     for (const q of quotations) {
-      if (!deletedIds.has(q.id) && (!q.leadId || !deletedIds.has(q.leadId))) {
+      if (deletedIds.has(q.id) || (q.leadId && deletedIds.has(q.leadId))) {
+        await db.quotations.delete(q.id);
+      } else {
         await saveRecordToFirestore('quotations', q.id, q);
       }
     }
     const releaseDocs = await db.releaseDocuments.toArray();
     for (const r of releaseDocs) {
-      if (!deletedIds.has(r.id) && (!r.leadId || !deletedIds.has(r.leadId))) {
+      if (deletedIds.has(r.id) || (r.leadId && deletedIds.has(r.leadId))) {
+        await db.releaseDocuments.delete(r.id);
+      } else {
         await saveRecordToFirestore('releaseDocuments', r.id, r);
       }
     }
     const clientDocs = await db.clientDocuments.toArray();
     for (const cd of clientDocs) {
-      if (!deletedIds.has(cd.id) && (!cd.leadId || !deletedIds.has(cd.leadId))) {
+      if (deletedIds.has(cd.id) || (cd.leadId && deletedIds.has(cd.leadId))) {
+        await db.clientDocuments.delete(cd.id);
+      } else {
         await saveRecordToFirestore('clientDocuments', cd.id, cd);
       }
     }
@@ -497,3 +518,116 @@ export async function syncAllLocalDataToFirestore(): Promise<void> {
     console.warn("syncAllLocalDataToFirestore note:", err);
   }
 }
+
+/**
+ * Real-time Firestore sync subscriptions to sync changes across all devices & PWA apps in real-time.
+ */
+let isRealtimeSyncInitialized = false;
+
+export function initializeRealtimeFirestoreSync(): void {
+  if (isRealtimeSyncInitialized) return;
+  isRealtimeSyncInitialized = true;
+
+  const dispatchRealtimeUpdate = () => {
+    window.dispatchEvent(new CustomEvent('app-realtime-update'));
+  };
+
+  // 1. Subscribe to deletedRecords tombstones collection
+  try {
+    const deletedColRef = collection(firestoreDb, 'deletedRecords');
+    onSnapshot(deletedColRef, async (snapshot) => {
+      let changed = false;
+      const { db } = await import('./db');
+      for (const change of snapshot.docChanges()) {
+        const data = change.doc.data() as { id?: string; collectionName?: string; deletedAt?: string };
+        const id = data.id || change.doc.id;
+        const collectionName = data.collectionName || 'leads';
+        if (id) {
+          try {
+            await db.deletedRecords.put({
+              id,
+              collectionName,
+              deletedAt: data.deletedAt || new Date().toISOString()
+            });
+
+            // Immediately purge the deleted entity from local Dexie IndexedDB tables
+            if (collectionName === 'leads' || !collectionName) {
+              await db.leads.delete(id);
+              await db.quotations.where({ leadId: id }).delete();
+              await db.orderConfirmations.where({ leadId: id }).delete();
+              await db.clientDocuments.where({ leadId: id }).delete();
+              await db.clientRegistrations.where({ leadId: id }).delete();
+              await db.installationPhotos.where({ leadId: id }).delete();
+              await db.releaseDocuments.where({ leadId: id }).delete();
+              await db.fieldVisitReports.where({ leadId: id }).delete();
+              await db.challans.where({ leadId: id }).delete();
+              await db.shadowAnalyses.where({ leadId: id }).delete();
+            } else if (collectionName === 'quotations') {
+              await db.quotations.delete(id);
+            } else if (collectionName === 'orderConfirmations') {
+              await db.orderConfirmations.delete(id);
+            } else if (collectionName === 'products') {
+              await db.products.delete(id);
+            } else if (collectionName === 'challans') {
+              await db.challans.delete(id);
+            } else if (collectionName === 'fieldVisitReports') {
+              await db.fieldVisitReports.delete(id);
+            } else if (collectionName === 'shadowAnalyses') {
+              await db.shadowAnalyses.delete(id);
+            }
+            changed = true;
+          } catch (e) {
+            console.warn("Error handling realtime deletedRecord change:", e);
+          }
+        }
+      }
+      if (changed) dispatchRealtimeUpdate();
+    }, (err) => console.warn("DeletedRecords realtime listener note:", err));
+  } catch (err) {
+    console.warn("DeletedRecords listener init note:", err);
+  }
+
+  // 2. Helper to set up collection listener
+  const setupCollectionListener = (colName: string, getDexieTable: (dbInstance: any) => any) => {
+    try {
+      const colRef = collection(firestoreDb, colName);
+      onSnapshot(colRef, async (snapshot) => {
+        const { db, getDeletedRecordIdsSet, markRecordAsDeleted } = await import('./db');
+        const dexieTable = getDexieTable(db);
+        const deletedIds = await getDeletedRecordIdsSet();
+        let changed = false;
+
+        for (const change of snapshot.docChanges()) {
+          const docId = change.doc.id;
+          if (deletedIds.has(docId)) {
+            if (dexieTable) await dexieTable.delete(docId);
+            changed = true;
+            continue;
+          }
+
+          if (change.type === 'removed') {
+            if (dexieTable) await dexieTable.delete(docId);
+            await markRecordAsDeleted(docId, colName);
+            changed = true;
+          } else if (change.type === 'added' || change.type === 'modified') {
+            const data = { id: docId, ...change.doc.data() };
+            if (dexieTable) await dexieTable.put(data);
+            changed = true;
+          }
+        }
+
+        if (changed) dispatchRealtimeUpdate();
+      }, (err) => console.warn(`Realtime listener note for ${colName}:`, err));
+    } catch (err) {
+      console.warn(`Listener init note for ${colName}:`, err);
+    }
+  };
+
+  setupCollectionListener('leads', (db) => db.leads);
+  setupCollectionListener('quotations', (db) => db.quotations);
+  setupCollectionListener('orderConfirmations', (db) => db.orderConfirmations);
+  setupCollectionListener('products', (db) => db.products);
+  setupCollectionListener('challans', (db) => db.challans);
+  setupCollectionListener('fieldVisitReports', (db) => db.fieldVisitReports);
+}
+

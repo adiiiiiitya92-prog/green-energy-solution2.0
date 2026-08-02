@@ -96,7 +96,27 @@ export const productService = {
     }).catch(err => console.warn("Express Backend API product update note:", err));
   },
 
-  async deleteProduct(id: string): Promise<void> {
+  async deleteProduct(id: string, skipApprovalCheck = false): Promise<{ success: boolean; requiresApproval?: boolean }> {
+    if (!id) return { success: false };
+
+    const { useAuthStore } = await import('../store/authStore');
+    const currentRole = useAuthStore.getState().currentRole;
+    const currentUser = useAuthStore.getState().currentUser;
+    const isSuperAdmin = currentRole === 'super_admin' || currentUser?.role === 'super_admin';
+
+    if (!isSuperAdmin && !skipApprovalCheck) {
+      const prod = await db.products.get(id);
+      const prodName = prod ? `Product "${prod.name}" (${prod.category})` : `Product #${id}`;
+      const { deletionRequestService } = await import('./deletionRequestService');
+      await deletionRequestService.requestDeletion({
+        entityType: 'product',
+        entityId: id,
+        entityName: prodName,
+        reason: `Delete product requested by ${currentUser?.fullName || 'Admin/Employee'}`
+      });
+      return { success: true, requiresApproval: true };
+    }
+
     // 1. Instant local IndexedDB storage
     await db.products.delete(id);
     await markRecordAsDeleted(id, 'products');
@@ -106,5 +126,7 @@ export const productService = {
     fetch(`${BACKEND_URL}/api/products/${id}`, {
       method: 'DELETE'
     }).catch(err => console.warn("Express Backend API product delete note:", err));
+
+    return { success: true };
   }
 };

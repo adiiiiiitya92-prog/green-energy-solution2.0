@@ -203,6 +203,8 @@ export interface ProductUnit {
   serialNumber: string;
   status?: 'available' | 'allocated' | 'dispatched' | 'installed' | 'sold';
   notes?: string;
+  addedAt?: string;
+  dispatchedAt?: string;
 }
 
 export interface Product {
@@ -262,4 +264,21 @@ export interface ShadowAnalysisRecord {
   obstructions: any[];
   createdBy: string;
   createdAt: string;
+}
+
+export interface DeletionRequest {
+  id: string;
+  entityType: 'lead' | 'quotation' | 'challan' | 'document' | 'product' | 'photo' | 'other';
+  entityId: string;
+  entityName: string;
+  requestedByUserId: string;
+  requestedByUserName: string;
+  requestedByUserRole: string;
+  requestedAt: string;
+  status: 'pending' | 'approved' | 'rejected';
+  reason?: string;
+  reviewedByUserId?: string;
+  reviewedByUserName?: string;
+  reviewedAt?: string;
+  metadata?: Record<string, any>;
 }

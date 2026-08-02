@@ -47,6 +47,7 @@ export const SignatureCapture: React.FC<SignatureCaptureProps> = ({ onSave, onCl
       <div className="border border-dashed border-slate-300 rounded-lg overflow-hidden bg-slate-50 h-40">
         <SignatureCanvas
           ref={sigPad}
+          onEnd={handleSave}
           penColor="#0f172a"
           canvasProps={{
             width: 500,

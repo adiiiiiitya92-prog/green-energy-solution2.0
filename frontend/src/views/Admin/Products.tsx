@@ -1,50 +1,108 @@
 import React, { useEffect, useState } from 'react';
 import type { Product, ProductUnit } from '../../types';
 import { productService } from '../../services/productService';
+import { useAuthStore } from '../../store/authStore';
 import {
   Plus, Search, Trash2, Tag, Layers, Package, Filter, Pencil, Check, X,
-  Barcode, RefreshCw, Clipboard, CheckCircle2, ChevronDown, ChevronUp, AlertCircle
+  Barcode, RefreshCw, Clipboard, CheckCircle2, ChevronDown, ChevronUp, AlertCircle, Boxes, Calendar
 } from 'lucide-react';
 
+const formatBatchDateDisplay = (isoStr?: string): string => {
+  if (!isoStr) return 'Initial Stock Entry';
+  try {
+    const d = new Date(isoStr);
+    if (isNaN(d.getTime())) return 'Stock Entry';
+    return d.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
+  } catch {
+    return 'Stock Entry';
+  }
+};
+
+interface DateGroup {
+  dateKey: string;
+  displayDate: string;
+  items: { unit: ProductUnit; actualIndex: number }[];
+}
+
+const groupUnitsByDate = (
+  indexedList: { unit: ProductUnit; actualIndex: number }[]
+): DateGroup[] => {
+  const groups: Record<string, DateGroup> = {};
+
+  indexedList.forEach(item => {
+    const rawDate = item.unit.addedAt ? item.unit.addedAt.substring(0, 10) : 'initial';
+    const displayDate = formatBatchDateDisplay(item.unit.addedAt);
+
+    if (!groups[rawDate]) {
+      groups[rawDate] = {
+        dateKey: rawDate,
+        displayDate,
+        items: []
+      };
+    }
+    groups[rawDate].items.push(item);
+  });
+
+  return Object.values(groups).sort((a, b) => {
+    if (a.dateKey === 'initial') return 1;
+    if (b.dateKey === 'initial') return -1;
+    return b.dateKey.localeCompare(a.dateKey); // Newest stock entry batch first
+  });
+};
+
 const normalizeProductUnits = (p: Product): ProductUnit[] => {
-  const stock = Math.max(0, Number(p.stockQuantity) || 0);
+  const targetAvailableStock = Math.max(0, Number(p.stockQuantity) || 0);
+  const defaultDate = p.createdAt ? new Date(p.createdAt).toISOString() : new Date().toISOString();
   let units: ProductUnit[] = [];
 
   if (p.productUnits && Array.isArray(p.productUnits) && p.productUnits.length > 0) {
     units = p.productUnits.map((u, i) => ({
-      id: u.id || `unit_${i + 1}`,
+      id: u.id || `unit_${i + 1}_${Date.now()}_${i}`,
       unitNumber: u.unitNumber || (i + 1),
       serialNumber: u.serialNumber || '',
       status: u.status || 'available',
-      notes: u.notes || ''
+      notes: u.notes || '',
+      addedAt: u.addedAt || defaultDate,
+      dispatchedAt: u.dispatchedAt
     }));
   } else if (p.serialNumbers && Array.isArray(p.serialNumbers) && p.serialNumbers.length > 0) {
     units = p.serialNumbers.map((sn, i) => ({
-      id: `unit_${i + 1}`,
+      id: `unit_${i + 1}_${Date.now()}_${i}`,
       unitNumber: i + 1,
       serialNumber: sn || '',
-      status: 'available'
+      status: 'available',
+      addedAt: defaultDate
     }));
   }
 
-  // Adjust unit array length to match stock quantity
-  if (units.length < stock) {
+  // Separate available vs non-available units
+  const availableUnits = units.filter(u => u.status === 'available');
+  const nonAvailableUnits = units.filter(u => u.status !== 'available');
+
+  if (availableUnits.length < targetAvailableStock) {
+    // We need to add new available units for the stock addition!
     const brandPrefix = (p.brand || p.name || 'GES').substring(0, 3).toUpperCase().replace(/[^A-Z0-9]/g, '') || 'GES';
     const year = new Date().getFullYear();
-    for (let i = units.length; i < stock; i++) {
-      const numStr = String(i + 1).padStart(3, '0');
-      units.push({
-        id: `unit_${i + 1}_${Date.now()}_${Math.random().toString(36).substring(2, 5)}`,
-        unitNumber: i + 1,
+    const needed = targetAvailableStock - availableUnits.length;
+    const currentMaxNum = units.length > 0 ? Math.max(...units.map(u => u.unitNumber || 0)) : 0;
+    const nowIso = new Date().toISOString();
+
+    for (let i = 0; i < needed; i++) {
+      const uNum = currentMaxNum + i + 1;
+      const numStr = String(uNum).padStart(3, '0');
+      availableUnits.push({
+        id: `unit_${uNum}_${Date.now()}_${Math.random().toString(36).substring(2, 5)}`,
+        unitNumber: uNum,
         serialNumber: `${brandPrefix}-${year}-${numStr}`,
-        status: 'available'
+        status: 'available',
+        addedAt: nowIso
       });
     }
-  } else if (units.length > stock) {
-    units = units.slice(0, stock);
+  } else if (availableUnits.length > targetAvailableStock) {
+    availableUnits.splice(targetAvailableStock);
   }
 
-  return units;
+  return [...availableUnits, ...nonAvailableUnits].sort((a, b) => (a.unitNumber || 0) - (b.unitNumber || 0));
 };
 
 export const Products: React.FC = () => {
@@ -100,6 +158,8 @@ export const Products: React.FC = () => {
   const [manageBulkText, setManageBulkText] = useState<string>('');
   const [showManageBulkPaste, setShowManageBulkPaste] = useState<boolean>(false);
   const [serialSearchTerm, setSerialSearchTerm] = useState<string>('');
+  const [serialModalTab, setSerialModalTab] = useState<'available' | 'sold' | 'all'>('available');
+  const [addBatchQty, setAddBatchQty] = useState<number | ''>('');
 
   // Smooth Toast Notification State
   const [toastMsg, setToastMsg] = useState<string | null>(null);
@@ -118,6 +178,13 @@ export const Products: React.FC = () => {
 
   useEffect(() => {
     loadProducts();
+    const handleRealtimeUpdate = () => {
+      loadProducts();
+    };
+    window.addEventListener('app-realtime-update', handleRealtimeUpdate);
+    return () => {
+      window.removeEventListener('app-realtime-update', handleRealtimeUpdate);
+    };
   }, []);
 
   const handleStockQuantityChangeInAdd = (val: number | '') => {
@@ -369,13 +436,18 @@ export const Products: React.FC = () => {
   };
 
   const handleDeleteProduct = async (id: string) => {
-    if (confirm('Delete this item from catalog? This will not affect existing generated quotations.')) {
-      setProducts(prev => prev.filter(p => p.id !== id));
-      showToast('Item deleted from catalog.');
-      try {
-        await productService.deleteProduct(id);
-      } catch (err) {
-        console.error("Error deleting product:", err);
+    const isSuperAdmin = currentRole === 'super_admin' || currentUser?.role === 'super_admin';
+    const confirmMsg = isSuperAdmin
+      ? 'Delete this item from catalog? This will not affect existing generated quotations.'
+      : 'Submit product deletion request to Super Admin for approval?';
+
+    if (confirm(confirmMsg)) {
+      const res = await productService.deleteProduct(id);
+      if (res?.requiresApproval) {
+        showToast('🔒 Deletion request submitted for Super Admin approval.');
+      } else {
+        setProducts(prev => prev.filter(p => p.id !== id));
+        showToast('Item deleted from catalog.');
       }
     }
   };
@@ -383,9 +455,12 @@ export const Products: React.FC = () => {
   // Dedicated Serial Numbers Management Modal Handlers
   const handleOpenManageSerialsModal = (p: Product) => {
     const units = normalizeProductUnits(p);
+    const availCount = units.filter(u => u.status === 'available').length;
     setManagingSerialsProduct(p);
     setManagingUnits(units);
-    setManagingStockQty(p.stockQuantity || units.length);
+    setManagingStockQty(availCount);
+    setAddBatchQty('');
+    setSerialModalTab('available');
     const defaultPrefix = (p.brand || p.name || 'GES').substring(0, 3).toUpperCase().replace(/[^A-Z0-9]/g, '') + '-';
     setManageSerialPrefix(defaultPrefix);
     setSerialSearchTerm('');
@@ -393,26 +468,74 @@ export const Products: React.FC = () => {
     setShowManageBulkPaste(false);
   };
 
-  const handleManageStockQtyChange = (newQty: number) => {
-    const count = Math.max(0, newQty);
-    setManagingStockQty(count);
+  const handleAddStockBatch = () => {
+    const qtyToAdd = Number(addBatchQty);
+    if (!qtyToAdd || qtyToAdd <= 0) {
+      showToast('Please enter a valid batch quantity to add (e.g. 50).');
+      return;
+    }
+
+    const nowIso = new Date().toISOString();
+    const prefix = manageSerialPrefix.trim() || ((managingSerialsProduct?.brand || managingSerialsProduct?.name || 'GES').substring(0, 3).toUpperCase().replace(/[^A-Z0-9]/g, '') + '-');
+    const year = new Date().getFullYear();
+
     setManagingUnits(prev => {
-      const next = [...prev];
-      if (count > next.length) {
+      const currentMaxNum = prev.length > 0 ? Math.max(...prev.map(u => u.unitNumber || 0)) : 0;
+      const newUnits: ProductUnit[] = [];
+
+      for (let i = 0; i < qtyToAdd; i++) {
+        const uNum = currentMaxNum + i + 1;
+        const numStr = String(uNum).padStart(3, '0');
+        newUnits.push({
+          id: `unit_${uNum}_${Date.now()}_${Math.random().toString(36).substring(2, 5)}`,
+          unitNumber: uNum,
+          serialNumber: `${prefix}${year}-${numStr}`,
+          status: 'available',
+          addedAt: nowIso
+        });
+      }
+
+      const updated = [...prev, ...newUnits];
+      const availCount = updated.filter(u => u.status === 'available').length;
+      setManagingStockQty(availCount);
+      return updated;
+    });
+
+    showToast(`Added +${qtyToAdd} units as a new Stock Batch dated ${formatBatchDateDisplay(nowIso)}!`);
+    setAddBatchQty('');
+    setSerialModalTab('available');
+  };
+
+  const handleManageStockQtyChange = (newQty: number) => {
+    const targetCount = Math.max(0, newQty);
+    setManagingStockQty(targetCount);
+    setManagingUnits(prev => {
+      const availableUnits = prev.filter(u => u.status === 'available');
+      const nonAvailableUnits = prev.filter(u => u.status !== 'available');
+      const nowIso = new Date().toISOString();
+
+      if (targetCount > availableUnits.length) {
         const prefix = manageSerialPrefix.trim() || ((managingSerialsProduct?.brand || managingSerialsProduct?.name || 'GES').substring(0, 3).toUpperCase().replace(/[^A-Z0-9]/g, '') + '-');
         const year = new Date().getFullYear();
-        for (let i = next.length; i < count; i++) {
-          next.push({
-            id: `unit_${i + 1}_${Date.now()}_${Math.random().toString(36).substring(2, 5)}`,
-            unitNumber: i + 1,
-            serialNumber: `${prefix}${year}-${String(i + 1).padStart(3, '0')}`,
-            status: 'available'
+        const needed = targetCount - availableUnits.length;
+        const currentMaxNum = prev.length > 0 ? Math.max(...prev.map(u => u.unitNumber || 0)) : 0;
+
+        for (let i = 0; i < needed; i++) {
+          const uNum = currentMaxNum + i + 1;
+          const numStr = String(uNum).padStart(3, '0');
+          availableUnits.push({
+            id: `unit_${uNum}_${Date.now()}_${Math.random().toString(36).substring(2, 5)}`,
+            unitNumber: uNum,
+            serialNumber: `${prefix}${year}-${numStr}`,
+            status: 'available',
+            addedAt: nowIso
           });
         }
-      } else if (count < next.length) {
-        return next.slice(0, count);
+      } else if (targetCount < availableUnits.length) {
+        availableUnits.splice(targetCount);
       }
-      return next;
+
+      return [...availableUnits, ...nonAvailableUnits].sort((a, b) => (a.unitNumber || 0) - (b.unitNumber || 0));
     });
   };
 
@@ -431,40 +554,48 @@ export const Products: React.FC = () => {
   const handleApplyManageBulkPaste = () => {
     const lines = manageBulkText.split(/[\n,;]+/).map(s => s.trim()).filter(Boolean);
     if (lines.length === 0) return;
-    const newQty = Math.max(managingStockQty, lines.length);
-    setManagingStockQty(newQty);
+    const nowIso = new Date().toISOString();
+
     setManagingUnits(prev => {
-      const newList: ProductUnit[] = [];
-      for (let i = 0; i < newQty; i++) {
-        const existing = prev[i];
-        const sn = i < lines.length ? lines[i] : (existing?.serialNumber || `UNIT-${i+1}`);
-        newList.push({
-          id: existing?.id || `unit_${i + 1}_${Date.now()}_${Math.random().toString(36).substring(2, 5)}`,
-          unitNumber: i + 1,
+      const currentMaxNum = prev.length > 0 ? Math.max(...prev.map(u => u.unitNumber || 0)) : 0;
+      const newBatchUnits: ProductUnit[] = lines.map((sn, i) => {
+        const uNum = currentMaxNum + i + 1;
+        return {
+          id: `unit_${uNum}_${Date.now()}_${Math.random().toString(36).substring(2, 5)}`,
+          unitNumber: uNum,
           serialNumber: sn,
-          status: existing?.status || 'available',
-          notes: existing?.notes || ''
-        });
-      }
-      return newList;
+          status: 'available' as const,
+          addedAt: nowIso
+        };
+      });
+
+      const updated = [...prev, ...newBatchUnits];
+      const availCount = updated.filter(u => u.status === 'available').length;
+      setManagingStockQty(availCount);
+      return updated;
     });
+
+    showToast(`Pasted +${lines.length} serial numbers as a new Stock Batch for today!`);
     setManageBulkText('');
     setShowManageBulkPaste(false);
+    setSerialModalTab('available');
   };
 
   const handleSaveManagedSerials = async () => {
     if (!managingSerialsProduct) return;
     const targetProduct = managingSerialsProduct;
+    const availCount = managingUnits.filter(u => u.status === 'available').length;
+
     const updatedProduct: Product = {
       ...targetProduct,
-      stockQuantity: managingStockQty,
+      stockQuantity: availCount,
       productUnits: managingUnits,
-      serialNumbers: managingUnits.map(u => u.serialNumber)
+      serialNumbers: managingUnits.filter(u => u.status === 'available').map(u => u.serialNumber)
     };
 
     setManagingSerialsProduct(null);
     setProducts(prev => prev.map(p => p.id === updatedProduct.id ? updatedProduct : p));
-    showToast(`Serial numbers updated for "${updatedProduct.name}"!`);
+    showToast(`Serial numbers & stock updated for "${updatedProduct.name}"!`);
 
     try {
       await productService.updateProduct(updatedProduct);
@@ -519,6 +650,14 @@ export const Products: React.FC = () => {
     'Other Accessories'
   ];
 
+  const { currentRole, currentUser } = useAuthStore();
+  const isSuperAdmin = currentRole === 'super_admin' || currentUser?.role === 'super_admin';
+
+  const grandTotalInventoryValue = products.reduce((sum, p) => sum + ((p.rate || p.bomRate || 0) * (p.stockQuantity || 0)), 0);
+  const commercialStockValue = commercialProducts.reduce((sum, p) => sum + ((p.rate || 0) * (p.stockQuantity || 0)), 0);
+  const bomStockValue = bomProducts.reduce((sum, p) => sum + ((p.rate || p.bomRate || 0) * (p.stockQuantity || 0)), 0);
+  const totalStockQuantity = products.reduce((sum, p) => sum + (p.stockQuantity || 0), 0);
+
   return (
     <div className="space-y-6 relative">
       {/* Non-blocking Toast Notification Banner */}
@@ -562,6 +701,51 @@ export const Products: React.FC = () => {
           </button>
         </div>
       </div>
+
+      {/* Super Admin Executive Inventory Valuation Banner */}
+      {isSuperAdmin && (
+        <div className="bg-gradient-to-br from-slate-900 via-purple-950 to-slate-900 text-white p-5 rounded-2xl border border-purple-500/30 shadow-lg space-y-3 animate-fade-in">
+          <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 border-b border-purple-500/20 pb-3">
+            <div className="flex items-center gap-2.5">
+              <div className="p-2 rounded-xl bg-purple-500/20 text-purple-300 border border-purple-500/30">
+                <Boxes className="w-5 h-5 text-purple-300" />
+              </div>
+              <div>
+                <span className="text-[10px] font-black text-purple-300 uppercase tracking-widest block">
+                  SUPER ADMIN EXECUTIVE INVENTORY OVERVIEW
+                </span>
+                <h2 className="text-sm font-extrabold text-white">Real-Time Inventory Valuation</h2>
+              </div>
+            </div>
+
+            <div className="bg-purple-950/80 px-3.5 py-1.5 rounded-xl border border-purple-500/40 text-right">
+              <span className="text-[10px] text-purple-300 font-bold uppercase tracking-wider block">Grand Total Inventory Value</span>
+              <span className="text-xl font-black text-emerald-400">
+                ₹{grandTotalInventoryValue.toLocaleString('en-IN')}
+              </span>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs pt-1">
+            <div className="bg-slate-900/60 p-2.5 rounded-xl border border-purple-500/20">
+              <span className="text-[10px] text-purple-200/70 font-bold block">Commercial Stock Value</span>
+              <span className="text-sm font-extrabold text-white">₹{commercialStockValue.toLocaleString('en-IN')}</span>
+            </div>
+            <div className="bg-slate-900/60 p-2.5 rounded-xl border border-purple-500/20">
+              <span className="text-[10px] text-purple-200/70 font-bold block">BOM Stock Value</span>
+              <span className="text-sm font-extrabold text-white">₹{bomStockValue.toLocaleString('en-IN')}</span>
+            </div>
+            <div className="bg-slate-900/60 p-2.5 rounded-xl border border-purple-500/20">
+              <span className="text-[10px] text-purple-200/70 font-bold block">Total Stock Units</span>
+              <span className="text-sm font-extrabold text-white">{totalStockQuantity.toLocaleString('en-IN')} Units</span>
+            </div>
+            <div className="bg-slate-900/60 p-2.5 rounded-xl border border-purple-500/20">
+              <span className="text-[10px] text-purple-200/70 font-bold block">Cataloged Products</span>
+              <span className="text-sm font-extrabold text-white">{products.length} Products</span>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Catalog Tabs Switcher (Commercial vs BOM Catalog) */}
       <div className="flex border-b border-slate-200 gap-2">
@@ -658,7 +842,14 @@ export const Products: React.FC = () => {
       {/* Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
         {filteredProducts.map((p) => {
-          const unitCount = p.productUnits?.length || p.serialNumbers?.length || p.stockQuantity || 0;
+          const unitsList = p.productUnits && p.productUnits.length > 0
+            ? p.productUnits
+            : (p.serialNumbers || []).map((sn, i) => ({ id: `u_${i}`, unitNumber: i + 1, serialNumber: sn, status: 'available' as const }));
+
+          const availableCount = unitsList.filter(u => u.status === 'available' || !u.status).length;
+          const soldCount = unitsList.filter(u => u.status && u.status !== 'available').length;
+          const totalUnits = unitsList.length || p.stockQuantity || 0;
+
           return (
             <div
               key={p.id}
@@ -734,9 +925,14 @@ export const Products: React.FC = () => {
                 <div className="mt-3 flex items-center justify-between text-[11px] font-bold border-t border-slate-100 pt-2 gap-2 flex-wrap">
                   <div className="flex items-center gap-1.5">
                     <span className="text-slate-400 font-semibold">Stock:</span>
-                    <span className={`px-2 py-0.5 rounded-full font-black text-[10px] ${p.stockQuantity <= p.minStockThreshold ? 'bg-orange-100 text-orange-700 border border-orange-200' : 'bg-slate-100 text-slate-700'}`}>
-                      {p.stockQuantity} {p.unit || 'units'}
+                    <span className={`px-2 py-0.5 rounded-full font-black text-[10px] ${availableCount <= p.minStockThreshold ? 'bg-orange-100 text-orange-700 border border-orange-200' : 'bg-slate-100 text-slate-700'}`}>
+                      {availableCount} {p.unit || 'units'}
                     </span>
+                    {soldCount > 0 && (
+                      <span className="text-[9px] font-extrabold text-rose-600 bg-rose-50 px-1.5 py-0.5 rounded border border-rose-200/60">
+                        ({soldCount} Sold)
+                      </span>
+                    )}
                   </div>
 
                   <button
@@ -745,18 +941,27 @@ export const Products: React.FC = () => {
                     title="View, Search & Edit Individual Unit Serial Numbers"
                   >
                     <Barcode className="w-3.5 h-3.5 text-emerald-600" />
-                    <span>🔢 Serial Numbers ({unitCount})</span>
+                    <span>🔢 Serial Numbers ({totalUnits})</span>
                   </button>
                 </div>
               )}
 
-              {/* Price Row */}
-              <div className="mt-3 pt-2.5 border-t border-slate-100 flex justify-between items-center text-xs">
-                <span className="text-slate-400 font-semibold">Standard Rate:</span>
-                <span className="text-sm font-extrabold text-slate-950">
-                  ₹{p.rate.toLocaleString('en-IN')}{' '}
-                  <span className="text-[10px] font-medium text-slate-400">/ {p.unit || 'Nos'}</span>
-                </span>
+              {/* Price & Total Stock Value Rows */}
+              <div className="mt-3 pt-2.5 border-t border-slate-100 space-y-2 text-xs">
+                <div className="flex justify-between items-center">
+                  <span className="text-slate-400 font-semibold">Standard Rate:</span>
+                  <span className="text-sm font-extrabold text-slate-950">
+                    ₹{p.rate.toLocaleString('en-IN')}{' '}
+                    <span className="text-[10px] font-medium text-slate-400">/ {p.unit || 'Nos'}</span>
+                  </span>
+                </div>
+
+                <div className="flex justify-between items-center bg-slate-50/80 p-2 rounded-xl border border-slate-100">
+                  <span className="text-slate-500 font-bold text-[11px]">Total Stock Value:</span>
+                  <span className="text-xs font-black text-emerald-800 bg-emerald-50 px-2.5 py-0.5 rounded-lg border border-emerald-200/80 shadow-2xs">
+                    ₹{((p.rate || p.bomRate || 0) * availableCount).toLocaleString('en-IN')}
+                  </span>
+                </div>
               </div>
             </div>
           );
@@ -1346,7 +1551,7 @@ export const Products: React.FC = () => {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 backdrop-blur-xs p-4">
           <div className="bg-white rounded-3xl border border-slate-200 shadow-2xl w-full max-w-3xl p-6 sm:p-7 animate-scale-in max-h-[90vh] flex flex-col">
             {/* Modal Header */}
-            <div className="flex justify-between items-start pb-4 border-b border-slate-100 shrink-0">
+            <div className="flex justify-between items-start pb-3 border-b border-slate-100 shrink-0">
               <div>
                 <div className="flex items-center gap-2">
                   <div className="p-2 bg-emerald-100 text-emerald-800 rounded-xl">
@@ -1354,7 +1559,7 @@ export const Products: React.FC = () => {
                   </div>
                   <div>
                     <h3 className="text-xl font-black text-slate-900 tracking-tight">
-                      Unit Serial Numbers Management
+                      Unit Serial Numbers & Stock Partition
                     </h3>
                     <p className="text-xs font-semibold text-slate-500">
                       Product: <strong className="text-emerald-700">{managingSerialsProduct.name}</strong> {managingSerialsProduct.brand ? `• Brand: ${managingSerialsProduct.brand}` : ''}
@@ -1371,20 +1576,94 @@ export const Products: React.FC = () => {
               </button>
             </div>
 
-            {/* Toolbar: Stock Count, Prefix Generator, Bulk Paste */}
-            <div className="py-4 space-y-3 shrink-0 border-b border-slate-100">
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                {/* Total Stock Qty Modifier */}
+            {/* Inner Section Tabs: Available vs Sold vs All */}
+            <div className="pt-3 pb-2 flex items-center gap-2 border-b border-slate-100 shrink-0 overflow-x-auto">
+              <button
+                type="button"
+                onClick={() => setSerialModalTab('available')}
+                className={`px-3.5 py-1.5 rounded-xl font-black text-xs flex items-center gap-1.5 transition-all cursor-pointer border ${
+                  serialModalTab === 'available'
+                    ? 'bg-emerald-600 text-white border-emerald-600 shadow-xs'
+                    : 'bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100'
+                }`}
+              >
+                <CheckCircle2 className="w-3.5 h-3.5" />
+                <span>Available In-Stock ({managingUnits.filter(u => u.status === 'available').length})</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setSerialModalTab('sold')}
+                className={`px-3.5 py-1.5 rounded-xl font-black text-xs flex items-center gap-1.5 transition-all cursor-pointer border ${
+                  serialModalTab === 'sold'
+                    ? 'bg-rose-600 text-white border-rose-600 shadow-xs'
+                    : 'bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100'
+                }`}
+              >
+                <Package className="w-3.5 h-3.5" />
+                <span>Sold / Dispatched ({managingUnits.filter(u => u.status !== 'available').length})</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setSerialModalTab('all')}
+                className={`px-3.5 py-1.5 rounded-xl font-black text-xs flex items-center gap-1.5 transition-all cursor-pointer border ${
+                  serialModalTab === 'all'
+                    ? 'bg-slate-800 text-white border-slate-800 shadow-xs'
+                    : 'bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100'
+                }`}
+              >
+                <Boxes className="w-3.5 h-3.5" />
+                <span>All Units ({managingUnits.length})</span>
+              </button>
+            </div>
+
+            {/* Toolbar: Add New Stock Batch, Prefix Generator, Bulk Paste, Search */}
+            <div className="py-3 space-y-3 shrink-0 border-b border-slate-100">
+              {/* Add New Stock Entry / Batch Bar */}
+              <div className="bg-emerald-50/80 border border-emerald-200 p-3 rounded-2xl flex flex-wrap items-center justify-between gap-3 shadow-2xs">
+                <div className="flex items-center gap-2">
+                  <div className="p-1.5 bg-emerald-600 text-white rounded-lg">
+                    <Plus className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <span className="text-xs font-black text-emerald-950 block">Add New Stock Entry / Batch</span>
+                    <span className="text-[10px] text-emerald-700 font-semibold">Enter quantity to add as a new date partition (e.g. 50)</span>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2 flex-wrap">
+                  <div className="flex items-center space-x-1.5 bg-white border border-emerald-300 px-2.5 py-1 rounded-xl shadow-2xs">
+                    <span className="text-xs font-extrabold text-slate-600">+ Add:</span>
+                    <input
+                      type="number"
+                      min={1}
+                      value={addBatchQty}
+                      onChange={(e) => setAddBatchQty(e.target.value === '' ? '' : Math.max(1, Number(e.target.value)))}
+                      placeholder="Qty (e.g. 50)"
+                      className="w-20 text-xs font-black text-slate-900 focus:outline-none bg-transparent text-center"
+                    />
+                    <span className="text-xs font-bold text-slate-400">{managingSerialsProduct.unit || 'units'}</span>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={handleAddStockBatch}
+                    className="px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white font-black text-xs rounded-xl flex items-center gap-1.5 transition-all cursor-pointer shadow-xs"
+                  >
+                    <Plus className="w-4 h-4" />
+                    <span>Add Stock Batch</span>
+                  </button>
+                </div>
+              </div>
+
+              <div className="flex flex-wrap items-center justify-between gap-3 pt-1">
+                {/* Available Stock Indicator */}
                 <div className="flex items-center space-x-2 bg-slate-50 border border-slate-200 px-3 py-1.5 rounded-xl">
-                  <span className="text-xs font-extrabold text-slate-600">Total Stock Quantity:</span>
-                  <input
-                    type="number"
-                    min={0}
-                    value={managingStockQty}
-                    onChange={(e) => handleManageStockQtyChange(Number(e.target.value))}
-                    className="w-16 border border-slate-300 rounded-lg px-2 py-1 text-xs font-black text-slate-900 bg-white text-center focus:outline-none focus:border-emerald-500"
-                  />
-                  <span className="text-xs font-bold text-slate-400">{managingSerialsProduct.unit || 'units'}</span>
+                  <span className="text-xs font-extrabold text-slate-600">Total Available Stock:</span>
+                  <span className="text-xs font-black text-emerald-800 bg-emerald-100/80 px-2 py-0.5 rounded-md border border-emerald-200">
+                    {managingStockQty} {managingSerialsProduct.unit || 'units'}
+                  </span>
                 </div>
 
                 {/* Auto Generate & Bulk Paste Controls */}
@@ -1394,8 +1673,8 @@ export const Products: React.FC = () => {
                       type="text"
                       value={manageSerialPrefix}
                       onChange={(e) => setManageSerialPrefix(e.target.value)}
-                      placeholder="Prefix e.g. WAR-2026-"
-                      className="text-xs font-bold text-slate-800 focus:outline-none w-28 bg-transparent"
+                      placeholder="Prefix e.g. CRO-"
+                      className="text-xs font-bold text-slate-800 focus:outline-none w-24 bg-transparent"
                     />
                     <button
                       type="button"
@@ -1403,7 +1682,7 @@ export const Products: React.FC = () => {
                       className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-[11px] font-extrabold flex items-center gap-1 cursor-pointer"
                       title="Auto generate serial numbers sequentially for all units"
                     >
-                      <RefreshCw className="w-3 h-3" /> Auto Fill All
+                      <RefreshCw className="w-3 h-3" /> Auto Fill
                     </button>
                   </div>
 
@@ -1412,7 +1691,7 @@ export const Products: React.FC = () => {
                     onClick={() => setShowManageBulkPaste(!showManageBulkPaste)}
                     className="px-3 py-1.5 bg-purple-50 hover:bg-purple-100 border border-purple-200 text-purple-800 font-extrabold text-xs rounded-xl flex items-center gap-1.5 transition-colors cursor-pointer"
                   >
-                    <Clipboard className="w-3.5 h-3.5" /> Bulk Paste
+                    <Clipboard className="w-3.5 h-3.5" /> Bulk Paste New Batch
                   </button>
                 </div>
               </div>
@@ -1434,7 +1713,7 @@ export const Products: React.FC = () => {
                     rows={4}
                     value={manageBulkText}
                     onChange={(e) => setManageBulkText(e.target.value)}
-                    placeholder={`Paste 50 serial numbers here:\nSN-2026-001\nSN-2026-002\nSN-2026-003...`}
+                    placeholder={`Paste serial numbers here:\nSN-2026-001\nSN-2026-002\nSN-2026-003...`}
                     className="w-full border border-purple-200 rounded-xl p-2.5 text-xs font-mono bg-white focus:outline-none resize-y"
                   />
                   <button
@@ -1454,89 +1733,147 @@ export const Products: React.FC = () => {
                   type="text"
                   value={serialSearchTerm}
                   onChange={(e) => setSerialSearchTerm(e.target.value)}
-                  placeholder="Filter unit by Serial Number or Unit #..."
+                  placeholder="Filter by Serial Number, Unit #, or Entry Date..."
                   className="w-full border border-slate-200 rounded-xl pl-9 pr-3 py-1.5 text-xs font-medium bg-slate-50 focus:bg-white focus:outline-none focus:border-emerald-500"
                 />
               </div>
             </div>
 
-            {/* Scrollable Units Grid / Table */}
-            <div className="flex-1 overflow-y-auto py-3 pr-1 space-y-2 min-h-[220px]">
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-                {managingUnits
-                  .map((unit, actualIndex) => ({ unit, actualIndex }))
-                  .filter(({ unit }) =>
-                    !serialSearchTerm ||
-                    unit.serialNumber.toLowerCase().includes(serialSearchTerm.toLowerCase()) ||
-                    String(unit.unitNumber).includes(serialSearchTerm)
-                  )
-                  .map(({ unit, actualIndex }) => (
-                    <div
-                      key={unit.id}
-                      className="bg-slate-50 border border-slate-200 hover:border-emerald-300 rounded-xl p-2.5 flex items-center justify-between gap-2 transition-colors"
-                    >
-                      <div className="flex items-center space-x-2 shrink-0">
-                        <span className="w-7 h-7 rounded-lg bg-emerald-100 text-emerald-800 font-black text-xs flex items-center justify-center">
-                          #{unit.unitNumber}
+            {/* Scrollable Date-Partitioned Units View */}
+            <div className="flex-1 overflow-y-auto py-3 pr-1 space-y-4 min-h-[240px]">
+              {(() => {
+                const indexedUnits = managingUnits.map((unit, actualIndex) => ({ unit, actualIndex }));
+                const filteredByTab = indexedUnits.filter(({ unit }) => {
+                  if (serialModalTab === 'available') return unit.status === 'available';
+                  if (serialModalTab === 'sold') return unit.status !== 'available';
+                  return true;
+                });
+
+                const filteredBySearch = filteredByTab.filter(({ unit }) => {
+                  if (!serialSearchTerm) return true;
+                  const term = serialSearchTerm.toLowerCase();
+                  const dateStr = formatBatchDateDisplay(unit.addedAt).toLowerCase();
+                  return (
+                    unit.serialNumber.toLowerCase().includes(term) ||
+                    String(unit.unitNumber).includes(term) ||
+                    dateStr.includes(term)
+                  );
+                });
+
+                const groupedByDate = groupUnitsByDate(filteredBySearch);
+
+                if (groupedByDate.length === 0) {
+                  return (
+                    <div className="text-center py-10 text-slate-400 font-bold text-xs bg-slate-50 border-2 border-dashed border-slate-200 rounded-2xl">
+                      {serialModalTab === 'sold'
+                        ? 'No sold or dispatched units recorded yet.'
+                        : serialModalTab === 'available'
+                        ? 'No available units in stock. Increase available stock quantity above to add unit serial numbers.'
+                        : 'No serial numbers found matching search filter.'}
+                    </div>
+                  );
+                }
+
+                return groupedByDate.map((group) => (
+                  <div key={group.dateKey} className="space-y-2">
+                    {/* Stock Entry Date Partition Bar */}
+                    <div className="sticky top-0 z-10 bg-slate-100/95 backdrop-blur-xs border-l-4 border-emerald-600 px-3.5 py-2 rounded-xl flex justify-between items-center shadow-2xs border border-slate-200/80">
+                      <div className="flex items-center gap-2">
+                        <Calendar className="w-4 h-4 text-emerald-700" />
+                        <span className="text-xs font-black text-slate-800 uppercase tracking-wide">
+                          Stock Entry Date: {group.displayDate}
+                        </span>
+                        <span className="text-[10px] font-extrabold bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded-full border border-emerald-200">
+                          Batch ({group.items.length} Units)
                         </span>
                       </div>
-
-                      <input
-                        type="text"
-                        value={unit.serialNumber}
-                        onChange={(e) => {
-                          const val = e.target.value;
-                          setManagingUnits(prev => {
-                            const copy = [...prev];
-                            copy[actualIndex] = { ...copy[actualIndex], serialNumber: val };
-                            return copy;
-                          });
-                        }}
-                        placeholder={`Enter Serial Number for Unit #${unit.unitNumber}`}
-                        className="w-full border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs font-mono font-bold text-slate-900 bg-white focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500/20"
-                      />
-
-                      <select
-                        value={unit.status || 'available'}
-                        onChange={(e) => {
-                          const st = e.target.value as any;
-                          setManagingUnits(prev => {
-                            const copy = [...prev];
-                            copy[actualIndex] = { ...copy[actualIndex], status: st };
-                            return copy;
-                          });
-                        }}
-                        className={`text-[10px] font-extrabold px-1.5 py-1 rounded-lg border cursor-pointer focus:outline-none shrink-0 ${
-                          unit.status === 'sold'
-                            ? 'bg-rose-50 text-rose-700 border-rose-200'
-                            : unit.status === 'dispatched'
-                            ? 'bg-purple-50 text-purple-700 border-purple-200'
-                            : unit.status === 'installed'
-                            ? 'bg-blue-50 text-blue-700 border-blue-200'
-                            : 'bg-emerald-50 text-emerald-700 border-emerald-200'
-                        }`}
-                      >
-                        <option value="available">Available</option>
-                        <option value="sold">Sold (Dispatched)</option>
-                        <option value="dispatched">Dispatched</option>
-                        <option value="installed">Installed</option>
-                        <option value="allocated">Allocated</option>
-                      </select>
+                      <span className="text-[10px] font-bold text-slate-500 hidden sm:inline">
+                        Units #{group.items[0].unit.unitNumber} - #{group.items[group.items.length - 1].unit.unitNumber}
+                      </span>
                     </div>
-                  ))}
-              </div>
 
-              {managingUnits.length === 0 && (
-                <div className="text-center py-8 text-slate-400 font-bold text-xs bg-slate-50 border-2 border-dashed border-slate-200 rounded-2xl">
-                  No units available in stock. Increase total stock quantity above to add unit serial numbers.
-                </div>
-              )}
+                    {/* Unit Cards Grid */}
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 pl-1">
+                      {group.items.map(({ unit, actualIndex }) => (
+                        <div
+                          key={unit.id}
+                          className={`border rounded-xl p-2.5 flex items-center justify-between gap-2 transition-colors ${
+                            unit.status === 'sold' || unit.status === 'dispatched'
+                              ? 'bg-rose-50/50 border-rose-200'
+                              : 'bg-slate-50 border-slate-200 hover:border-emerald-300'
+                          }`}
+                        >
+                          <div className="flex items-center space-x-2 shrink-0">
+                            <span className={`w-7 h-7 rounded-lg font-black text-xs flex items-center justify-center ${
+                              unit.status === 'sold' || unit.status === 'dispatched'
+                                ? 'bg-rose-100 text-rose-800'
+                                : 'bg-emerald-100 text-emerald-800'
+                            }`}>
+                              #{unit.unitNumber}
+                            </span>
+                          </div>
+
+                          <div className="flex-1 min-w-0">
+                            <input
+                              type="text"
+                              value={unit.serialNumber}
+                              onChange={(e) => {
+                                const val = e.target.value;
+                                setManagingUnits(prev => {
+                                  const copy = [...prev];
+                                  copy[actualIndex] = { ...copy[actualIndex], serialNumber: val };
+                                  return copy;
+                                });
+                              }}
+                              placeholder={`Enter Serial Number for Unit #${unit.unitNumber}`}
+                              className="w-full border border-slate-200 rounded-lg px-2.5 py-1 text-xs font-mono font-bold text-slate-900 bg-white focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500/20"
+                            />
+                            <div className="text-[9px] text-slate-400 font-semibold mt-0.5 flex items-center gap-1">
+                              <Calendar className="w-2.5 h-2.5 text-slate-400" />
+                              <span>Added: {formatBatchDateDisplay(unit.addedAt)}</span>
+                            </div>
+                          </div>
+
+                          <select
+                            value={unit.status || 'available'}
+                            onChange={(e) => {
+                              const st = e.target.value as any;
+                              setManagingUnits(prev => {
+                                const copy = [...prev];
+                                copy[actualIndex] = { ...copy[actualIndex], status: st };
+                                return copy;
+                              });
+                            }}
+                            className={`text-[10px] font-extrabold px-1.5 py-1 rounded-lg border cursor-pointer focus:outline-none shrink-0 ${
+                              unit.status === 'sold'
+                                ? 'bg-rose-100 text-rose-700 border-rose-300'
+                                : unit.status === 'dispatched'
+                                ? 'bg-purple-100 text-purple-700 border-purple-300'
+                                : unit.status === 'installed'
+                                ? 'bg-blue-100 text-blue-700 border-blue-300'
+                                : 'bg-emerald-100 text-emerald-700 border-emerald-300'
+                            }`}
+                          >
+                            <option value="available">Available</option>
+                            <option value="sold">Sold (Out of Stock)</option>
+                            <option value="dispatched">Dispatched</option>
+                            <option value="installed">Installed</option>
+                            <option value="allocated">Allocated</option>
+                          </select>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ));
+              })()}
             </div>
 
             {/* Modal Footer */}
             <div className="pt-4 border-t border-slate-100 flex justify-between items-center shrink-0">
-              <div className="text-xs font-extrabold text-slate-500">
-                Total Stock Units: <strong className="text-slate-900">{managingUnits.length}</strong>
+              <div className="text-xs font-extrabold text-slate-500 flex items-center gap-3">
+                <span>Available: <strong className="text-emerald-700">{managingUnits.filter(u => u.status === 'available').length}</strong></span>
+                <span>Sold/Dispatched: <strong className="text-rose-700">{managingUnits.filter(u => u.status !== 'available').length}</strong></span>
+                <span>Total: <strong className="text-slate-900">{managingUnits.length}</strong></span>
               </div>
 
               <div className="flex gap-2">

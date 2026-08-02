@@ -137,34 +137,58 @@ export const challanService = {
     saveRecordToFirestore('challans', id, updatedChallan);
   },
 
-  async deleteChallan(id: string): Promise<void> {
-    const challan = await db.challans.get(id);
-    if (!challan) return;
+  async deleteChallan(id: string, skipApprovalCheck = false): Promise<{ success: boolean; requiresApproval?: boolean }> {
+    if (!id) return { success: false };
 
-    await db.transaction('rw', [db.challans, db.products], async () => {
-      for (const item of challan.items) {
-        const product = await db.products.get(item.productId);
-        if (product) {
-          const restoredStock = product.stockQuantity + item.qty;
-          let restoredUnits = product.productUnits;
-          if (item.serialNumbers && item.serialNumbers.length > 0 && product.productUnits) {
-            restoredUnits = product.productUnits.map(u => {
-              if (item.serialNumbers?.includes(u.serialNumber)) {
-                return { ...u, status: 'available' as const };
-              }
-              return u;
-            });
-          }
-          const updateObj: Partial<Product> = { stockQuantity: restoredStock };
-          if (restoredUnits) updateObj.productUnits = restoredUnits;
-          await db.products.update(item.productId, updateObj);
-          saveRecordToFirestore('products', item.productId, { ...product, ...updateObj });
-        }
-      }
-      await db.challans.delete(id);
-    });
+    const { useAuthStore } = await import('../store/authStore');
+    const currentRole = useAuthStore.getState().currentRole;
+    const currentUser = useAuthStore.getState().currentUser;
+    const isSuperAdmin = currentRole === 'super_admin' || currentUser?.role === 'super_admin';
 
+    if (!isSuperAdmin && !skipApprovalCheck) {
+      const challan = await db.challans.get(id);
+      const chName = challan ? `Delivery Challan ${challan.challanNumber}` : `Challan #${id}`;
+      const { deletionRequestService } = await import('./deletionRequestService');
+      await deletionRequestService.requestDeletion({
+        entityType: 'challan',
+        entityId: id,
+        entityName: chName,
+        metadata: { leadId: challan?.leadId },
+        reason: `Delete delivery challan requested by ${currentUser?.fullName || 'Admin/Employee'}`
+      });
+      return { success: true, requiresApproval: true };
+    }
+
+    // Always mark as deleted FIRST so background sync never resurrects it!
     await markRecordAsDeleted(id, 'challans');
+
+    const challan = await db.challans.get(id);
+    if (challan) {
+      await db.transaction('rw', [db.challans, db.products], async () => {
+        for (const item of challan.items) {
+          const product = await db.products.get(item.productId);
+          if (product) {
+            const restoredStock = product.stockQuantity + item.qty;
+            let restoredUnits = product.productUnits;
+            if (item.serialNumbers && item.serialNumbers.length > 0 && product.productUnits) {
+              restoredUnits = product.productUnits.map(u => {
+                if (item.serialNumbers?.includes(u.serialNumber)) {
+                  return { ...u, status: 'available' as const };
+                }
+                return u;
+              });
+            }
+            const updateObj: Partial<Product> = { stockQuantity: restoredStock };
+            if (restoredUnits) updateObj.productUnits = restoredUnits;
+            await db.products.update(item.productId, updateObj);
+            saveRecordToFirestore('products', item.productId, { ...product, ...updateObj });
+          }
+        }
+        await db.challans.delete(id);
+      });
+    } else {
+      await db.challans.delete(id);
+    }
 
     try {
       const { deleteRecordFromFirestore } = await import('./firebase');
@@ -172,5 +196,8 @@ export const challanService = {
     } catch (e) {
       console.warn("Firestore delete challan note:", e);
     }
+
+    window.dispatchEvent(new CustomEvent('app-realtime-update'));
+    return { success: true };
   }
 };

@@ -45,10 +45,39 @@ async function convertImageToBase64(srcUrlOrBlob: any): Promise<string | null> {
     return srcUrlOrBlob;
   }
 
-  let src = '';
-  if (typeof srcUrlOrBlob === 'string') {
-    src = srcUrlOrBlob;
-  } else if (srcUrlOrBlob instanceof Blob || srcUrlOrBlob instanceof File) {
+  // Direct conversion for Blob or File objects using FileReader
+  if (srcUrlOrBlob instanceof Blob || srcUrlOrBlob instanceof File) {
+    try {
+      return await new Promise<string | null>((resolve) => {
+        const reader = new FileReader();
+        reader.onloadend = () => resolve(reader.result as string);
+        reader.onerror = () => resolve(null);
+        reader.readAsDataURL(srcUrlOrBlob);
+      });
+    } catch (_) {}
+  }
+
+  // Fetch conversion for HTTP / HTTPS / Blob URLs to avoid CORS canvas taints
+  if (typeof srcUrlOrBlob === 'string' && (srcUrlOrBlob.startsWith('http') || srcUrlOrBlob.startsWith('blob:'))) {
+    try {
+      const res = await fetch(srcUrlOrBlob);
+      if (res.ok) {
+        const blob = await res.blob();
+        return await new Promise<string | null>((resolve) => {
+          const reader = new FileReader();
+          reader.onloadend = () => resolve(reader.result as string);
+          reader.onerror = () => resolve(null);
+          reader.readAsDataURL(blob);
+        });
+      }
+    } catch (e) {
+      console.warn("Fetch image base64 conversion note:", e);
+    }
+  }
+
+  // Fallback: standard Image & Canvas element loading
+  let src = typeof srcUrlOrBlob === 'string' ? srcUrlOrBlob : '';
+  if (!src && (srcUrlOrBlob instanceof Blob || srcUrlOrBlob instanceof File)) {
     try {
       src = URL.createObjectURL(srcUrlOrBlob);
     } catch (_) {}
@@ -165,7 +194,7 @@ export function createNewQuotationProposalHtml(q: any, lead: any, creatorName: s
 
   const items = q.items || q.lineItems || [];
   const subtotal = q.subtotal || items.reduce((s: number, i: any) => s + (i.amount || (i.qty * i.rate)), 0);
-  const subsidy = q.subsidyAmount !== undefined && q.subsidyAmount !== null ? q.subsidyAmount : '0';
+  const subsidy = q.subsidyAmount !== undefined && q.subsidyAmount !== null && q.subsidyAmount !== '' ? q.subsidyAmount : '78000';
   const gstRateVal = q.gstRate !== undefined && q.gstRate !== null ? Number(q.gstRate) : 13.8;
 
   const subTotalAmt = Number(subtotal) || 49000;
@@ -234,11 +263,11 @@ export function createNewQuotationProposalHtml(q: any, lead: any, creatorName: s
   `;
 
   // Dynamic Bill of Materials (BOM) Rows with Categorized Group Headers (Strict Sequence)
-  const rawBomItems = (q.bomItems && q.bomItems.length > 0) ? q.bomItems : DEFAULT_BOM_ITEMS;
+  const rawBomItems = (q.bomItems && q.bomItems.length > 0) ? q.bomItems : [];
   const sortedBomItems = sortAndFormatBomItems(rawBomItems);
 
   let currentCategoryHeader = '';
-  const bomTableRowsHtml = sortedBomItems.map((bItem: any) => {
+  const bomTableRowsHtml = sortedBomItems.length > 0 ? sortedBomItems.map((bItem: any) => {
     if (bItem.isHeader) {
       return `
         <tr style="background: #e2e8f0; color: #0f172a; font-weight: 800; font-size: 10.5px;">
@@ -277,7 +306,13 @@ export function createNewQuotationProposalHtml(q: any, lead: any, creatorName: s
         <td style="padding: 5px 8px; border: 1px solid #cbd5e1; font-weight: 600;">${bItem.brand || 'As specified'}</td>
       </tr>
     `;
-  }).join('');
+  }).join('') : `
+    <tr>
+      <td colspan="5" style="padding: 14px; text-align: center; color: #64748b; font-style: italic; font-size: 10.5px; border: 1px solid #cbd5e1;">
+        No Bill of Materials (BOM) items selected.
+      </td>
+    </tr>
+  `;
 
   return `
     <!-- PAGE 1: EXACT MATCH PROPOSAL COVER PAGE (TEMPLATE BASED WITH VECTOR SVGS) -->
@@ -824,8 +859,11 @@ export function createNewQuotationProposalHtml(q: any, lead: any, creatorName: s
               <span style="color: #f59e0b; font-size: 14px;">★★★★★</span>
               <span style="font-size: 11px; font-weight: 800; color: #193047; margin-left: 8px;">Customer Review</span>
             </div>
-            <p style="font-size: 11px; color: #334155; line-height: 1.6; margin: 0; font-style: italic;">
+            <p style="font-size: 11px; color: #334155; line-height: 1.6; margin: 0 0 8px 0; font-style: italic;">
               "Extremely satisfied with rooftop solar power plant! The installation was smooth, professional, and on time. Great customer service and excellent quality."
+            </p>
+            <p style="font-size: 11.5px; font-weight: 900; color: #0f172a; margin: 0; text-align: right;">
+              — Rajesh Deshmukh
             </p>
           </div>
 
@@ -839,7 +877,7 @@ export function createNewQuotationProposalHtml(q: any, lead: any, creatorName: s
               "When you have an empty roof then why pay for electricity bill? Thank you for end-to-end guidance. Your staff is very professional and friendly. Thanks for making my roof solarized! Superb work by the team."
             </p>
             <p style="font-size: 11.5px; font-weight: 900; color: #0f172a; margin: 0; text-align: right;">
-              — Payalben hirpara
+              — Sunita Kulkarni
             </p>
           </div>
 
@@ -853,7 +891,7 @@ export function createNewQuotationProposalHtml(q: any, lead: any, creatorName: s
               "One of the best decisions of my life to go solar! I really appreciate your product quality and workmanship. In the last 6 months, my plant has generated more than 2000 units and counting. I strongly recommend everyone to go solar as soon as possible. Thank you."
             </p>
             <p style="font-size: 11px; font-weight: 900; color: #0f172a; margin: 0; text-align: right;">
-              — Kiranbhai prajapati
+              — Aniket Patil
             </p>
           </div>
 
@@ -1119,10 +1157,11 @@ export const pdfService = {
     const sigDataUrl = await convertImageToBase64(signatureUrl || oc.clientSignatureBlob);
     if (sigDataUrl) {
       try {
+        const fmt = (sigDataUrl.includes('image/jpeg') || sigDataUrl.includes('image/jpg')) ? 'JPEG' : 'PNG';
         doc.setDrawColor(226, 232, 240);
         doc.setFillColor(248, 250, 252);
         doc.roundedRect(125, 204, 70, 26, 2, 2, 'FD');
-        doc.addImage(sigDataUrl, 'PNG', 127, 206, 66, 22);
+        doc.addImage(sigDataUrl, fmt, 127, 206, 66, 22);
       } catch (e) {
         console.warn("PDF addImage signature note:", e);
       }

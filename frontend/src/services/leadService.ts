@@ -11,19 +11,27 @@ export const leadService = {
         const remoteLeads = await fetchCollectionFromFirestore<Lead>('leads');
         if (Array.isArray(remoteLeads)) {
           const freshDeleted = await getDeletedRecordIdsSet();
-          const validRemote = remoteLeads.filter(l => !freshDeleted.has(l.id));
-          const remoteIds = new Set(validRemote.map(l => l.id));
+          const validRemote = remoteLeads.filter(l => l.id && !freshDeleted.has(l.id));
           
-          const currentLocal = await db.leads.toArray();
-          const toDelete = currentLocal.filter(l => !remoteIds.has(l.id) || freshDeleted.has(l.id)).map(l => l.id);
-          
-          if (toDelete.length > 0) {
-            await db.leads.bulkDelete(toDelete);
-          }
           if (validRemote.length > 0) {
+            const remoteIds = new Set(validRemote.map(l => l.id));
+            const currentLocal = await db.leads.toArray();
+            const toDelete = currentLocal.filter(l => !remoteIds.has(l.id) || freshDeleted.has(l.id)).map(l => l.id);
+            
+            if (toDelete.length > 0) {
+              await db.leads.bulkDelete(toDelete);
+            }
             await db.leads.bulkPut(validRemote);
           } else if (remoteLeads.length === 0) {
-            await db.leads.clear();
+            // All remote records deleted globally
+            const currentLocal = await db.leads.toArray();
+            if (currentLocal.length > 0) {
+              const freshDeleted = await getDeletedRecordIdsSet();
+              const toDelete = currentLocal.filter(l => freshDeleted.has(l.id)).map(l => l.id);
+              if (toDelete.length > 0) {
+                await db.leads.bulkDelete(toDelete);
+              }
+            }
           }
         }
       } catch (err) {
@@ -56,19 +64,48 @@ export const leadService = {
     // Save locally & sync to Firestore
     await db.leads.add(newLead);
     saveRecordToFirestore('leads', id, newLead);
+    window.dispatchEvent(new CustomEvent('app-realtime-update'));
     return id;
   },
 
-  async updateLead(lead: Lead): Promise<void> {
+  async updateLead(leadOrId: Lead | string, patch?: Partial<Lead>): Promise<void> {
+    let leadToUpdate: Lead | undefined;
+    if (typeof leadOrId === 'string') {
+      const existing = await db.leads.get(leadOrId);
+      if (!existing) return;
+      leadToUpdate = { ...existing, ...patch, updatedAt: new Date().toISOString() };
+    } else {
+      leadToUpdate = { ...leadOrId, ...patch, updatedAt: new Date().toISOString() };
+    }
+
+    if (!leadToUpdate || !leadToUpdate.id) return;
     const deletedIds = await getDeletedRecordIdsSet();
-    if (deletedIds.has(lead.id)) return;
-    lead.updatedAt = new Date().toISOString();
-    await db.leads.put(lead);
-    saveRecordToFirestore('leads', lead.id, lead);
+    if (deletedIds.has(leadToUpdate.id)) return;
+    await db.leads.put(leadToUpdate);
+    saveRecordToFirestore('leads', leadToUpdate.id, leadToUpdate);
+    window.dispatchEvent(new CustomEvent('app-realtime-update'));
   },
 
-  async deleteLead(id: string): Promise<void> {
-    if (!id) return;
+  async deleteLead(id: string, skipApprovalCheck = false): Promise<{ success: boolean; requiresApproval?: boolean }> {
+    if (!id) return { success: false };
+
+    const { useAuthStore } = await import('../store/authStore');
+    const currentRole = useAuthStore.getState().currentRole;
+    const currentUser = useAuthStore.getState().currentUser;
+    const isSuperAdmin = currentRole === 'super_admin' || currentUser?.role === 'super_admin';
+
+    if (!isSuperAdmin && !skipApprovalCheck) {
+      const lead = await db.leads.get(id);
+      const leadName = lead ? `${lead.name} (+91 ${lead.phoneNumber})` : `Lead ID #${id}`;
+      const { deletionRequestService } = await import('./deletionRequestService');
+      await deletionRequestService.requestDeletion({
+        entityType: 'lead',
+        entityId: id,
+        entityName: leadName,
+        reason: `Delete lead requested by ${currentUser?.fullName || 'Admin/Employee'}`
+      });
+      return { success: true, requiresApproval: true };
+    }
 
     // 1. Collect all dependent sub-records before deletion
     const quotes = await db.quotations.where({ leadId: id }).toArray();
@@ -132,6 +169,35 @@ export const leadService = {
     for (const sa of shadows) deleteRecordFromFirestore('shadowAnalyses', sa.id);
 
     fetch(`${BACKEND_URL}/api/leads/${id}`, { method: 'DELETE' }).catch(() => {});
+    return { success: true };
+  },
+
+  async deleteClientDocument(docId: string, leadId?: string, skipApprovalCheck = false): Promise<{ success: boolean; requiresApproval?: boolean }> {
+    if (!docId) return { success: false };
+
+    const { useAuthStore } = await import('../store/authStore');
+    const currentRole = useAuthStore.getState().currentRole;
+    const currentUser = useAuthStore.getState().currentUser;
+    const isSuperAdmin = currentRole === 'super_admin' || currentUser?.role === 'super_admin';
+
+    if (!isSuperAdmin && !skipApprovalCheck) {
+      const docItem = await db.clientDocuments.get(docId);
+      const docName = docItem ? `Document "${docItem.name || docItem.docType}"` : `Document #${docId}`;
+      const { deletionRequestService } = await import('./deletionRequestService');
+      await deletionRequestService.requestDeletion({
+        entityType: 'document',
+        entityId: docId,
+        entityName: docName,
+        metadata: { leadId },
+        reason: `Delete document requested by ${currentUser?.fullName || 'Admin/Employee'}`
+      });
+      return { success: true, requiresApproval: true };
+    }
+
+    await db.clientDocuments.delete(docId);
+    await markRecordAsDeleted(docId, 'clientDocuments');
+    deleteRecordFromFirestore('clientDocuments', docId);
+    return { success: true };
   },
 
   async assignLead(leadId: string, salesPersonId?: string, adminId?: string): Promise<void> {

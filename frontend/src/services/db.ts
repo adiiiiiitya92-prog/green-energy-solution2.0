@@ -11,7 +11,8 @@ import type {
   FieldVisitReport,
   Product,
   Challan,
-  ShadowAnalysisRecord
+  ShadowAnalysisRecord,
+  DeletionRequest
 } from '../types';
 
 export interface DeletedRecord {
@@ -34,6 +35,7 @@ export class SolarCRMDatabase extends Dexie {
   challans!: Table<Challan>;
   shadowAnalyses!: Table<ShadowAnalysisRecord>;
   deletedRecords!: Table<DeletedRecord>;
+  deletionRequests!: Table<DeletionRequest>;
 
   constructor() {
     super('GreenEnergyCRMDatabase');
@@ -66,6 +68,22 @@ export class SolarCRMDatabase extends Dexie {
       shadowAnalyses: 'id, leadId, projectName, createdAt',
       deletedRecords: 'id, collectionName, deletedAt'
     });
+    this.version(5).stores({
+      profiles: 'id, role, isActive',
+      leads: 'id, assignedEmployeeId, status, createdAt',
+      quotations: 'id, leadId, quotationNumber, createdAt',
+      orderConfirmations: 'id, leadId, quotationId',
+      clientDocuments: 'id, leadId, docType',
+      clientRegistrations: 'leadId',
+      installationPhotos: 'id, leadId, photoType',
+      releaseDocuments: 'id, leadId',
+      fieldVisitReports: 'id, employeeId, leadId, visitedAt',
+      products: 'id, name, category',
+      challans: 'id, leadId, assignedEmployeeId, challanNumber, createdAt',
+      shadowAnalyses: 'id, leadId, projectName, createdAt',
+      deletedRecords: 'id, collectionName, deletedAt',
+      deletionRequests: 'id, status, entityType, requestedByUserId, requestedAt'
+    });
   }
 }
 
@@ -73,15 +91,20 @@ export const db = new SolarCRMDatabase();
 
 export async function markRecordAsDeleted(id: string, collectionName: string): Promise<void> {
   if (!id) return;
+  const deletedObj: DeletedRecord = {
+    id,
+    collectionName,
+    deletedAt: new Date().toISOString()
+  };
   try {
-    await db.deletedRecords.put({
-      id,
-      collectionName,
-      deletedAt: new Date().toISOString()
-    });
+    await db.deletedRecords.put(deletedObj);
   } catch (err) {
     console.warn(`Error marking ${collectionName}/${id} as deleted:`, err);
   }
+  try {
+    const { saveRecordToFirestore } = await import('./firebase');
+    saveRecordToFirestore('deletedRecords', id, deletedObj).catch(() => {});
+  } catch (_) {}
 }
 
 export async function getDeletedRecordIdsSet(): Promise<Set<string>> {

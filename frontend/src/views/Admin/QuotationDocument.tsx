@@ -5,7 +5,10 @@ import { shareQuotationViaWhatsapp } from '../../services/quotationShareService'
 import { productService } from '../../services/productService';
 import { pdfService, createNewQuotationProposalHtml, printQuotationHTML } from '../../services/pdfService';
 import { uploadImageToFirebase, uploadPdfToFirebase } from '../../services/firebase';
-import type { Lead, Quotation, QuotationItem, Product, BomItem } from '../../types';
+import { getCachedPdfBlob, setCachedPdfBlob, ensurePdfBlobForQuotation } from '../../services/pdfCacheService';
+import { useAuthStore } from '../../store/authStore';
+import { employeeService } from '../../services/employeeService';
+import type { Lead, Quotation, QuotationItem, Product, BomItem, Profile } from '../../types';
 import {
   FileText,
   Plus,
@@ -44,6 +47,8 @@ export const QuotationDocument: React.FC<{
   onSwitchToEdit?: () => void;
   onQuotationSaved?: () => void;
 }> = ({ defaultLeadId, isEmbedded, readOnlyQuotation, viewOnly = false, onClosePreview, onNavigateToOrderKyc, onSwitchToEdit, onQuotationSaved }) => {
+  const { currentUser } = useAuthStore();
+  const [profiles, setProfiles] = useState<Profile[]>([]);
   const [isViewOnlyMode, setIsViewOnlyMode] = useState<boolean>(viewOnly);
   const [leads, setLeads] = useState<Lead[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
@@ -55,10 +60,26 @@ export const QuotationDocument: React.FC<{
     setIsViewOnlyMode(viewOnly);
   }, [viewOnly]);
 
+  // Helper to resolve preparedBy name from employee profiles or lead assignment or currentUser
+  const resolvePreparedByName = (empIdOrName?: string, leadObj?: Lead | null): string => {
+    if (empIdOrName) {
+      const match = profiles.find(p => p.id === empIdOrName);
+      if (match?.fullName) return match.fullName;
+      return empIdOrName;
+    }
+    const assignedId = leadObj?.assignedSalesPersonId || leadObj?.assignedEmployeeId;
+    if (assignedId) {
+      const match = profiles.find(p => p.id === assignedId);
+      if (match?.fullName) return match.fullName;
+    }
+    if (currentUser?.fullName) return currentUser.fullName;
+    return 'Nitin Thakre';
+  };
+
   // Proposal Meta
   const [proposalId, setProposalId] = useState(readOnlyQuotation?.proposalId || readOnlyQuotation?.quotationNumber || `GES/QTN/${dayjs().format('YYYY')}/${Math.floor(1000 + Math.random() * 9000)}`);
   const [proposalDate, setProposalDate] = useState(readOnlyQuotation?.proposalDate || dayjs().format('YYYY-MM-DD'));
-  const [preparedBy, setPreparedBy] = useState(readOnlyQuotation?.preparedBy || readOnlyQuotation?.createdBy || 'Nitin Thakre');
+  const [preparedBy, setPreparedBy] = useState(readOnlyQuotation?.preparedBy || readOnlyQuotation?.createdBy || currentUser?.fullName || 'Nitin Thakre');
 
   // Customer Details
   const [consumerName, setConsumerName] = useState(readOnlyQuotation?.consumerName || '');
@@ -69,7 +90,7 @@ export const QuotationDocument: React.FC<{
 
   // Specs
   const [systemCapacity, setSystemCapacity] = useState(readOnlyQuotation?.systemCapacity ? String(readOnlyQuotation.systemCapacity).replace(/[^0-9.]/g, '') : '5.0');
-  const [subsidyAmount, setSubsidyAmount] = useState(readOnlyQuotation?.subsidyAmount || '');
+  const [subsidyAmount, setSubsidyAmount] = useState(readOnlyQuotation?.subsidyAmount !== undefined && readOnlyQuotation.subsidyAmount !== '' ? readOnlyQuotation.subsidyAmount : '78000');
   const [pvModuleMake, setPvModuleMake] = useState(readOnlyQuotation?.pvModuleMake || '');
   const [inverterMake, setInverterMake] = useState(readOnlyQuotation?.inverterMake || '');
   const [structureType, setStructureType] = useState(readOnlyQuotation?.structureType || '');
@@ -77,9 +98,9 @@ export const QuotationDocument: React.FC<{
   const [sanctionLoad, setSanctionLoad] = useState(readOnlyQuotation?.sanctionLoad || '5.0 kW');
 
   // Tax / GST Settings
-  const initialGstRate = readOnlyQuotation?.gstRate !== undefined ? readOnlyQuotation.gstRate : 13.8;
+  const initialGstRate = readOnlyQuotation?.gstRate !== undefined ? readOnlyQuotation.gstRate : 8.9;
   const [gstRate, setGstRate] = useState<number>(initialGstRate);
-  const [gstPreset, setGstPreset] = useState<string>([13.8, 12, 18, 5, 0].includes(initialGstRate) ? String(initialGstRate) : 'custom');
+  const [gstPreset, setGstPreset] = useState<string>([8.9, 13.8, 12, 18, 5, 0].includes(initialGstRate) ? String(initialGstRate) : 'custom');
 
   // UI / Preview Controls
   const [zoomScale, setZoomScale] = useState<number>(0.75); // Default 75% for ideal 8-page preview fit
@@ -160,11 +181,11 @@ export const QuotationDocument: React.FC<{
   const [multiBomCategoryFilter, setMultiBomCategoryFilter] = useState<string>('all');
   const [multiBomSearchTerm, setMultiBomSearchTerm] = useState<string>('');
 
-  // Bill of Materials (BOM) Customization State (Strict Sequence & Default 15-Item Template)
+  // Bill of Materials (BOM) Customization State (Default Blank)
   const [bomItems, setBomItems] = useState<BomItem[]>(
     readOnlyQuotation?.bomItems && readOnlyQuotation.bomItems.length > 0
       ? sortAndFormatBomItems(readOnlyQuotation.bomItems)
-      : sortAndFormatBomItems(DEFAULT_BOM_ITEMS)
+      : []
   );
   const [isBomSectionOpen, setIsBomSectionOpen] = useState(false);
 
@@ -284,6 +305,10 @@ export const QuotationDocument: React.FC<{
   const lastPdfBlobRef = useRef<Blob | null>(null);
 
   useEffect(() => {
+    employeeService.getAllProfiles().then((pList) => {
+      setProfiles(pList);
+    });
+
     leadService.getLeads().then((list) => {
       setLeads(list);
       const targetId = defaultLeadId || readOnlyQuotation?.leadId;
@@ -298,6 +323,44 @@ export const QuotationDocument: React.FC<{
     });
   }, [defaultLeadId, readOnlyQuotation]);
 
+  // Auto-restore cached PDF Blob on mount / proposalId change (Instant 0ms retrieval across stepper navigation & refreshes)
+  useEffect(() => {
+    let isSubscribed = true;
+    const restoreCachedPdf = async () => {
+      const propNo = readOnlyQuotation?.quotationNumber || readOnlyQuotation?.proposalId || proposalId;
+      if (!propNo) return;
+
+      const cachedBlob = await getCachedPdfBlob(propNo);
+      if (cachedBlob && isSubscribed) {
+        lastPdfBlobRef.current = cachedBlob;
+        return;
+      }
+      if (readOnlyQuotation?.id) {
+        const cachedById = await getCachedPdfBlob(readOnlyQuotation.id);
+        if (cachedById && isSubscribed) {
+          lastPdfBlobRef.current = cachedById;
+          return;
+        }
+      }
+
+      // If readOnlyQuotation has a pdfUrl, fetch and cache it in background
+      if (readOnlyQuotation?.pdfUrl && typeof readOnlyQuotation.pdfUrl === 'string' && readOnlyQuotation.pdfUrl.startsWith('http')) {
+        try {
+          const res = await fetch(readOnlyQuotation.pdfUrl);
+          if (res.ok && isSubscribed) {
+            const blob = await res.blob();
+            lastPdfBlobRef.current = blob;
+            setCachedPdfBlob(propNo, blob);
+            if (readOnlyQuotation.id) setCachedPdfBlob(readOnlyQuotation.id, blob);
+          }
+        } catch (_) {}
+      }
+    };
+
+    restoreCachedPdf();
+    return () => { isSubscribed = false; };
+  }, [proposalId, readOnlyQuotation]);
+
   useEffect(() => {
     if (readOnlyQuotation) {
       if (readOnlyQuotation.leadId) setSelectedLeadId(readOnlyQuotation.leadId);
@@ -305,9 +368,10 @@ export const QuotationDocument: React.FC<{
         setProposalId(readOnlyQuotation.proposalId || readOnlyQuotation.quotationNumber);
       }
       if (readOnlyQuotation.proposalDate) setProposalDate(readOnlyQuotation.proposalDate);
-      if (readOnlyQuotation.preparedBy || readOnlyQuotation.createdBy) {
-        setPreparedBy(readOnlyQuotation.preparedBy || readOnlyQuotation.createdBy || 'Nitin Thakre');
-      }
+      
+      const resolvedName = resolvePreparedByName(readOnlyQuotation.preparedBy || readOnlyQuotation.createdBy, selectedLead);
+      setPreparedBy(resolvedName);
+
       if (readOnlyQuotation.consumerName) setConsumerName(readOnlyQuotation.consumerName);
       if (readOnlyQuotation.consumerMobile) setConsumerMobile(readOnlyQuotation.consumerMobile);
       if (readOnlyQuotation.consumerEmail) setConsumerEmail(readOnlyQuotation.consumerEmail);
@@ -319,13 +383,13 @@ export const QuotationDocument: React.FC<{
         const cap = String(readOnlyQuotation.systemCapacity).replace(/[^0-9.]/g, '');
         if (cap) setSystemCapacity(cap);
       }
-      if (readOnlyQuotation.subsidyAmount) setSubsidyAmount(readOnlyQuotation.subsidyAmount);
+      setSubsidyAmount(readOnlyQuotation.subsidyAmount !== undefined && readOnlyQuotation.subsidyAmount !== '' ? readOnlyQuotation.subsidyAmount : '78000');
       if (readOnlyQuotation.pvModuleMake) setPvModuleMake(readOnlyQuotation.pvModuleMake);
       if (readOnlyQuotation.inverterMake) setInverterMake(readOnlyQuotation.inverterMake);
       if (readOnlyQuotation.structureType) setStructureType(readOnlyQuotation.structureType);
       if (readOnlyQuotation.gstRate !== undefined) {
         setGstRate(readOnlyQuotation.gstRate);
-        setGstPreset([13.8, 12, 18, 5, 0].includes(readOnlyQuotation.gstRate) ? String(readOnlyQuotation.gstRate) : 'custom');
+        setGstPreset([8.9, 13.8, 12, 18, 5, 0].includes(readOnlyQuotation.gstRate) ? String(readOnlyQuotation.gstRate) : 'custom');
       }
       if (readOnlyQuotation.items && readOnlyQuotation.items.length > 0) {
         setItems(readOnlyQuotation.items);
@@ -333,10 +397,10 @@ export const QuotationDocument: React.FC<{
       if (readOnlyQuotation.bomItems && readOnlyQuotation.bomItems.length > 0) {
         setBomItems(sortAndFormatBomItems(readOnlyQuotation.bomItems));
       } else {
-        setBomItems(sortAndFormatBomItems(DEFAULT_BOM_ITEMS));
+        setBomItems([]);
       }
     }
-  }, [readOnlyQuotation]);
+  }, [readOnlyQuotation, profiles]);
 
   const populateLeadData = async (lead: Lead) => {
     setSelectedLeadId(lead.id);
@@ -350,13 +414,17 @@ export const QuotationDocument: React.FC<{
         if (parts[0]) setCity(parts[0].trim());
       }
 
+      setPreparedBy(resolvePreparedByName(undefined, lead));
+      setSubsidyAmount('78000');
+      setBomItems([]);
+
       try {
         const existingQuotes = await quotationService.getQuotationsByLeadId(lead.id);
         if (existingQuotes && existingQuotes.length > 0) {
           const q = existingQuotes[0];
           if (q.proposalId || q.quotationNumber) setProposalId(q.proposalId || q.quotationNumber);
           if (q.proposalDate) setProposalDate(q.proposalDate);
-          if (q.preparedBy || q.createdBy) setPreparedBy(q.preparedBy || q.createdBy || 'Nitin Thakre');
+          setPreparedBy(resolvePreparedByName(q.preparedBy || q.createdBy, lead));
           if (q.consumerName) setConsumerName(q.consumerName);
           if (q.consumerMobile) setConsumerMobile(q.consumerMobile);
           if (q.consumerEmail) setConsumerEmail(q.consumerEmail);
@@ -368,22 +436,18 @@ export const QuotationDocument: React.FC<{
             const cap = String(q.systemCapacity).replace(/[^0-9.]/g, '');
             if (cap) setSystemCapacity(cap);
           }
-          if (q.subsidyAmount) setSubsidyAmount(q.subsidyAmount);
+          setSubsidyAmount(q.subsidyAmount !== undefined && q.subsidyAmount !== '' ? q.subsidyAmount : '78000');
           if (q.pvModuleMake) setPvModuleMake(q.pvModuleMake);
           if (q.inverterMake) setInverterMake(q.inverterMake);
           if (q.structureType) setStructureType(q.structureType);
           if (q.gstRate !== undefined) {
             setGstRate(q.gstRate);
-            setGstPreset([13.8, 12, 18, 5, 0].includes(q.gstRate) ? String(q.gstRate) : 'custom');
+            setGstPreset([8.9, 13.8, 12, 18, 5, 0].includes(q.gstRate) ? String(q.gstRate) : 'custom');
           }
           if (q.items && q.items.length > 0) setItems(q.items);
-          if (q.bomItems && q.bomItems.length > 0) {
-            setBomItems(sortAndFormatBomItems(q.bomItems));
-          } else {
-            setBomItems(sortAndFormatBomItems(DEFAULT_BOM_ITEMS));
-          }
+          setBomItems([]);
         } else {
-          setBomItems(sortAndFormatBomItems(DEFAULT_BOM_ITEMS));
+          setBomItems([]);
         }
       } catch (err) {
         console.warn("Existing quotation load note:", err);
@@ -614,7 +678,7 @@ export const QuotationDocument: React.FC<{
     return () => observer.disconnect();
   }, [proposalHtml]);
 
-  // Save Quotation Record & Render 8-Page PDF Proposal to Backblaze B2 Storage
+  // Save Quotation Record & Render 8-Page PDF Proposal to Backblaze B2 Storage (Non-blocking ultra-fast save)
   const handleSaveQuotation = async (): Promise<string | null> => {
     const hasItems = items && items.length > 0;
 
@@ -631,6 +695,7 @@ export const QuotationDocument: React.FC<{
     
     setIsGenerating(true);
     try {
+      const latestLead = targetLeadId ? await leadService.getLeadById(targetLeadId) : null;
       const quotationRecord: Omit<Quotation, 'id' | 'createdAt'> & { id?: string } = {
         id: readOnlyQuotation?.id,
         leadId: targetLeadId,
@@ -639,7 +704,7 @@ export const QuotationDocument: React.FC<{
         bomItems,
         subtotal,
         grandTotal,
-        followUpDate: dayjs().add(7, 'day').format('YYYY-MM-DD'),
+        followUpDate: latestLead?.nextFollowUpDate || selectedLead?.nextFollowUpDate || readOnlyQuotation?.followUpDate || dayjs().add(7, 'day').format('YYYY-MM-DD'),
         consumerName: consumerName || selectedLead?.name || 'Valued Customer',
         consumerMobile: consumerMobile || selectedLead?.phoneNumber || '',
         consumerEmail: consumerEmail || selectedLead?.email || '',
@@ -675,40 +740,52 @@ export const QuotationDocument: React.FC<{
       if (onQuotationSaved) {
         onQuotationSaved();
       }
+
       if (!qId) return null;
-      const fullQuotation = await quotationService.getQuotationById(qId);
-      
-      let b2Url = '';
-      if (fullQuotation) {
-        const sanitizedProposalId = proposalId.replace(/\//g, '_');
-        const storagePath = `quotations/pdf_${sanitizedProposalId}.pdf`;
 
-        const mockLead: Lead = selectedLead || {
-          id: selectedLeadId || fullQuotation.leadId,
-          name: consumerName || 'Valued Customer',
-          phoneNumber: consumerMobile,
-          email: consumerEmail,
-          requirement: `${systemCapacity} kW Solar Rooftop`,
-          description: city,
-          createdBy: preparedBy,
-          status: 'quotation_sent',
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString()
-        };
-
-        // Render 8-Page PDF Proposal & upload directly to Backblaze B2 Storage Bucket
-        const pdfBlob = await pdfService.generateQuotationPDF(fullQuotation, mockLead, preparedBy);
-        lastPdfBlobRef.current = pdfBlob;
-        b2Url = await uploadPdfToFirebase(pdfBlob, storagePath);
-
-        if (b2Url && (b2Url.startsWith('http://') || b2Url.startsWith('https://'))) {
-          await quotationService.updateQuotation({ ...fullQuotation, pdfUrl: b2Url });
-          console.log(`📦 Quotation 8-Page PDF saved & uploaded to Backblaze B2: ${b2Url}`);
-        }
-      }
-
-      setSaveSuccessMsg('Quotation saved & PDF uploaded successfully!');
+      // Show immediate success feedback to user so screen doesn't freeze or stay stuck
+      setSaveSuccessMsg('Quotation saved successfully!');
       setTimeout(() => setSaveSuccessMsg(null), 4000);
+      setIsGenerating(false);
+
+      // Background non-blocking PDF generation & Backblaze B2 upload
+      (async () => {
+        try {
+          const fullQuotation = await quotationService.getQuotationById(qId);
+          if (fullQuotation) {
+            const sanitizedProposalId = proposalId.replace(/\//g, '_');
+            const storagePath = `quotations/pdf_${sanitizedProposalId}.pdf`;
+
+            const mockLead: Lead = selectedLead || {
+              id: selectedLeadId || fullQuotation.leadId,
+              name: consumerName || 'Valued Customer',
+              phoneNumber: consumerMobile,
+              email: consumerEmail,
+              requirement: `${systemCapacity} kW Solar Rooftop`,
+              description: city,
+              createdBy: preparedBy,
+              status: 'quotation_sent',
+              createdAt: new Date().toISOString(),
+              updatedAt: new Date().toISOString()
+            };
+
+            const pdfBlob = await pdfService.generateQuotationPDF(fullQuotation, mockLead, preparedBy);
+            lastPdfBlobRef.current = pdfBlob;
+            setCachedPdfBlob(proposalId, pdfBlob);
+            if (qId) setCachedPdfBlob(qId, pdfBlob);
+
+            const b2Url = await uploadPdfToFirebase(pdfBlob, storagePath);
+
+            if (b2Url && (b2Url.startsWith('http://') || b2Url.startsWith('https://'))) {
+              await quotationService.updateQuotation({ ...fullQuotation, pdfUrl: b2Url });
+              console.log(`📦 Background 8-Page PDF saved & uploaded to Backblaze B2: ${b2Url}`);
+            }
+          }
+        } catch (bgErr) {
+          console.warn('Background PDF generation note:', bgErr);
+        }
+      })();
+
       return qId;
     } catch (err: any) {
       console.error(err);
@@ -719,14 +796,9 @@ export const QuotationDocument: React.FC<{
     }
   };
 
-  // Share Quotation PDF via WhatsApp using Dual Strategy
-  const handleShareQuotation = async () => {
-    if (!items || items.length === 0 || grandTotal <= 0) {
-      alert('⚠️ Quotation share nahi ho sakta: Kripya pehle kam se kam 1 commercial product item add karein.');
-      return;
-    }
-
-    let pdfBlob = lastPdfBlobRef.current;
+  // Pre-generate PDF in background on hover/touch or idle so Share WhatsApp opens instantly
+  const preloadPdfIfNeeded = () => {
+    if (lastPdfBlobRef.current || isGenerating || !items || items.length === 0 || grandTotal <= 0) return;
     const targetLeadId = selectedLeadId || readOnlyQuotation?.leadId;
     const mockLead: Lead = selectedLead || {
       id: targetLeadId || '',
@@ -756,12 +828,60 @@ export const QuotationDocument: React.FC<{
       sentViaWhatsapp: false
     };
 
+    pdfService.generateQuotationPDF(tempQ, mockLead, preparedBy).then(blob => {
+      lastPdfBlobRef.current = blob;
+      setCachedPdfBlob(proposalId, blob);
+    }).catch(() => {});
+  };
+
+  // Share Quotation PDF via WhatsApp using Dual Strategy (Instant Mobile Native Share)
+  const handleShareQuotation = async () => {
+    if (!items || items.length === 0 || grandTotal <= 0) {
+      alert('⚠️ Quotation share nahi ho sakta: Kripya pehle kam se kam 1 commercial product item add karein.');
+      return;
+    }
+
+    const targetLeadId = selectedLeadId || readOnlyQuotation?.leadId;
+    const mockLead: Lead = selectedLead || {
+      id: targetLeadId || '',
+      name: consumerName || 'Valued Customer',
+      phoneNumber: consumerMobile,
+      email: consumerEmail,
+      requirement: `${systemCapacity} kW Solar Rooftop`,
+      description: city,
+      createdBy: preparedBy,
+      status: 'quotation_sent',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    };
+
+    const tempQ: Quotation = {
+      id: readOnlyQuotation?.id || 'temp',
+      leadId: targetLeadId || '',
+      quotationNumber: proposalId,
+      items, bomItems, subtotal, grandTotal,
+      consumerName: consumerName || selectedLead?.name || 'Valued Customer',
+      consumerMobile: consumerMobile || selectedLead?.phoneNumber || '',
+      consumerEmail: consumerEmail || selectedLead?.email || '',
+      consumerNo, sanctionLoad, city, statePin, proposalId, proposalDate, preparedBy,
+      systemCapacity: `${systemCapacity} kW`, subsidyAmount, gstRate,
+      pvModuleMake, inverterMake, structureType,
+      createdBy: preparedBy, createdAt: new Date().toISOString(),
+      sentViaWhatsapp: false
+    };
+
+    let pdfBlob = lastPdfBlobRef.current;
+
     if (!pdfBlob) {
+      setIsGenerating(true);
       try {
         pdfBlob = await pdfService.generateQuotationPDF(tempQ, mockLead, preparedBy);
         lastPdfBlobRef.current = pdfBlob;
+        if (pdfBlob) setCachedPdfBlob(proposalId, pdfBlob);
       } catch (e) {
         console.warn('PDF generation note during share:', e);
+      } finally {
+        setIsGenerating(false);
       }
     }
 
@@ -781,6 +901,7 @@ export const QuotationDocument: React.FC<{
       const targetLeadId = selectedLeadId || readOnlyQuotation?.leadId;
       if (!targetLeadId) return;
 
+      const latestLead = targetLeadId ? await leadService.getLeadById(targetLeadId) : null;
       const quotationRecord: Omit<Quotation, 'id' | 'createdAt'> & { id?: string } = {
         id: readOnlyQuotation?.id,
         leadId: targetLeadId,
@@ -789,7 +910,7 @@ export const QuotationDocument: React.FC<{
         bomItems,
         subtotal,
         grandTotal,
-        followUpDate: dayjs().add(7, 'day').format('YYYY-MM-DD'),
+        followUpDate: latestLead?.nextFollowUpDate || selectedLead?.nextFollowUpDate || readOnlyQuotation?.followUpDate || dayjs().add(7, 'day').format('YYYY-MM-DD'),
         consumerName: consumerName || selectedLead?.name || 'Valued Customer',
         consumerMobile: consumerMobile || selectedLead?.phoneNumber || '',
         consumerEmail: consumerEmail || selectedLead?.email || '',
@@ -957,9 +1078,11 @@ export const QuotationDocument: React.FC<{
               <button
                 type="button"
                 onClick={handleShareQuotation}
+                onMouseEnter={preloadPdfIfNeeded}
+                onTouchStart={preloadPdfIfNeeded}
                 disabled={isGenerating}
                 className="px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white font-extrabold text-xs rounded-xl shadow-md flex items-center gap-2 transition-all cursor-pointer disabled:opacity-50"
-                title="Save & Share Quotation Document via WhatsApp"
+                title="Share Quotation Document via WhatsApp"
               >
                 <Send className="w-4 h-4" />
                 <span>Share WhatsApp</span>
@@ -1272,7 +1395,8 @@ export const QuotationDocument: React.FC<{
                       onChange={(e) => handleGstPresetChange(e.target.value)}
                       className="w-full border border-blue-200 rounded-xl px-2.5 py-2 bg-white text-slate-800 font-bold cursor-pointer text-[11px]"
                     >
-                      <option value="13.8">13.8% (Solar EPC Standard)</option>
+                      <option value="8.9">8.9% (Solar EPC Standard)</option>
+                      <option value="13.8">13.8%</option>
                       <option value="12">12.0% (Solar Goods)</option>
                       <option value="18">18.0% (Services/EPC)</option>
                       <option value="5">5.0%</option>

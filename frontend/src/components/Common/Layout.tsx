@@ -1,8 +1,9 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useAuthStore } from '../../store/authStore';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import logoImg from '../../assets/Green-Energy-Solution.png';
 import { PWAInstallPrompt } from './PWAInstallPrompt';
+import { DeletionApprovalsModal } from './DeletionApprovalsModal';
 import {
   LayoutDashboard,
   Users,
@@ -17,7 +18,8 @@ import {
   Truck,
   LogOut,
   Sun,
-  Package
+  Package,
+  ShieldAlert
 } from 'lucide-react';
 
 interface LayoutProps {
@@ -30,6 +32,29 @@ export const Layout: React.FC<LayoutProps> = ({ children }) => {
   const navigate = useNavigate();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [isNavCollapsed, setIsNavCollapsed] = useState(false);
+  const [pendingDeleteCount, setPendingDeleteCount] = useState(0);
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
+
+  const loadPendingCount = async () => {
+    if (currentRole === 'super_admin') {
+      try {
+        const { deletionRequestService } = await import('../../services/deletionRequestService');
+        const pending = await deletionRequestService.getPendingRequests();
+        setPendingDeleteCount(pending.length);
+      } catch (_) {}
+    }
+  };
+
+  useEffect(() => {
+    loadPendingCount();
+    const handleRealtimeUpdate = () => {
+      loadPendingCount();
+    };
+    window.addEventListener('app-realtime-update', handleRealtimeUpdate);
+    return () => {
+      window.removeEventListener('app-realtime-update', handleRealtimeUpdate);
+    };
+  }, [currentRole]);
 
   const handleLogout = async () => {
     if (confirm('Are you sure you want to sign out?')) {
@@ -172,6 +197,27 @@ export const Layout: React.FC<LayoutProps> = ({ children }) => {
         </div>
 
         <div className="flex items-center space-x-3">
+          {currentRole === 'super_admin' && (
+            <button
+              onClick={() => setShowDeleteModal(true)}
+              type="button"
+              className={`relative px-3 py-1.5 rounded-xl font-extrabold text-xs flex items-center space-x-1.5 transition-all cursor-pointer ${
+                pendingDeleteCount > 0
+                  ? 'bg-rose-600 hover:bg-rose-700 text-white shadow-md animate-pulse'
+                  : 'bg-slate-100 hover:bg-slate-200 text-slate-700'
+              }`}
+              title="View Pending Deletion Requests"
+            >
+              <ShieldAlert className="w-4 h-4 text-rose-300" />
+              <span className="hidden sm:inline">Delete Approvals</span>
+              {pendingDeleteCount > 0 && (
+                <span className="bg-white text-rose-700 px-1.5 py-0.2 rounded-full text-[10px] font-black">
+                  {pendingDeleteCount}
+                </span>
+              )}
+            </button>
+          )}
+
           {currentUser && (
             <div className="flex items-center space-x-2 bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1">
               <div className="w-5.5 h-5.5 rounded-full bg-emerald-100 flex items-center justify-center text-[10px] font-bold text-emerald-700">
@@ -343,6 +389,17 @@ export const Layout: React.FC<LayoutProps> = ({ children }) => {
 
       {/* PWA Installation Banner & Offline Status Toast */}
       <PWAInstallPrompt />
+
+      {/* Super Admin Deletion Approvals Modal */}
+      {currentRole === 'super_admin' && (
+        <DeletionApprovalsModal
+          isOpen={showDeleteModal}
+          onClose={() => {
+            setShowDeleteModal(false);
+            loadPendingCount();
+          }}
+        />
+      )}
     </div>
   );
 };

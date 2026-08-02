@@ -5,11 +5,13 @@ import { leadService } from '../../services/leadService';
 import { employeeService } from '../../services/employeeService';
 import { productService } from '../../services/productService';
 import { pdfService } from '../../services/pdfService';
+import { useAuthStore } from '../../store/authStore';
 import { Plus, Search, Truck, Trash2, ClipboardList, X, Download } from 'lucide-react';
 import dayjs from 'dayjs';
 import logoImg from '../../assets/Green-Energy-Solution.png';
 
 export const Challans: React.FC = () => {
+  const { currentRole, currentUser } = useAuthStore();
   const [challans, setChallans] = useState<Challan[]>([]);
   const [leads, setLeads] = useState<Lead[]>([]);
   const [employees, setEmployees] = useState<Profile[]>([]);
@@ -294,9 +296,24 @@ export const Challans: React.FC = () => {
   };
 
   const handleDeleteChallan = async (ch: Challan) => {
-    if (confirm(`⚠️ DELETE WARNING:\n\nAre you sure you want to delete Delivery Challan "${ch.challanNumber}" for ${ch.leadName}?\n\nDeleting this challan will also restore all dispatched item quantities back into product inventory stock.`)) {
-      await challanService.deleteChallan(ch.id);
-      loadData();
+    const isSuperAdmin = currentRole === 'super_admin' || currentUser?.role === 'super_admin';
+    const confirmMsg = isSuperAdmin
+      ? `⚠️ DELETE CONFIRMATION:\n\nAre you sure you want to PERMANENTLY delete Delivery Challan "${ch.challanNumber}" for ${ch.leadName}?\n\n(This will also restore all stock quantities and serial numbers to available inventory).`
+      : `Submit Delivery Challan "${ch.challanNumber}" deletion request to Super Admin for approval?`;
+
+    if (confirm(confirmMsg)) {
+      try {
+        const res = await challanService.deleteChallan(ch.id);
+        if (res?.requiresApproval) {
+          alert('🔒 Deletion request submitted successfully! This delivery challan will be deleted once approved by Super Admin.');
+        } else {
+          alert('✅ Delivery Challan permanently deleted and product stock restored!');
+        }
+        await loadData();
+      } catch (err) {
+        console.error("Error deleting challan:", err);
+        alert('Error processing deletion request. Please try again.');
+      }
     }
   };
 

@@ -1,6 +1,7 @@
 import type { Quotation, Lead } from '../types';
 import { quotationService, getCleanWhatsAppPhone } from './quotationService';
 import { ensurePdfBlobForQuotation } from './pdfCacheService';
+import { getFreshB2SignedUrl } from './firebase';
 
 export interface ShareQuotationParams {
   quotation: Quotation;
@@ -17,6 +18,26 @@ export async function shareQuotationViaWhatsapp(params: ShareQuotationParams): P
   const { quotation, lead } = params;
   let pdfBlob = params.pdfBlob;
 
+  const propNo = quotation.quotationNumber || quotation.proposalId || 'EST-001';
+  const sanitizedPropNo = (propNo || quotation.id).replace(/\//g, '_');
+  const pdfFileName = `Solar_Quotation_${sanitizedPropNo}.pdf`;
+
+  const rawMobile = quotation.consumerMobile || lead?.phoneNumber;
+  const cleanPhone = getCleanWhatsAppPhone(rawMobile);
+  const consumerName = quotation.consumerName || lead?.name || 'Valued Customer';
+
+  let pdfUrlToUse = quotation.pdfUrl;
+  if (pdfUrlToUse && pdfUrlToUse.includes('backblaze')) {
+    try {
+      pdfUrlToUse = await getFreshB2SignedUrl(pdfUrlToUse);
+    } catch (_) {}
+  }
+
+  let shareText = `Dear ${consumerName}, Greetings from Green Energy Solutions! ☀️\n\nPlease find attached our official Solar Rooftop Proposal (${propNo}) for your reference.`;
+  if (pdfUrlToUse && typeof pdfUrlToUse === 'string' && pdfUrlToUse.startsWith('http')) {
+    shareText += `\n📄 Download Proposal PDF: ${pdfUrlToUse}`;
+  }
+
   // Retrieve or ensure PDF blob is cached for instant speed
   if (!pdfBlob) {
     pdfBlob = await ensurePdfBlobForQuotation(
@@ -31,19 +52,7 @@ export async function shareQuotationViaWhatsapp(params: ShareQuotationParams): P
     return { success: false, method: 'native' };
   }
 
-  const propNo = quotation.quotationNumber || quotation.proposalId || 'EST-001';
-  const sanitizedPropNo = (propNo || quotation.id).replace(/\//g, '_');
-  const pdfFileName = `Solar_Quotation_${sanitizedPropNo}.pdf`;
   const pdfFile = new File([pdfBlob], pdfFileName, { type: 'application/pdf' });
-
-  const rawMobile = quotation.consumerMobile || lead?.phoneNumber;
-  const cleanPhone = getCleanWhatsAppPhone(rawMobile);
-  const consumerName = quotation.consumerName || lead?.name || 'Valued Customer';
-  
-  let shareText = `Dear ${consumerName}, Greetings from Green Energy Solutions! ☀️\n\nPlease find attached our official Solar Rooftop Proposal (${propNo}) for your reference.`;
-  if (quotation.pdfUrl && typeof quotation.pdfUrl === 'string' && quotation.pdfUrl.startsWith('http')) {
-    shareText += `\n📄 Download Proposal PDF: ${quotation.pdfUrl}`;
-  }
 
   // Native Web Share API (Mobile Android / iOS):
   // Immediately opens WhatsApp / WhatsApp Business directly with PDF attached

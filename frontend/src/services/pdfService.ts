@@ -2,16 +2,13 @@ import jsPDF from 'jspdf';
 import type { Lead, Quotation, OrderConfirmation } from '../types';
 import dayjs from 'dayjs';
 import logoImg from '../assets/Green-Energy-Solution.png';
-import solarCoverImg from '../assets/solar_rooftop_cover.png';
 import solarEngineerImg from '../assets/solar_engineer_installing.png';
 import customPage4Img from '../assets/pannel.png';
-import solar2dTopImg from '../assets/solar_2d_top_view.png';
-import solar3dFrameImg from '../assets/solar_3d_frame_view.png';
 import qoutation1Img from '../assets/qoutation 1.png';
 import stampImg from '../assets/stamp.png';
 import paymentQrImg from '../assets/payment_qr.png';
 import { generateQuotationDocumentPDF } from './pdfOptimizationService';
-import { sortAndFormatBomItems, DEFAULT_BOM_ITEMS, getBomCategoryIndex, getStandardCategoryName } from './quotationService';
+import { sortAndFormatBomItems, getBomCategoryIndex, getStandardCategoryName } from './quotationService';
 
 let cachedLogoDataUrl: string | null = null;
 
@@ -168,11 +165,8 @@ function numberToWordsINR(num: number): string {
 
 export function createNewQuotationProposalHtml(q: any, lead: any, creatorName: string): string {
   const logo = getAbsUrl(logoImg);
-  const cover = getAbsUrl(solarCoverImg);
   const engineer = getAbsUrl(solarEngineerImg);
   const page4Img = getAbsUrl(customPage4Img);
-  const top2dImg = getAbsUrl(solar2dTopImg);
-  const frame3dImg = getAbsUrl(solar3dFrameImg);
   const qoutationCover = getAbsUrl(qoutation1Img);
   const stamp = getAbsUrl(stampImg);
   const paymentQr = getAbsUrl(paymentQrImg);
@@ -180,8 +174,6 @@ export function createNewQuotationProposalHtml(q: any, lead: any, creatorName: s
   const cName = q.consumerName || lead?.name || 'Valued Customer';
   const cMobile = q.consumerMobile || (lead?.phoneNumber ? `+91 ${lead.phoneNumber}` : '');
   const cEmail = q.consumerEmail || lead?.email || '';
-  const cNo = q.consumerNo || 'N/A';
-  const sLoad = q.sanctionLoad || '5.0 kW';
   const propId = q.quotationNumber || q.proposalId || 'EST-001';
   const propDate = q.proposalDate || dayjs(q.createdAt || new Date()).format('DD MMM, YYYY');
   const byName = q.createdBy || creatorName || 'Nitin Thakre';

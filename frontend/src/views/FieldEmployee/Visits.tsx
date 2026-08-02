@@ -8,7 +8,7 @@ import type { Coordinates } from '../../services/mapService';
 import type { FieldVisitReport, Lead, Profile } from '../../types';
 import { LeafletMap } from '../../components/Map/LeafletMap';
 import { pdfService } from '../../services/pdfService';
-import { Plus, MapPin, User, Compass, Upload, Search, ChevronDown, ChevronUp, Trash2, Download, RotateCcw, CheckCircle2, Clock, Sparkles } from 'lucide-react';
+import { Plus, MapPin, User, Compass, Upload, Search, ChevronDown, ChevronUp, Trash2, Download, RotateCcw, Clock, Sparkles } from 'lucide-react';
 import { compressImage } from '../../services/imageCompressionService';
 import { uploadImageToFirebase } from '../../services/firebase';
 import dayjs from 'dayjs';
@@ -37,7 +37,7 @@ export const Visits: React.FC = () => {
   const [gpsLocation, setGpsLocation] = useState<Coordinates | null>(null);
   const [placeName, setPlaceName] = useState('');
   const [isLocating, setIsLocating] = useState(false);
-  const [uploadedPhotos, setUploadedPhotos] = useState<Blob[]>([]);
+  const [uploadedPhotos, setUploadedPhotos] = useState<(string | Blob)[]>([]);
 
   // Check-In / Check-Out Duty States
   const [isCheckedIn, setIsCheckedIn] = useState<boolean>(false);

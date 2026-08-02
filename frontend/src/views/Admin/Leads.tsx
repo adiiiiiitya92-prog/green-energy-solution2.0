@@ -18,13 +18,13 @@ import { WcrDocument } from './WcrDocument';
 import { ModelAgreementDocument } from './ModelAgreementDocument';
 import { AnnexureProformaDocument } from './AnnexureProformaDocument';
 import { QuotationDocument } from './QuotationDocument';
-import { getCachedPdfBlob, setCachedPdfBlob, ensurePdfBlobForQuotation } from '../../services/pdfCacheService';
+import { getCachedPdfBlob, ensurePdfBlobForQuotation } from '../../services/pdfCacheService';
 import { FollowUpReminders } from '../../components/Common/FollowUpReminders';
 import {
   Search, Plus, Camera, CheckSquare, UploadCloud,
   ChevronLeft, Trash2, Send, Star, FileCheck, CheckCircle, Compass, X, Eye, Download,
   CreditCard, Wallet, Edit3, MessageSquare, Bell, Flame, FileText,
-  BarChart3, FileSpreadsheet, Printer, PieChart, ArrowDownToLine, Calendar, RotateCcw, Sparkles
+  BarChart3, FileSpreadsheet, Printer, Calendar, RotateCcw, Sparkles
 } from 'lucide-react';
 import dayjs from 'dayjs';
 
@@ -87,28 +87,11 @@ export const Leads: React.FC = () => {
 
   // Quotation Creator States
   const [quoteFollowUp, setQuoteFollowUp] = useState('');
-  const [quoteRating, setQuoteRating] = useState<1 | 2 | 3 | 4 | 5>(3);
   const [followUpSavedToast, setFollowUpSavedToast] = useState(false);
 
   // PDF Preview Modal State
   const [selectedQuotationForPreview, setSelectedQuotationForPreview] = useState<Quotation | null>(null);
   const [isQuotationViewOnly, setIsQuotationViewOnly] = useState<boolean>(true);
-
-  const dataUrlToBlob = (dataUrl: string): Blob => {
-    try {
-      const parts = dataUrl.split(';base64,');
-      const contentType = parts[0].replace('data:', '') || 'application/pdf';
-      const raw = window.atob(parts[1] || parts[0]);
-      const uInt8Array = new Uint8Array(raw.length);
-      for (let i = 0; i < raw.length; ++i) {
-        uInt8Array[i] = raw.charCodeAt(i);
-      }
-      return new Blob([uInt8Array], { type: contentType });
-    } catch (err) {
-      console.warn("Base64 decode note:", err);
-      return new Blob([], { type: 'application/pdf' });
-    }
-  };
 
   /** Try to get a PDF Blob from saved data, otherwise regenerate it on-the-fly.
    *  Uses persistent CacheStorage for instant 0ms repeat access across screens and refreshes. */
@@ -198,6 +181,7 @@ export const Leads: React.FC = () => {
 
   // KYC Document Slots States
   const [kycDocs, setKycDocs] = useState<ClientDocument[]>([]);
+  const [uploadingDocType, setUploadingDocType] = useState<string | null>(null);
 
   // Client Registration Checklist States
   const [regChecklist, setRegChecklist] = useState<ClientRegistration | null>(null);
@@ -321,13 +305,13 @@ export const Leads: React.FC = () => {
         const quotes = await quotationService.getQuotationsByLeadId(l.id);
         const mainQuote = Array.isArray(quotes) && quotes.length > 0 ? quotes[0] : undefined;
 
-        const quoteTotal = mainQuote ? (mainQuote.grandTotal || mainQuote.total || mainQuote.subtotal || 0) : 0;
+        const quoteTotal = mainQuote ? (mainQuote.grandTotal || mainQuote.subtotal || 0) : 0;
         const ocSubtotal = oc ? (oc.subtotal || (Array.isArray(oc.itemsConfirmed) ? oc.itemsConfirmed.reduce((s, i) => s + (i.amount || 0), 0) : 0) || oc.advanceAmount || 0) : 0;
 
         totalValue = quoteTotal > 0 ? quoteTotal : ocSubtotal;
 
         if (oc) {
-          const pList = (Array.isArray(oc.payments) && oc.payments.length > 0)
+          const pList: { amount?: number }[] = (Array.isArray(oc.payments) && oc.payments.length > 0)
             ? oc.payments
             : (oc.advanceAmount && oc.advanceAmount > 0)
             ? [{ amount: oc.advanceAmount }]
@@ -499,11 +483,16 @@ export const Leads: React.FC = () => {
       }
     });
 
+    let realtimeDebounceTimer: any = null;
     const handleRealtimeUpdate = () => {
-      loadData();
+      if (realtimeDebounceTimer) clearTimeout(realtimeDebounceTimer);
+      realtimeDebounceTimer = setTimeout(() => {
+        loadData();
+      }, 300);
     };
     window.addEventListener('app-realtime-update', handleRealtimeUpdate);
     return () => {
+      if (realtimeDebounceTimer) clearTimeout(realtimeDebounceTimer);
       window.removeEventListener('app-realtime-update', handleRealtimeUpdate);
     };
   }, [currentRole, currentUser]);
@@ -566,7 +555,7 @@ export const Leads: React.FC = () => {
     if (quotations.length > 0) {
       const q = quotations[0];
       setBookingItems(q.items || []);
-      const latestQuoteTotal = q.grandTotal || q.total || q.subtotal || 0;
+      const latestQuoteTotal = q.grandTotal || q.subtotal || 0;
 
       if (oc && latestQuoteTotal > 0 && oc.subtotal !== latestQuoteTotal) {
         oc.subtotal = latestQuoteTotal;
@@ -1011,6 +1000,7 @@ export const Leads: React.FC = () => {
   // 3. File KYC upload
   const handleDocUpload = async (docType: ClientDocument['docType'], file: File) => {
     if (!selectedLead) return;
+    setUploadingDocType(docType);
 
     try {
       let fileUrl = '';
@@ -1020,7 +1010,11 @@ export const Leads: React.FC = () => {
         fileUrl = await uploadImageToFirebase(compressedBlob, storagePath);
       } else {
         const storagePath = `documents/${selectedLead.id}/${docType}_${Date.now()}.pdf`;
-        fileUrl = await uploadImageToFirebase(file, storagePath);
+        fileUrl = await uploadPdfToFirebase(file, storagePath);
+      }
+
+      if (!fileUrl) {
+        throw new Error("Storage service did not return a valid download URL.");
       }
 
       await orderService.uploadClientDocument({
@@ -1045,10 +1039,12 @@ export const Leads: React.FC = () => {
       const reg = await orderService.getClientRegistrationByLeadId(selectedLead.id);
       setRegChecklist(reg || null);
 
-      alert(`${docType.toUpperCase().replace('_', ' ')} uploaded successfully.`);
-    } catch (err) {
+      alert(`✅ ${docType.toUpperCase().replace('_', ' ')} uploaded to Backblaze B2 storage successfully.`);
+    } catch (err: any) {
       console.error("Doc upload error:", err);
-      alert('File upload error.');
+      alert(`⚠️ Document Upload Failed: ${err?.message || 'Network error while uploading to cloud bucket. Please check connection and try again.'}`);
+    } finally {
+      setUploadingDocType(null);
     }
   };
 
@@ -1268,19 +1264,6 @@ export const Leads: React.FC = () => {
       }
     }
   };
-
-  // Filtered Leads
-  const filteredLeads = leads.filter(lead => {
-    if (searchTerm && !lead.name.toLowerCase().includes(searchTerm.toLowerCase()) && !lead.phoneNumber.includes(searchTerm)) return false;
-    if (statusFilter && lead.status !== statusFilter) return false;
-    if (employeeFilter && lead.assignedSalesPersonId !== employeeFilter && lead.assignedAdminId !== employeeFilter && lead.assignedEmployeeId !== employeeFilter) return false;
-
-    const isHotLead = lead.isHot || (lead.clientRating && lead.clientRating >= 4);
-    if (hotFilter === 'hot' && !isHotLead) return false;
-    if (hotFilter === 'normal' && isHotLead) return false;
-
-    return true;
-  });
 
   const hotLeadsCount = leads.filter(l => l.isHot || (l.clientRating && l.clientRating >= 4)).length;
 
@@ -1943,15 +1926,16 @@ export const Leads: React.FC = () => {
                                   <input
                                     type="file"
                                     accept="image/*,application/pdf"
+                                    disabled={uploadingDocType === docType}
                                     onChange={(e) => e.target.files?.[0] && handleDocUpload(docType, e.target.files[0])}
-                                    className="absolute inset-0 opacity-0 cursor-pointer w-full"
+                                    className="absolute inset-0 opacity-0 cursor-pointer w-full disabled:cursor-not-allowed"
                                   />
                                   <button
                                     type="button"
-                                    className="w-full py-1.5 bg-slate-800 hover:bg-slate-700 text-white rounded-lg text-[10px] font-bold transition-all text-center flex items-center justify-center gap-1 pointer-events-none"
+                                    className={`w-full py-1.5 ${uploadingDocType === docType ? 'bg-amber-600 animate-pulse' : 'bg-slate-800 hover:bg-slate-700'} text-white rounded-lg text-[10px] font-bold transition-all text-center flex items-center justify-center gap-1 pointer-events-none`}
                                   >
-                                    <UploadCloud className="w-3.5 h-3.5" />
-                                    <span>Choose File</span>
+                                    <UploadCloud className={`w-3.5 h-3.5 ${uploadingDocType === docType ? 'animate-spin' : ''}`} />
+                                    <span>{uploadingDocType === docType ? 'Uploading to B2...' : 'Choose File'}</span>
                                   </button>
                                 </div>
                               )}

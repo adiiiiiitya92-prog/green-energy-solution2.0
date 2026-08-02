@@ -5,7 +5,7 @@ import { getFirestore, doc, setDoc, getDocs, collection, deleteDoc, onSnapshot }
 import { compressImage, compressDataUrl, type ImageCompressionConfig } from './imageCompressionService';
 
 // Firebase Project Configuration
-const NATIVE_BUCKET = import.meta.env.VITE_FIREBASE_STORAGE_BUCKET || "green-energy-solution-dcfa8.firebasestorage.app";
+const NATIVE_BUCKET = import.meta.env.VITE_FIREBASE_STORAGE_BUCKET || "green-energy-solution-dcfa8.appspot.com";
 const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || "";
 const buildApiUrl = (path: string) => `${BACKEND_URL}${path}`;
 
@@ -39,176 +39,279 @@ export const firestoreDb = TARGET_DATABASE_ID && TARGET_DATABASE_ID !== '(defaul
   ? getFirestore(app, TARGET_DATABASE_ID)
   : getFirestore(app);
 
-const B2_KEY_ID = import.meta.env.VITE_B2_KEY_ID || '005ff217b03db580000000001';
-const B2_APP_KEY = import.meta.env.VITE_B2_APPLICATION_KEY || 'K005gOTKgViCFANig1DqeD7fLVoNU80';
-const B2_BUCKET_ID = import.meta.env.VITE_B2_BUCKET_ID || '7fffc2f1470ba0d39dfb0518';
+const B2_KEY_ID = import.meta.env.VITE_B2_KEY_ID || '';
+const B2_APP_KEY = import.meta.env.VITE_B2_APPLICATION_KEY || '';
+const B2_BUCKET_ID = import.meta.env.VITE_B2_BUCKET_ID || '';
 const B2_BUCKET_NAME = import.meta.env.VITE_B2_BUCKET_NAME || 'Green-Energy-Solution';
 
 let cachedClientAuth: any = null;
 let lastClientAuthTime = 0;
 
 /**
- * Direct Client-Side Backblaze B2 Upload Helper (Works 100% even when local backend server is offline)
+ * Exponential backoff retry utility (3 attempts: 1s, 2s, 4s)
  */
-async function uploadViaClientDirectB2(base64Data: string, storagePath: string, contentType: string): Promise<string | null> {
-  try {
-    const now = Date.now();
-    let authData = cachedClientAuth;
-    if (!authData || (now - lastClientAuthTime > 12 * 3600 * 1000)) {
-      const credentials = btoa(`${B2_KEY_ID}:${B2_APP_KEY}`);
-      const authRes = await fetch('https://api.backblazeb2.com/b2api/v2/b2_authorize_account', {
-        headers: { Authorization: `Basic ${credentials}` }
-      });
-      if (!authRes.ok) return null;
-      authData = await authRes.json();
-      cachedClientAuth = authData;
-      lastClientAuthTime = now;
-    }
+export async function withExponentialBackoff<T>(
+  fn: () => Promise<T>,
+  maxAttempts: number = 3,
+  initialDelayMs: number = 1000
+): Promise<T> {
+  let attempt = 0;
+  let delay = initialDelayMs;
+  let lastError: any = null;
 
-    const uploadUrlRes = await fetch(`${authData.apiUrl}/b2api/v2/b2_get_upload_url`, {
-      method: 'POST',
-      headers: { Authorization: authData.authorizationToken },
-      body: JSON.stringify({ bucketId: B2_BUCKET_ID })
-    });
-    if (!uploadUrlRes.ok) return null;
-    const uploadInfo = await uploadUrlRes.json();
-
-    const cleanPath = storagePath.replace(/^\/+/, '');
-    const cleanBase64 = base64Data.includes(',') ? base64Data.split(',')[1] : base64Data;
-    const binaryStr = atob(cleanBase64);
-    const bytes = new Uint8Array(binaryStr.length);
-    for (let i = 0; i < binaryStr.length; i++) {
-      bytes[i] = binaryStr.charCodeAt(i);
-    }
-
-    const uploadRes = await fetch(uploadInfo.uploadUrl, {
-      method: 'POST',
-      headers: {
-        Authorization: uploadInfo.authorizationToken,
-        'X-Bz-File-Name': encodeURIComponent(cleanPath),
-        'Content-Type': contentType || 'application/octet-stream',
-        'X-Bz-Content-Sha1': 'do_not_verify'
-      },
-      body: bytes
-    });
-    if (!uploadRes.ok) return null;
-
-    const dnldAuthRes = await fetch(`${authData.apiUrl}/b2api/v2/b2_get_download_authorization`, {
-      method: 'POST',
-      headers: { Authorization: authData.authorizationToken },
-      body: JSON.stringify({
-        bucketId: B2_BUCKET_ID,
-        fileNamePrefix: cleanPath,
-        validDurationInSeconds: 604800 // 7 days
-      })
-    });
-
-    let directUrl = `${authData.downloadUrl}/file/${B2_BUCKET_NAME}/${cleanPath}`;
-    if (dnldAuthRes.ok) {
-      const dnldData = await dnldAuthRes.json();
-      if (dnldData.authorizationToken) {
-        directUrl += `?Authorization=${encodeURIComponent(dnldData.authorizationToken)}`;
+  while (attempt < maxAttempts) {
+    attempt++;
+    try {
+      return await fn();
+    } catch (err: any) {
+      lastError = err;
+      if (attempt >= maxAttempts) {
+        break;
       }
+      console.warn(`[Backblaze B2 Retry] Attempt ${attempt}/${maxAttempts} failed: ${err?.message || err}. Retrying in ${delay}ms...`);
+      await new Promise(resolve => setTimeout(resolve, delay));
+      delay *= 2;
     }
-    console.log(`📦 Directly Uploaded from Client to Backblaze B2 Storage: ${directUrl}`);
-    return directUrl;
-  } catch (err) {
-    console.warn("Direct Client Backblaze B2 upload note:", err);
-    return null;
   }
+  throw lastError || new Error(`Operation failed after ${maxAttempts} retry attempts`);
 }
 
 /**
- * Helper to upload via backend API / Netlify Serverless Functions to Backblaze B2 Storage Bucket (10 GB Free Storage)
+ * Direct Client-Side Backblaze B2 Upload Helper (Used with pre-signed upload credentials)
  */
-async function uploadViaBackend(base64Data: string, storagePath: string, contentType: string): Promise<string | null> {
-  const currentOrigin = typeof window !== 'undefined' ? window.location.origin : '';
-  const backendUrl = import.meta.env.VITE_BACKEND_URL || '';
-
-  const uploadEndpoints = Array.from(new Set([
-    '/api/upload',
-    `${currentOrigin}/api/upload`,
-    backendUrl ? `${backendUrl}/api/upload` : '',
-    '/.netlify/functions/upload'
-  ])).filter(Boolean);
-
-  // 1. Try Backend & Netlify Function Upload Endpoints
-  for (const apiUrl of uploadEndpoints) {
-    try {
-      const res = await fetch(apiUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ imageBase64: base64Data, storagePath, contentType })
-      });
-      if (res.ok) {
-        const data = await res.json();
-        if (data.url && (data.url.startsWith('http://') || data.url.startsWith('https://'))) {
-          console.log(`📦 Uploaded to Backblaze B2 Storage via ${apiUrl}: ${data.url}`);
-          return data.url;
-        }
-      }
-    } catch (err) {
-      console.warn(`API upload note for ${apiUrl}:`, err);
-    }
+async function uploadViaClientDirectB2(base64Data: string, storagePath: string, contentType: string): Promise<string | null> {
+  if (!B2_KEY_ID || !B2_APP_KEY || !B2_BUCKET_ID) {
+    console.warn("Backblaze B2 environment variables are missing on client.");
+    return null;
   }
 
-  // 2. Fallback: Try Client Direct B2 Upload using Upload URL Endpoints
-  const authEndpoints = Array.from(new Set([
-    '/api/b2-upload-url',
-    `${backendUrl}/api/b2-upload-url`,
-    '/.netlify/functions/b2-upload-url'
-  ])).filter(Boolean);
+  const now = Date.now();
+  let authData = cachedClientAuth;
+  if (!authData || (now - lastClientAuthTime > 12 * 3600 * 1000)) {
+    const credentials = btoa(`${B2_KEY_ID}:${B2_APP_KEY}`);
+    const authRes = await fetch('https://api.backblazeb2.com/b2api/v2/b2_authorize_account', {
+      headers: { Authorization: `Basic ${credentials}` }
+    });
+    if (!authRes.ok) {
+      const errTxt = await authRes.text().catch(() => '');
+      throw new Error(`B2 Account Authorization failed (${authRes.status}): ${errTxt}`);
+    }
+    authData = await authRes.json();
+    cachedClientAuth = authData;
+    lastClientAuthTime = now;
+  }
 
-  for (const authUrl of authEndpoints) {
-    try {
-      const authRes = await fetch(authUrl);
-      if (authRes.ok) {
-        const authInfo = await authRes.json();
-        const cleanPath = storagePath.replace(/^\/+/, '');
-        const cleanBase64 = base64Data.includes(',') ? base64Data.split(',')[1] : base64Data;
-        const binaryStr = atob(cleanBase64);
-        const bytes = new Uint8Array(binaryStr.length);
-        for (let i = 0; i < binaryStr.length; i++) {
-          bytes[i] = binaryStr.charCodeAt(i);
-        }
+  const uploadUrlRes = await fetch(`${authData.apiUrl}/b2api/v2/b2_get_upload_url`, {
+    method: 'POST',
+    headers: { Authorization: authData.authorizationToken },
+    body: JSON.stringify({ bucketId: B2_BUCKET_ID })
+  });
+  if (!uploadUrlRes.ok) {
+    const errTxt = await uploadUrlRes.text().catch(() => '');
+    throw new Error(`B2 Get Upload URL failed (${uploadUrlRes.status}): ${errTxt}`);
+  }
+  const uploadInfo = await uploadUrlRes.json();
 
-        const uploadRes = await fetch(authInfo.uploadUrl, {
+  const cleanPath = storagePath.replace(/^\/+/, '');
+  const cleanBase64 = base64Data.includes(',') ? base64Data.split(',')[1] : base64Data;
+  const binaryStr = atob(cleanBase64);
+  const bytes = new Uint8Array(binaryStr.length);
+  for (let i = 0; i < binaryStr.length; i++) {
+    bytes[i] = binaryStr.charCodeAt(i);
+  }
+
+  const uploadRes = await fetch(uploadInfo.uploadUrl, {
+    method: 'POST',
+    headers: {
+      Authorization: uploadInfo.authorizationToken,
+      'X-Bz-File-Name': encodeURIComponent(cleanPath),
+      'Content-Type': contentType || 'application/octet-stream',
+      'X-Bz-Content-Sha1': 'do_not_verify'
+    },
+    body: bytes
+  });
+  if (!uploadRes.ok) {
+    const errTxt = await uploadRes.text().catch(() => '');
+    throw new Error(`B2 Binary File Upload failed (${uploadRes.status}): ${errTxt}`);
+  }
+
+  const dnldAuthRes = await fetch(`${authData.apiUrl}/b2api/v2/b2_get_download_authorization`, {
+    method: 'POST',
+    headers: { Authorization: authData.authorizationToken },
+    body: JSON.stringify({
+      bucketId: B2_BUCKET_ID,
+      fileNamePrefix: cleanPath,
+      validDurationInSeconds: 604800 // 7 days (604800s)
+    })
+  });
+
+  let directUrl = `${authData.downloadUrl}/file/${B2_BUCKET_NAME}/${cleanPath}`;
+  if (dnldAuthRes.ok) {
+    const dnldData = await dnldAuthRes.json();
+    if (dnldData.authorizationToken) {
+      directUrl += `?Authorization=${encodeURIComponent(dnldData.authorizationToken)}`;
+    }
+  }
+  console.log(`📦 Direct Upload to Backblaze B2 Storage Succeeded: ${directUrl}`);
+  return directUrl;
+}
+
+/**
+ * Upload helper with exponential backoff retry (3 attempts) across Serverless & Client endpoints
+ */
+async function uploadViaBackend(base64Data: string, storagePath: string, contentType: string): Promise<string | null> {
+  return withExponentialBackoff(async () => {
+    const currentOrigin = typeof window !== 'undefined' ? window.location.origin : '';
+    const backendUrl = import.meta.env.VITE_BACKEND_URL || '';
+
+    const uploadEndpoints = Array.from(new Set([
+      '/api/upload',
+      `${currentOrigin}/api/upload`,
+      backendUrl ? `${backendUrl}/api/upload` : '',
+      '/.netlify/functions/upload'
+    ])).filter(Boolean);
+
+    // 1. Try Backend & Netlify / Vercel Serverless Function Upload Endpoints
+    for (const apiUrl of uploadEndpoints) {
+      try {
+        const res = await fetch(apiUrl, {
           method: 'POST',
-          headers: {
-            Authorization: authInfo.authorizationToken,
-            'X-Bz-File-Name': encodeURIComponent(cleanPath),
-            'Content-Type': contentType || 'application/octet-stream',
-            'X-Bz-Content-Sha1': 'do_not_verify'
-          },
-          body: bytes
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ imageBase64: base64Data, storagePath, contentType })
         });
-
-        if (uploadRes.ok) {
-          let directUrl = `${authInfo.downloadUrl}/file/${authInfo.bucketName}/${cleanPath}`;
-          if (authInfo.downloadAuthToken) {
-            directUrl += `?Authorization=${encodeURIComponent(authInfo.downloadAuthToken)}`;
+        if (res.ok) {
+          const data = await res.json();
+          if (data.url && (data.url.startsWith('http://') || data.url.startsWith('https://'))) {
+            console.log(`📦 Uploaded to Backblaze B2 Storage via ${apiUrl}: ${data.url}`);
+            return data.url;
           }
-          console.log(`📦 Directly Uploaded from Client to Backblaze B2 Storage: ${directUrl}`);
+        }
+      } catch (err) {
+        console.warn(`API upload note for ${apiUrl}:`, err);
+      }
+    }
+
+    // 2. Try Client Pre-signed Upload URL Endpoints
+    const authEndpoints = Array.from(new Set([
+      '/api/b2-upload-url',
+      `${backendUrl}/api/b2-upload-url`,
+      '/.netlify/functions/b2-upload-url'
+    ])).filter(Boolean);
+
+    for (const authUrl of authEndpoints) {
+      try {
+        const authRes = await fetch(authUrl);
+        if (authRes.ok) {
+          const authInfo = await authRes.json();
+          const cleanPath = storagePath.replace(/^\/+/, '');
+          const cleanBase64 = base64Data.includes(',') ? base64Data.split(',')[1] : base64Data;
+          const binaryStr = atob(cleanBase64);
+          const bytes = new Uint8Array(binaryStr.length);
+          for (let i = 0; i < binaryStr.length; i++) {
+            bytes[i] = binaryStr.charCodeAt(i);
+          }
+
+          const uploadRes = await fetch(authInfo.uploadUrl, {
+            method: 'POST',
+            headers: {
+              Authorization: authInfo.authorizationToken,
+              'X-Bz-File-Name': encodeURIComponent(cleanPath),
+              'Content-Type': contentType || 'application/octet-stream',
+              'X-Bz-Content-Sha1': 'do_not_verify'
+            },
+            body: bytes
+          });
+
+          if (uploadRes.ok) {
+            let directUrl = `${authInfo.downloadUrl}/file/${authInfo.bucketName}/${cleanPath}`;
+            if (authInfo.downloadAuthToken) {
+              directUrl += `?Authorization=${encodeURIComponent(authInfo.downloadAuthToken)}`;
+            }
+            console.log(`📦 Directly Uploaded from Client to Backblaze B2 Storage: ${directUrl}`);
+            return directUrl;
+          }
+        }
+      } catch (err2) {
+        console.warn(`Client Direct B2 Upload note for ${authUrl}:`, err2);
+      }
+    }
+
+    // 3. Fallback: Direct Client B2 Upload using frontend environment credentials
+    const directUrl = await uploadViaClientDirectB2(base64Data, storagePath, contentType);
+    if (directUrl && (directUrl.startsWith('http://') || directUrl.startsWith('https://'))) {
+      return directUrl;
+    }
+
+    throw new Error("All Backblaze B2 upload endpoints failed.");
+  }, 3, 1000);
+}
+
+/**
+ * Regenerates or refreshes a 7-day signed download URL on demand for any stored B2 path or URL
+ */
+export async function getFreshB2SignedUrl(storagePathOrUrl: string): Promise<string> {
+  if (!storagePathOrUrl) return storagePathOrUrl;
+  let cleanPath = storagePathOrUrl.replace(/^https?:\/\/[^\/]+\/file\/[^\/]+\//, '');
+  cleanPath = cleanPath.split('?')[0].replace(/^\/+/, '');
+  if (!cleanPath) return storagePathOrUrl;
+
+  try {
+    const freshUrl = await withExponentialBackoff(async () => {
+      const backendUrl = import.meta.env.VITE_BACKEND_URL || '';
+      const authEndpoints = Array.from(new Set([
+        '/api/b2-upload-url',
+        `${backendUrl}/api/b2-upload-url`,
+        '/.netlify/functions/b2-upload-url'
+      ])).filter(Boolean);
+
+      for (const endpoint of authEndpoints) {
+        try {
+          const res = await fetch(endpoint);
+          if (res.ok) {
+            const authInfo = await res.json();
+            let url = `${authInfo.downloadUrl}/file/${authInfo.bucketName}/${cleanPath}`;
+            if (authInfo.downloadAuthToken) {
+              url += `?Authorization=${encodeURIComponent(authInfo.downloadAuthToken)}`;
+            }
+            return url;
+          }
+        } catch (_) {}
+      }
+
+      if (B2_KEY_ID && B2_APP_KEY && B2_BUCKET_ID) {
+        const credentials = btoa(`${B2_KEY_ID}:${B2_APP_KEY}`);
+        const authRes = await fetch('https://api.backblazeb2.com/b2api/v2/b2_authorize_account', {
+          headers: { Authorization: `Basic ${credentials}` }
+        });
+        if (authRes.ok) {
+          const authData = await authRes.json();
+          const dnldAuthRes = await fetch(`${authData.apiUrl}/b2api/v2/b2_get_download_authorization`, {
+            method: 'POST',
+            headers: { Authorization: authData.authorizationToken },
+            body: JSON.stringify({
+              bucketId: B2_BUCKET_ID,
+              fileNamePrefix: cleanPath,
+              validDurationInSeconds: 604800 // 7 days
+            })
+          });
+          let directUrl = `${authData.downloadUrl}/file/${B2_BUCKET_NAME}/${cleanPath}`;
+          if (dnldAuthRes.ok) {
+            const dnldData = await dnldAuthRes.json();
+            if (dnldData.authorizationToken) {
+              directUrl += `?Authorization=${encodeURIComponent(dnldData.authorizationToken)}`;
+            }
+          }
           return directUrl;
         }
       }
-    } catch (err2) {
-      console.warn(`Client Direct B2 Upload note for ${authUrl}:`, err2);
-    }
-  }
+      return storagePathOrUrl;
+    }, 2, 500);
 
-  // 3. Direct Client B2 Upload using frontend environment credentials
-  try {
-    const directUrl = await uploadViaClientDirectB2(base64Data, storagePath, contentType);
-    if (directUrl && (directUrl.startsWith('http://') || directUrl.startsWith('https://'))) {
-      console.log(`📦 Directly Uploaded from Client to Backblaze B2 Storage: ${directUrl}`);
-      return directUrl;
-    }
-  } catch (err3) {
-    console.warn("Direct Client B2 Upload note:", err3);
+    return freshUrl || storagePathOrUrl;
+  } catch (err) {
+    console.warn("Signed URL refresh note:", err);
+    return storagePathOrUrl;
   }
-
-  return null;
 }
 
 /**
@@ -232,10 +335,25 @@ export async function uploadImageToFirebase(
     reader.readAsDataURL(compressedFile);
   });
 
-  const b2Url = await uploadViaBackend(base64Data, storagePath, compressedFile.type);
-  if (b2Url && (b2Url.startsWith('http://') || b2Url.startsWith('https://'))) return b2Url;
+  // 1. Primary: Backblaze B2 Cloud Storage Upload
+  try {
+    const b2Url = await uploadViaBackend(base64Data, storagePath, compressedFile.type);
+    if (b2Url && (b2Url.startsWith('http://') || b2Url.startsWith('https://'))) return b2Url;
+  } catch (err: any) {
+    console.warn("Backblaze B2 Image Upload note, trying Firebase Storage fallback:", err);
+  }
 
-  return base64Data;
+  // 2. Fallback: Firebase Native Cloud Storage Bucket Upload
+  try {
+    const storageRef = ref(storage, storagePath);
+    const snapshot = await uploadBytes(storageRef, compressedFile, { contentType: compressedFile.type || 'image/webp' });
+    const downloadUrl = await getDownloadURL(snapshot.ref);
+    console.log(`📦 Image Uploaded to Firebase Storage Bucket: ${downloadUrl}`);
+    return downloadUrl;
+  } catch (err: any) {
+    console.warn("Firebase Storage image upload note:", err);
+    return base64Data; // Ultimate fallback: return Data URL so user is never blocked
+  }
 }
 
 export async function uploadDataUrlToFirebase(
@@ -244,17 +362,28 @@ export async function uploadDataUrlToFirebase(
   compressionConfig: ImageCompressionConfig = {}
 ): Promise<string> {
   const compressedFile = await compressDataUrl(dataUrl, `upload_${Date.now()}.webp`, compressionConfig);
-
   const storagePath = rawPath.replace(/^green-energy-solution\//, '');
 
-  const b2Url = await uploadViaBackend(dataUrl, storagePath, compressedFile.type);
-  if (b2Url && (b2Url.startsWith('http://') || b2Url.startsWith('https://'))) return b2Url;
+  try {
+    const b2Url = await uploadViaBackend(dataUrl, storagePath, compressedFile.type);
+    if (b2Url && (b2Url.startsWith('http://') || b2Url.startsWith('https://'))) return b2Url;
+  } catch (err: any) {
+    console.warn("Backblaze B2 Data URL Upload note, trying Firebase Storage fallback:", err);
+  }
 
-  return dataUrl;
+  try {
+    const storageRef = ref(storage, storagePath);
+    const snapshot = await uploadBytes(storageRef, compressedFile, { contentType: compressedFile.type || 'image/webp' });
+    const downloadUrl = await getDownloadURL(snapshot.ref);
+    return downloadUrl;
+  } catch (err: any) {
+    console.warn("Firebase Storage Data URL upload note:", err);
+    return dataUrl;
+  }
 }
 
 /**
- * Uploads a PDF Blob (e.g. quotation proposals, WCR, DCR, Annexures) to Backblaze B2 Cloud Storage bucket.
+ * Uploads a PDF Blob (e.g. quotation proposals, WCR, DCR, Annexures) to Backblaze B2 / Firebase Cloud Storage bucket.
  */
 export async function uploadPdfToFirebase(
   pdfBlob: Blob,
@@ -276,7 +405,7 @@ export async function uploadPdfToFirebase(
       return b2Url;
     }
   } catch (err) {
-    console.warn("Backblaze B2 PDF upload note:", err);
+    console.warn("Backblaze B2 PDF upload note, trying Firebase Storage fallback...", err);
   }
 
   // 2. Fallback: Firebase Native Cloud Storage Bucket Upload
@@ -284,13 +413,12 @@ export async function uploadPdfToFirebase(
     const storageRef = ref(storage, storagePath);
     const snapshot = await uploadBytes(storageRef, pdfBlob, { contentType: 'application/pdf' });
     const downloadUrl = await getDownloadURL(snapshot.ref);
-    console.log(`📦 Fallback Uploaded to Firebase Storage Bucket: ${downloadUrl}`);
+    console.log(`📦 PDF Uploaded to Firebase Storage Bucket: ${downloadUrl}`);
     return downloadUrl;
-  } catch (err) {
-    console.warn("Firebase Storage PDF upload fallback note:", err);
+  } catch (err: any) {
+    console.warn("Firebase Storage PDF upload note:", err);
+    return base64Data; // Ultimate fallback: return base64 Data URL so PDF download/view never breaks
   }
-
-  return '';
 }
 
 /**
@@ -473,21 +601,24 @@ export async function deleteRecordFromFirestore(collectionName: string, id: stri
     console.log(`Firestore deleted [${collectionName}/${id}] -> DB: [${TARGET_DATABASE_ID}]`);
   } catch (err) {
     console.warn(`Firestore direct delete note [${collectionName}/${id}], trying backend:`, err);
+    if (BACKEND_URL) {
+      deleteRecordViaBackend(collectionName, id).catch(() => {});
+    }
   }
-  
-  // Call Express backend DELETE API fallback as well
-  deleteRecordViaBackend(collectionName, id).catch(() => {});
 }
 
 /**
- * Background sync function to push all local Dexie records to Firestore Cloud Database
+ * Background sync function to push all local Dexie records to Firestore Cloud Database.
+ * Reconciles local Dexie database against remote Firestore collections to prevent console-deleted items from resurrecting.
  */
 export async function syncAllLocalDataToFirestore(): Promise<void> {
   try {
     const { db, getDeletedRecordIdsSet, markRecordAsDeleted } = await import('./db');
     const deletedIds = await getDeletedRecordIdsSet();
+    const FIVE_MINUTES_MS = 5 * 60 * 1000;
+    const now = Date.now();
 
-    // Fetch remote deletedRecords tombstones first so locally cached deleted items are purged and never re-uploaded
+    // 1. Fetch remote deletedRecords tombstones first
     try {
       const remoteDeleted = await fetchCollectionFromFirestore<{ id: string; collectionName: string }>('deletedRecords', 3000);
       if (Array.isArray(remoteDeleted)) {
@@ -500,39 +631,83 @@ export async function syncAllLocalDataToFirestore(): Promise<void> {
       }
     } catch (_) {}
 
-    const leads = await db.leads.toArray();
-    for (const l of leads) {
-      if (deletedIds.has(l.id)) {
-        await db.leads.delete(l.id);
-      } else {
+    // 2. Reconcile & Sync Leads
+    try {
+      const remoteLeads = await fetchCollectionFromFirestore<any>('leads', 3000);
+      const remoteLeadIdsSet = new Set(Array.isArray(remoteLeads) ? remoteLeads.map(r => r.id) : []);
+      const localLeads = await db.leads.toArray();
+
+      for (const l of localLeads) {
+        if (deletedIds.has(l.id)) {
+          await db.leads.delete(l.id);
+          continue;
+        }
+        if (remoteLeads.length > 0 && !remoteLeadIdsSet.has(l.id)) {
+          const createdAtTime = l.createdAt ? new Date(l.createdAt).getTime() : 0;
+          if (now - createdAtTime > FIVE_MINUTES_MS) {
+            // Document was deleted on remote Firestore console -> purge locally
+            await db.leads.delete(l.id);
+            await markRecordAsDeleted(l.id, 'leads');
+            continue;
+          }
+        }
         await saveRecordToFirestore('leads', l.id, l);
       }
+    } catch (err) {
+      console.warn("Lead sync note:", err);
     }
-    const quotations = await db.quotations.toArray();
-    for (const q of quotations) {
-      if (deletedIds.has(q.id) || (q.leadId && deletedIds.has(q.leadId))) {
-        await db.quotations.delete(q.id);
-      } else {
+
+    // 3. Reconcile & Sync Quotations
+    try {
+      const remoteQuotes = await fetchCollectionFromFirestore<any>('quotations', 3000);
+      const remoteQuoteIdsSet = new Set(Array.isArray(remoteQuotes) ? remoteQuotes.map(r => r.id) : []);
+      const localQuotes = await db.quotations.toArray();
+
+      for (const q of localQuotes) {
+        if (deletedIds.has(q.id) || (q.leadId && deletedIds.has(q.leadId))) {
+          await db.quotations.delete(q.id);
+          continue;
+        }
+        if (remoteQuotes.length > 0 && !remoteQuoteIdsSet.has(q.id)) {
+          const createdAtTime = q.createdAt ? new Date(q.createdAt).getTime() : 0;
+          if (now - createdAtTime > FIVE_MINUTES_MS) {
+            await db.quotations.delete(q.id);
+            await markRecordAsDeleted(q.id, 'quotations');
+            continue;
+          }
+        }
         await saveRecordToFirestore('quotations', q.id, q);
       }
+    } catch (err) {
+      console.warn("Quotation sync note:", err);
     }
-    const releaseDocs = await db.releaseDocuments.toArray();
-    for (const r of releaseDocs) {
-      if (deletedIds.has(r.id) || (r.leadId && deletedIds.has(r.leadId))) {
-        await db.releaseDocuments.delete(r.id);
-      } else {
-        await saveRecordToFirestore('releaseDocuments', r.id, r);
-      }
-    }
-    const clientDocs = await db.clientDocuments.toArray();
-    for (const cd of clientDocs) {
-      if (deletedIds.has(cd.id) || (cd.leadId && deletedIds.has(cd.leadId))) {
-        await db.clientDocuments.delete(cd.id);
-      } else {
+
+    // 4. Reconcile & Sync Client Documents
+    try {
+      const remoteClientDocs = await fetchCollectionFromFirestore<any>('clientDocuments', 3000);
+      const remoteDocIdsSet = new Set(Array.isArray(remoteClientDocs) ? remoteClientDocs.map(r => r.id) : []);
+      const localClientDocs = await db.clientDocuments.toArray();
+
+      for (const cd of localClientDocs) {
+        if (deletedIds.has(cd.id) || (cd.leadId && deletedIds.has(cd.leadId))) {
+          await db.clientDocuments.delete(cd.id);
+          continue;
+        }
+        if (remoteClientDocs.length > 0 && !remoteDocIdsSet.has(cd.id)) {
+          const uploadedAtTime = cd.uploadedAt ? new Date(cd.uploadedAt).getTime() : 0;
+          if (now - uploadedAtTime > FIVE_MINUTES_MS) {
+            await db.clientDocuments.delete(cd.id);
+            await markRecordAsDeleted(cd.id, 'clientDocuments');
+            continue;
+          }
+        }
         await saveRecordToFirestore('clientDocuments', cd.id, cd);
       }
+    } catch (err) {
+      console.warn("Client document sync note:", err);
     }
-    console.log("🔥 Initialized background dual-sync of all local data to Firestore!");
+
+    console.log("🔥 Initialized background dual-sync & reconciliation of all local data to Firestore!");
   } catch (err) {
     console.warn("syncAllLocalDataToFirestore note:", err);
   }
@@ -547,8 +722,12 @@ export function initializeRealtimeFirestoreSync(): void {
   if (isRealtimeSyncInitialized) return;
   isRealtimeSyncInitialized = true;
 
+  let dispatchTimer: any = null;
   const dispatchRealtimeUpdate = () => {
-    window.dispatchEvent(new CustomEvent('app-realtime-update'));
+    if (dispatchTimer) clearTimeout(dispatchTimer);
+    dispatchTimer = setTimeout(() => {
+      window.dispatchEvent(new CustomEvent('app-realtime-update'));
+    }, 250);
   };
 
   // 1. Subscribe to deletedRecords tombstones collection

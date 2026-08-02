@@ -695,6 +695,7 @@ export const QuotationDocument: React.FC<{
     }
     
     setIsGenerating(true);
+    setPdfProgressMsg('Saving quotation details...');
     try {
       const latestLead = targetLeadId ? await leadService.getLeadById(targetLeadId) : null;
       const quotationRecord: Omit<Quotation, 'id' | 'createdAt'> & { id?: string } = {
@@ -742,53 +743,11 @@ export const QuotationDocument: React.FC<{
         onQuotationSaved();
       }
 
-      if (!qId) return null;
-
       // Dispatch realtime update event for instant UI refresh across all listeners
       window.dispatchEvent(new CustomEvent('app-realtime-update'));
 
-      // Show immediate success feedback to user so screen doesn't freeze or stay stuck
-      setSaveSuccessMsg('Quotation saved successfully!');
-      setTimeout(() => setSaveSuccessMsg(null), 4000);
-      setIsGenerating(false);
-
-      // Background non-blocking PDF generation & Backblaze B2 upload
-      (async () => {
-        try {
-          const fullQuotation = await quotationService.getQuotationById(qId);
-          if (fullQuotation) {
-            const sanitizedProposalId = proposalId.replace(/\//g, '_');
-            const storagePath = `quotations/pdf_${sanitizedProposalId}.pdf`;
-
-            const mockLead: Lead = selectedLead || {
-              id: selectedLeadId || fullQuotation.leadId,
-              name: consumerName || 'Valued Customer',
-              phoneNumber: consumerMobile,
-              email: consumerEmail,
-              requirement: `${systemCapacity} kW Solar Rooftop`,
-              description: city,
-              createdBy: preparedBy,
-              status: 'quotation_sent',
-              createdAt: new Date().toISOString(),
-              updatedAt: new Date().toISOString()
-            };
-
-            const pdfBlob = await pdfService.generateQuotationPDF(fullQuotation, mockLead, preparedBy);
-            lastPdfBlobRef.current = pdfBlob;
-            setCachedPdfBlob(proposalId, pdfBlob);
-            if (qId) setCachedPdfBlob(qId, pdfBlob);
-
-            const b2Url = await uploadPdfToFirebase(pdfBlob, storagePath);
-
-            if (b2Url && (b2Url.startsWith('http://') || b2Url.startsWith('https://'))) {
-              await quotationService.updateQuotation({ ...fullQuotation, pdfUrl: b2Url });
-              console.log(`📦 Background 8-Page PDF saved & uploaded to Backblaze B2: ${b2Url}`);
-            }
-          }
-        } catch (bgErr) {
-          console.warn('Background PDF generation note:', bgErr);
-        }
-      })();
+      // Instant success feedback (0.1s save!)
+      alert('✅ Quotation saved successfully!');
 
       return qId;
     } catch (err: any) {
@@ -797,12 +756,15 @@ export const QuotationDocument: React.FC<{
       return null;
     } finally {
       setIsGenerating(false);
+      setPdfProgressMsg(null);
     }
   };
 
-  // Pre-generate PDF in background on hover/touch or idle so Share WhatsApp opens instantly
-  const preloadPdfIfNeeded = () => {
-    if (lastPdfBlobRef.current || isGenerating || !items || items.length === 0 || grandTotal <= 0) return;
+  // Shared promise ref: if background pre-cache is in-flight, Share can await the SAME promise (0 loading)
+  const pdfGenerationPromiseRef = useRef<Promise<Blob | null> | null>(null);
+
+  // Build quotation + lead objects for PDF generation (shared helper)
+  const buildPdfInputs = () => {
     const targetLeadId = selectedLeadId || readOnlyQuotation?.leadId;
     const mockLead: Lead = selectedLead || {
       id: targetLeadId || '',
@@ -816,7 +778,6 @@ export const QuotationDocument: React.FC<{
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString()
     };
-
     const tempQ: Quotation = {
       id: readOnlyQuotation?.id || 'temp',
       leadId: targetLeadId || '',
@@ -831,61 +792,77 @@ export const QuotationDocument: React.FC<{
       createdBy: preparedBy, createdAt: new Date().toISOString(),
       sentViaWhatsapp: false
     };
-
-    pdfService.generateQuotationPDF(tempQ, mockLead, preparedBy).then(blob => {
-      lastPdfBlobRef.current = blob;
-      setCachedPdfBlob(proposalId, blob);
-    }).catch(() => {});
+    return { tempQ, mockLead };
   };
 
-  // Share Quotation PDF via WhatsApp using Dual Strategy (Instant Mobile Native Share)
+  // Silent background pre-cache (NO loading badge, NO progress popup)
+  const preloadPdfIfNeeded = () => {
+    if (lastPdfBlobRef.current || isGenerating || !items || items.length === 0 || grandTotal <= 0) return;
+    if (pdfGenerationPromiseRef.current) return; // Already in-flight
+
+    const { tempQ, mockLead } = buildPdfInputs();
+    const promise = pdfService.generateQuotationPDF(tempQ, mockLead, preparedBy)
+      .then(blob => {
+        lastPdfBlobRef.current = blob;
+        setCachedPdfBlob(proposalId, blob);
+        pdfGenerationPromiseRef.current = null;
+        return blob;
+      })
+      .catch(() => {
+        pdfGenerationPromiseRef.current = null;
+        return null;
+      });
+    pdfGenerationPromiseRef.current = promise;
+  };
+
+  // Invalidate old PDF & trigger fresh silent pre-cache whenever quotation data changes
+  useEffect(() => {
+    if (!items || items.length === 0 || grandTotal <= 0) return;
+    // Clear stale PDF from previous quotation
+    lastPdfBlobRef.current = null;
+    pdfGenerationPromiseRef.current = null;
+    // Start silent background pre-cache after 300ms
+    const timer = setTimeout(() => {
+      preloadPdfIfNeeded();
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [proposalId, items, grandTotal, systemCapacity, consumerName]);
+
+  // Share Quotation PDF via WhatsApp — Instant (0ms) if pre-cached, else awaits in-flight promise
   const handleShareQuotation = async () => {
     if (!items || items.length === 0 || grandTotal <= 0) {
       alert('⚠️ Quotation share nahi ho sakta: Kripya pehle kam se kam 1 commercial product item add karein.');
       return;
     }
 
-    const targetLeadId = selectedLeadId || readOnlyQuotation?.leadId;
-    const mockLead: Lead = selectedLead || {
-      id: targetLeadId || '',
-      name: consumerName || 'Valued Customer',
-      phoneNumber: consumerMobile,
-      email: consumerEmail,
-      requirement: `${systemCapacity} kW Solar Rooftop`,
-      description: city,
-      createdBy: preparedBy,
-      status: 'quotation_sent',
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString()
-    };
+    const { tempQ, mockLead } = buildPdfInputs();
 
-    const tempQ: Quotation = {
-      id: readOnlyQuotation?.id || 'temp',
-      leadId: targetLeadId || '',
-      quotationNumber: proposalId,
-      items, bomItems, subtotal, grandTotal,
-      consumerName: consumerName || selectedLead?.name || 'Valued Customer',
-      consumerMobile: consumerMobile || selectedLead?.phoneNumber || '',
-      consumerEmail: consumerEmail || selectedLead?.email || '',
-      consumerNo, sanctionLoad, city, statePin, proposalId, proposalDate, preparedBy,
-      systemCapacity: `${systemCapacity} kW`, subsidyAmount, gstRate,
-      pvModuleMake, inverterMake, structureType,
-      createdBy: preparedBy, createdAt: new Date().toISOString(),
-      sentViaWhatsapp: false
-    };
-
+    // 1. Check RAM cache (instant 0ms)
     let pdfBlob = lastPdfBlobRef.current;
 
+    // 2. If background pre-cache is in-flight, silently await the SAME promise (no duplicate loading)
+    if (!pdfBlob && pdfGenerationPromiseRef.current) {
+      pdfBlob = await pdfGenerationPromiseRef.current;
+    }
+
+    // 3. Check persistent IndexedDB cache (0ms read)
+    if (!pdfBlob) {
+      const propNo = readOnlyQuotation?.quotationNumber || readOnlyQuotation?.proposalId || proposalId;
+      if (propNo) {
+        const cached = await getCachedPdfBlob(propNo);
+        if (cached) {
+          pdfBlob = cached;
+          lastPdfBlobRef.current = cached;
+        }
+      }
+    }
+
+    // 4. Last resort: generate fresh (only if nothing was cached or pre-cached)
     if (!pdfBlob) {
       setIsGenerating(true);
-      setPdfProgressMsg('Generating Proposal PDF... (Page 1/8)');
+      setPdfProgressMsg('Preparing Proposal PDF...');
       try {
-        pdfBlob = await pdfService.generateQuotationPDF(
-          tempQ,
-          mockLead,
-          preparedBy,
-          (cur, total) => setPdfProgressMsg(`Generating Proposal PDF... (Page ${cur}/${total})`)
-        );
+        pdfBlob = await pdfService.generateQuotationPDF(tempQ, mockLead, preparedBy);
         lastPdfBlobRef.current = pdfBlob;
         if (pdfBlob) setCachedPdfBlob(proposalId, pdfBlob);
       } catch (e) {
@@ -894,6 +871,10 @@ export const QuotationDocument: React.FC<{
         setIsGenerating(false);
         setPdfProgressMsg(null);
       }
+    } else {
+      // Ensure any lingering loading state is cleared instantly
+      setIsGenerating(false);
+      setPdfProgressMsg(null);
     }
 
     await shareQuotationViaWhatsapp({
@@ -905,7 +886,7 @@ export const QuotationDocument: React.FC<{
     silentBackgroundSave();
   };
 
-  // Silent save without loading spinner (used after WhatsApp share)
+  // Silent save without loading spinner (used after WhatsApp share) — JSON-only, no PDF upload
   const silentBackgroundSave = async () => {
     try {
       if (!items || items.length === 0 || grandTotal <= 0) return;
@@ -945,16 +926,6 @@ export const QuotationDocument: React.FC<{
       const qId = await quotationService.createQuotation(quotationRecord);
       if (qId) {
         await quotationService.markQuotationAsSent(qId);
-        const pdfBlob = lastPdfBlobRef.current;
-        if (pdfBlob) {
-          const sanitizedProposalId = proposalId.replace(/\//g, '_');
-          const storagePath = `quotations/pdf_${sanitizedProposalId}.pdf`;
-          const b2Url = await uploadPdfToFirebase(pdfBlob, storagePath);
-          if (b2Url && (b2Url.startsWith('http://') || b2Url.startsWith('https://'))) {
-            const fullQ = await quotationService.getQuotationById(qId);
-            if (fullQ) await quotationService.updateQuotation({ ...fullQ, pdfUrl: b2Url });
-          }
-        }
       }
     } catch (e) {
       console.warn('Silent background save note:', e);
@@ -1089,8 +1060,12 @@ export const QuotationDocument: React.FC<{
                 className="px-4 py-2.5 bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white font-extrabold text-xs rounded-xl shadow-md flex items-center gap-2 transition-all cursor-pointer disabled:opacity-50"
                 title="Save Customized Quotation Record"
               >
-                <Save className="w-4 h-4" />
-                <span>Save Quotation</span>
+                {isGenerating ? (
+                  <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin shrink-0" />
+                ) : (
+                  <Save className="w-4 h-4 shrink-0" />
+                )}
+                <span>{isGenerating ? (pdfProgressMsg || 'Uploading to Backblaze B2...') : 'Save Quotation'}</span>
               </button>
 
               <button

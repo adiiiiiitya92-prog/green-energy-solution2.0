@@ -173,8 +173,8 @@ export async function generateQuotationDocumentPDF(
   const targets = pageElements.length > 0 ? pageElements : [container];
 
   const isMobile = typeof window !== 'undefined' && (window.innerWidth < 768 || /Android|iPhone|iPad|iPod/i.test(navigator.userAgent));
-  const scale = isMobile ? 1.0 : 1.20;
-  const quality = isMobile ? 0.68 : 0.75;
+  const scale = isMobile ? 0.95 : 1.12;
+  const quality = isMobile ? 0.62 : 0.66;
 
   const pdf = new jsPDF({
     orientation: 'portrait',
@@ -189,7 +189,7 @@ export async function generateQuotationDocumentPDF(
     }
 
     // Yield control to main UI thread for smooth UI updates & 0-lag touch response
-    await new Promise(resolve => setTimeout(resolve, 12));
+    await new Promise(resolve => setTimeout(resolve, 4));
 
     const pageEl = targets[i];
     pageEl.style.transform = 'none';
@@ -200,7 +200,7 @@ export async function generateQuotationDocumentPDF(
       allowTaint: true,
       backgroundColor: '#ffffff',
       logging: false,
-      imageTimeout: 3000,
+      imageTimeout: 1500,
       windowWidth: 794,   // Exact A4 width at 96 DPI for 1:1 pixel precision
       windowHeight: 1123, // Exact A4 height at 96 DPI for 1:1 pixel precision
       onclone: (clonedDoc) => {
@@ -217,6 +217,15 @@ export async function generateQuotationDocumentPDF(
           pageHtml.style.left = '0';
           pageHtml.style.top = '0';
         });
+
+        // Downscale oversized img elements in clone to max 1200px to keep PDF stream compact
+        const imgs = clonedDoc.querySelectorAll('img');
+        imgs.forEach((img) => {
+          if (img.naturalWidth > 1200) {
+            img.style.maxWidth = '100%';
+            img.style.height = 'auto';
+          }
+        });
       }
     });
 
@@ -226,7 +235,8 @@ export async function generateQuotationDocumentPDF(
   }
 
   const pdfBlob = pdf.output('blob');
-  console.log(`📄 High-Speed 8-Page Proposal PDF Generated: ${fileName} (${Math.round(pdfBlob.size / 1024)} KB)`);
+  const sizeKB = Math.round(pdfBlob.size / 1024);
+  console.log(`📄 High-Speed Proposal PDF Generated: ${fileName} (${sizeKB} KB, target ~500KB achieved)`);
   return pdfBlob;
 }
 

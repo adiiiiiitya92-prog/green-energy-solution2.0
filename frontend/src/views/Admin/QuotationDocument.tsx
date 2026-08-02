@@ -743,6 +743,9 @@ export const QuotationDocument: React.FC<{
 
       if (!qId) return null;
 
+      // Dispatch realtime update event for instant UI refresh across all listeners
+      window.dispatchEvent(new CustomEvent('app-realtime-update'));
+
       // Show immediate success feedback to user so screen doesn't freeze or stay stuck
       setSaveSuccessMsg('Quotation saved successfully!');
       setTimeout(() => setSaveSuccessMsg(null), 4000);

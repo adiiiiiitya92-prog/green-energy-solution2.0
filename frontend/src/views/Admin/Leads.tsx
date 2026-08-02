@@ -3907,6 +3907,13 @@ const LeadQuotationsTimeline: React.FC<{
 
   useEffect(() => {
     loadQuotes();
+    const handleRealtimeUpdate = () => {
+      loadQuotes();
+    };
+    window.addEventListener('app-realtime-update', handleRealtimeUpdate);
+    return () => {
+      window.removeEventListener('app-realtime-update', handleRealtimeUpdate);
+    };
   }, [leadId]);
 
   return (

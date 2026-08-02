@@ -70,7 +70,8 @@ export async function setCachedPdfBlob(key: string, blob: Blob): Promise<void> {
 export async function ensurePdfBlobForQuotation(
   quotation: Quotation,
   lead?: Lead | null,
-  creatorName: string = 'Nitin Thakre'
+  creatorName: string = 'Nitin Thakre',
+  onProgress?: (current: number, total: number) => void
 ): Promise<Blob> {
   if (!quotation) return new Blob([], { type: 'application/pdf' });
   const propNo = quotation.quotationNumber || quotation.proposalId || quotation.id || 'EST';
@@ -118,7 +119,7 @@ export async function ensurePdfBlobForQuotation(
     updatedAt: new Date().toISOString()
   };
 
-  const generatedBlob = await pdfService.generateQuotationPDF(quotation, mockLead, creatorName);
+  const generatedBlob = await pdfService.generateQuotationPDF(quotation, mockLead, creatorName, onProgress);
   if (generatedBlob) {
     await setCachedPdfBlob(propNo, generatedBlob);
     if (quotation.id) await setCachedPdfBlob(quotation.id, generatedBlob);

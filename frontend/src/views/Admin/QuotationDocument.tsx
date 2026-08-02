@@ -302,6 +302,7 @@ export const QuotationDocument: React.FC<{
   };
 
   const [isGenerating, setIsGenerating] = useState(false);
+  const [pdfProgressMsg, setPdfProgressMsg] = useState<string | null>(null);
   const lastPdfBlobRef = useRef<Blob | null>(null);
 
   useEffect(() => {
@@ -877,14 +878,21 @@ export const QuotationDocument: React.FC<{
 
     if (!pdfBlob) {
       setIsGenerating(true);
+      setPdfProgressMsg('Generating Proposal PDF... (Page 1/8)');
       try {
-        pdfBlob = await pdfService.generateQuotationPDF(tempQ, mockLead, preparedBy);
+        pdfBlob = await pdfService.generateQuotationPDF(
+          tempQ,
+          mockLead,
+          preparedBy,
+          (cur, total) => setPdfProgressMsg(`Generating Proposal PDF... (Page ${cur}/${total})`)
+        );
         lastPdfBlobRef.current = pdfBlob;
         if (pdfBlob) setCachedPdfBlob(proposalId, pdfBlob);
       } catch (e) {
         console.warn('PDF generation note during share:', e);
       } finally {
         setIsGenerating(false);
+        setPdfProgressMsg(null);
       }
     }
 
@@ -960,6 +968,7 @@ export const QuotationDocument: React.FC<{
       return;
     }
     setIsGenerating(true);
+    setPdfProgressMsg('Saving & Generating PDF... (Page 1/8)');
     try {
       const qId = await handleSaveQuotation();
       if (!qId) return;
@@ -980,7 +989,12 @@ export const QuotationDocument: React.FC<{
             createdAt: new Date().toISOString(),
             updatedAt: new Date().toISOString()
           };
-          blob = await pdfService.generateQuotationPDF(fullQuotation, mockLead, preparedBy);
+          blob = await pdfService.generateQuotationPDF(
+            fullQuotation,
+            mockLead,
+            preparedBy,
+            (cur, total) => setPdfProgressMsg(`Saving & Generating PDF... (Page ${cur}/${total})`)
+          );
         }
       }
 
@@ -999,6 +1013,7 @@ export const QuotationDocument: React.FC<{
       alert('Error generating 8-Page quotation proposal.');
     } finally {
       setIsGenerating(false);
+      setPdfProgressMsg(null);
     }
   };
 
@@ -2507,6 +2522,12 @@ export const QuotationDocument: React.FC<{
               </div>
             </div>
           </div>
+        </div>
+      )}
+      {pdfProgressMsg && (
+        <div className="fixed bottom-6 right-6 z-[9999] bg-slate-900/95 text-white backdrop-blur-md px-5 py-3.5 rounded-2xl shadow-2xl border border-emerald-500/40 flex items-center gap-3 animate-fade-in text-xs font-bold">
+          <div className="w-5 h-5 border-2 border-emerald-400 border-t-transparent rounded-full animate-spin shrink-0" />
+          <span>{pdfProgressMsg}</span>
         </div>
       )}
     </div>

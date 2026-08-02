@@ -1030,7 +1030,12 @@ export function printQuotationHTML(htmlString: string, title: string = 'Quotatio
 export const pdfService = {
   printQuotationHTML,
 
-  async generateQuotationPDF(q: Quotation, lead: Lead, creatorName: string): Promise<Blob> {
+  async generateQuotationPDF(
+    q: Quotation,
+    lead: Lead,
+    creatorName: string,
+    onProgress?: (current: number, total: number) => void
+  ): Promise<Blob> {
     // Always render from a clean, un-transformed off-screen container for 1:1 pixel-perfect layout precision
     const tempDiv = document.createElement('div');
     tempDiv.className = 'quotation-pdf-export-container';
@@ -1059,7 +1064,7 @@ export const pdfService = {
     );
 
     try {
-      const blob = await generateQuotationDocumentPDF(tempDiv, `Solar_Quotation_${q.quotationNumber || 'EST'}.pdf`);
+      const blob = await generateQuotationDocumentPDF(tempDiv, `Solar_Quotation_${q.quotationNumber || 'EST'}.pdf`, onProgress);
       return blob;
     } finally {
       if (document.body.contains(tempDiv)) {

@@ -166,10 +166,15 @@ export async function generateOptimizedPDF(
  */
 export async function generateQuotationDocumentPDF(
   container: HTMLElement,
-  fileName: string = 'Solar_Quotation.pdf'
+  fileName: string = 'Solar_Quotation.pdf',
+  onProgress?: (current: number, total: number) => void
 ): Promise<Blob> {
   const pageElements = Array.from(container.querySelectorAll('.quotation-document-page')) as HTMLElement[];
   const targets = pageElements.length > 0 ? pageElements : [container];
+
+  const isMobile = typeof window !== 'undefined' && (window.innerWidth < 768 || /Android|iPhone|iPad|iPod/i.test(navigator.userAgent));
+  const scale = isMobile ? 1.05 : 1.30;
+  const quality = isMobile ? 0.70 : 0.78;
 
   const pdf = new jsPDF({
     orientation: 'portrait',
@@ -179,13 +184,18 @@ export async function generateQuotationDocumentPDF(
   });
 
   for (let i = 0; i < targets.length; i++) {
-    if (i > 0) await new Promise(resolve => setTimeout(resolve, 0));
+    if (onProgress) {
+      try { onProgress(i + 1, targets.length); } catch (_) {}
+    }
+
+    // Yield control to main UI thread so browser renders frames, updates progress dialog, and touch stays responsive
+    await new Promise(resolve => setTimeout(resolve, 25));
 
     const pageEl = targets[i];
     pageEl.style.transform = 'none';
 
     const canvas = await html2canvas(pageEl, {
-      scale: 1.35, // High resolution crisp text scale
+      scale,
       useCORS: true,
       allowTaint: true,
       backgroundColor: '#ffffff',
@@ -210,7 +220,7 @@ export async function generateQuotationDocumentPDF(
       }
     });
 
-    const imgData = canvas.toDataURL('image/jpeg', 0.82);
+    const imgData = canvas.toDataURL('image/jpeg', quality);
     if (i > 0) pdf.addPage();
     pdf.addImage(imgData, 'JPEG', 0, 0, 210, 297, undefined, 'FAST');
   }

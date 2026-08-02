@@ -112,6 +112,8 @@ export const Leads: React.FC = () => {
 
   /** Try to get a PDF Blob from saved data, otherwise regenerate it on-the-fly.
    *  Uses persistent CacheStorage for instant 0ms repeat access across screens and refreshes. */
+  const [pdfLoadingMsg, setPdfLoadingMsg] = useState<string | null>(null);
+
   const resolvePdfBlob = async (q: Quotation): Promise<Blob> => {
     // 0. Check persistent CacheStorage & memory cache first (instant 0ms)
     const propNo = q.quotationNumber || q.proposalId || q.id;
@@ -121,10 +123,20 @@ export const Leads: React.FC = () => {
       return cached;
     }
 
-    const leadMatch = leads.find(l => l.id === q.leadId) || selectedLead;
-    const blob = await ensurePdfBlobForQuotation(q, leadMatch, q.createdBy || 'Admin');
-    if (blob) pdfBlobCache.current.set(q.id, blob);
-    return blob;
+    setPdfLoadingMsg('Preparing Solar Proposal PDF... (Page 1/8)');
+    try {
+      const leadMatch = leads.find(l => l.id === q.leadId) || selectedLead;
+      const blob = await ensurePdfBlobForQuotation(
+        q,
+        leadMatch,
+        q.createdBy || 'Admin',
+        (cur, total) => setPdfLoadingMsg(`Preparing Solar Proposal PDF... (Page ${cur}/${total})`)
+      );
+      if (blob) pdfBlobCache.current.set(q.id, blob);
+      return blob;
+    } finally {
+      setPdfLoadingMsg(null);
+    }
   };
 
   const handleViewPdf = async (q: Quotation) => {
@@ -3880,6 +3892,12 @@ export const Leads: React.FC = () => {
           </div>
         );
       })()}
+      {pdfLoadingMsg && (
+        <div className="fixed bottom-6 right-6 z-[9999] bg-slate-900/95 text-white backdrop-blur-md px-5 py-3.5 rounded-2xl shadow-2xl border border-emerald-500/40 flex items-center gap-3 animate-fade-in text-xs font-bold">
+          <div className="w-5 h-5 border-2 border-emerald-400 border-t-transparent rounded-full animate-spin shrink-0" />
+          <span>{pdfLoadingMsg}</span>
+        </div>
+      )}
     </div>
   );
 };

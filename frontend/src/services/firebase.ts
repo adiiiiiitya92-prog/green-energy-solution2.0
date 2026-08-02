@@ -122,11 +122,13 @@ async function uploadViaClientDirectB2(base64Data: string, storagePath: string, 
  * Helper to upload via backend API / Netlify Serverless Functions to Backblaze B2 Storage Bucket (10 GB Free Storage)
  */
 async function uploadViaBackend(base64Data: string, storagePath: string, contentType: string): Promise<string | null> {
-  const backendUrl = import.meta.env.VITE_BACKEND_URL || (window.location.hostname === 'localhost' ? 'http://localhost:5050' : '');
-  
+  const currentOrigin = typeof window !== 'undefined' ? window.location.origin : '';
+  const backendUrl = import.meta.env.VITE_BACKEND_URL || '';
+
   const uploadEndpoints = Array.from(new Set([
     '/api/upload',
-    `${backendUrl}/api/upload`.replace(/^\/api/, '/api'),
+    `${currentOrigin}/api/upload`,
+    backendUrl ? `${backendUrl}/api/upload` : '',
     '/.netlify/functions/upload'
   ])).filter(Boolean);
 

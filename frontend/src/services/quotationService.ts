@@ -272,7 +272,7 @@ export const quotationService = {
         const lead = await db.leads.get(qData.leadId);
         if (lead) {
           lead.status = 'quotation_sent';
-          if (finalQuotation.followUpDate) {
+          if (finalQuotation.followUpDate && finalQuotation.followUpDate.trim() !== '') {
             lead.nextFollowUpDate = finalQuotation.followUpDate;
             lead.followUpCompleted = false;
             lead.followUpSetAt = finalQuotation.followUpSetAt || new Date().toISOString();
@@ -338,7 +338,7 @@ export const quotationService = {
     if (finalQuotation.leadId) {
       const lead = await db.leads.get(finalQuotation.leadId);
       if (lead) {
-        if (finalQuotation.followUpDate) {
+        if (finalQuotation.followUpDate && finalQuotation.followUpDate.trim() !== '') {
           lead.nextFollowUpDate = finalQuotation.followUpDate;
           lead.followUpCompleted = finalQuotation.followUpCompleted || false;
           lead.updatedAt = new Date().toISOString();

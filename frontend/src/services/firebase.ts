@@ -266,12 +266,29 @@ export async function uploadPdfToFirebase(
     reader.readAsDataURL(pdfBlob);
   });
 
-  const b2Url = await uploadViaBackend(base64Data, storagePath, 'application/pdf');
-  if (b2Url && (b2Url.startsWith('http://') || b2Url.startsWith('https://'))) {
-    return b2Url;
+  // 1. Primary: Backblaze B2 Storage Upload
+  try {
+    const b2Url = await uploadViaBackend(base64Data, storagePath, 'application/pdf');
+    if (b2Url && (b2Url.startsWith('http://') || b2Url.startsWith('https://'))) {
+      console.log(`📦 PDF Uploaded to Backblaze B2 Storage Bucket: ${b2Url}`);
+      return b2Url;
+    }
+  } catch (err) {
+    console.warn("Backblaze B2 PDF upload note:", err);
   }
 
-  throw new Error('Backblaze B2 PDF upload failed: Could not obtain a valid cloud storage URL.');
+  // 2. Fallback: Firebase Native Cloud Storage Bucket Upload
+  try {
+    const storageRef = ref(storage, storagePath);
+    const snapshot = await uploadBytes(storageRef, pdfBlob, { contentType: 'application/pdf' });
+    const downloadUrl = await getDownloadURL(snapshot.ref);
+    console.log(`📦 Fallback Uploaded to Firebase Storage Bucket: ${downloadUrl}`);
+    return downloadUrl;
+  } catch (err) {
+    console.warn("Firebase Storage PDF upload fallback note:", err);
+  }
+
+  return '';
 }
 
 /**

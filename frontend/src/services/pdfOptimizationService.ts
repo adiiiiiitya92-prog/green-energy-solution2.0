@@ -173,8 +173,8 @@ export async function generateQuotationDocumentPDF(
   const targets = pageElements.length > 0 ? pageElements : [container];
 
   const isMobile = typeof window !== 'undefined' && (window.innerWidth < 768 || /Android|iPhone|iPad|iPod/i.test(navigator.userAgent));
-  const scale = isMobile ? 1.05 : 1.30;
-  const quality = isMobile ? 0.70 : 0.78;
+  const scale = isMobile ? 1.0 : 1.20;
+  const quality = isMobile ? 0.68 : 0.75;
 
   const pdf = new jsPDF({
     orientation: 'portrait',
@@ -188,8 +188,8 @@ export async function generateQuotationDocumentPDF(
       try { onProgress(i + 1, targets.length); } catch (_) {}
     }
 
-    // Yield control to main UI thread so browser renders frames, updates progress dialog, and touch stays responsive
-    await new Promise(resolve => setTimeout(resolve, 25));
+    // Yield control to main UI thread for smooth UI updates & 0-lag touch response
+    await new Promise(resolve => setTimeout(resolve, 12));
 
     const pageEl = targets[i];
     pageEl.style.transform = 'none';

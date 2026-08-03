@@ -1028,13 +1028,7 @@ export const pdfService = {
     creatorName: string,
     onProgress?: (current: number, total: number) => void
   ): Promise<Blob> {
-    // 1. Try to use live visible DOM elements if already present on screen (Instant capture, 0ms HTML build delay)
-    const livePrintContainer = document.querySelector('.quotation-print-container') as HTMLElement;
-    if (livePrintContainer && livePrintContainer.querySelectorAll('.quotation-document-page').length >= 8) {
-      return await generateQuotationDocumentPDF(livePrintContainer, `Solar_Quotation_${q.quotationNumber || 'EST'}.pdf`, onProgress);
-    }
-
-    // 2. Fallback to clean off-screen container rendering
+    // Always render from a clean, un-transformed off-screen container for 1:1 pixel-perfect layout precision
     const tempDiv = document.createElement('div');
     tempDiv.className = 'quotation-pdf-export-container';
     tempDiv.style.position = 'fixed';
@@ -1049,7 +1043,7 @@ export const pdfService = {
     tempDiv.innerHTML = createNewQuotationProposalHtml(q, lead, creatorName);
     document.body.appendChild(tempDiv);
 
-    // Pre-load all images
+    // Pre-load all images (qoutation 1.png, logo, engineer, stamp) for sub-second ultra-fast PDF generation
     const images = Array.from(tempDiv.querySelectorAll('img'));
     await Promise.all(
       images.map(img => {

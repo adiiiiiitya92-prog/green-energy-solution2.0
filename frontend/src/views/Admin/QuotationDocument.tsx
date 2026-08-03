@@ -760,9 +760,14 @@ export const QuotationDocument: React.FC<{
     }
   };
 
+  // Shared promise ref: if background pre-cache is in-flight, Share/Download can await the SAME promise (0 duplicate generation)
+  const pdfGenPromiseRef = useRef<Promise<Blob | null> | null>(null);
+
   // Pre-generate PDF in background on hover/touch or idle so Share WhatsApp opens instantly
   const preloadPdfIfNeeded = () => {
     if (lastPdfBlobRef.current || isGenerating || !items || items.length === 0 || grandTotal <= 0) return;
+    if (pdfGenPromiseRef.current) return; // Already generating in background
+
     const targetLeadId = selectedLeadId || readOnlyQuotation?.leadId;
     const mockLead: Lead = selectedLead || {
       id: targetLeadId || '',
@@ -792,18 +797,29 @@ export const QuotationDocument: React.FC<{
       sentViaWhatsapp: false
     };
 
-    pdfService.generateQuotationPDF(tempQ, mockLead, preparedBy).then(blob => {
-      lastPdfBlobRef.current = blob;
-      setCachedPdfBlob(proposalId, blob);
-    }).catch(() => {});
+    const promise = pdfService.generateQuotationPDF(tempQ, mockLead, preparedBy)
+      .then(blob => {
+        lastPdfBlobRef.current = blob;
+        setCachedPdfBlob(proposalId, blob);
+        pdfGenPromiseRef.current = null;
+        return blob;
+      })
+      .catch(() => {
+        pdfGenPromiseRef.current = null;
+        return null;
+      });
+
+    pdfGenPromiseRef.current = promise;
   };
 
-  // Auto pre-cache PDF blob in background after 500ms idle so WhatsApp Share opens instantly (0.1s)
+  // Auto pre-cache PDF blob in background after 100ms idle so WhatsApp Share / Download opens instantly
   useEffect(() => {
     if (!items || items.length === 0 || grandTotal <= 0) return;
+    lastPdfBlobRef.current = null;
+    pdfGenPromiseRef.current = null;
     const timer = setTimeout(() => {
       preloadPdfIfNeeded();
-    }, 500);
+    }, 100);
     return () => clearTimeout(timer);
   }, [proposalId, items, grandTotal, systemCapacity, consumerName]);
 
@@ -844,6 +860,15 @@ export const QuotationDocument: React.FC<{
     };
 
     let pdfBlob = lastPdfBlobRef.current;
+
+    // Check if background pre-cache promise is already running
+    if (!pdfBlob && pdfGenPromiseRef.current) {
+      setIsGenerating(true);
+      setPdfProgressMsg('Preparing Proposal PDF...');
+      pdfBlob = (await pdfGenPromiseRef.current) || undefined;
+      setIsGenerating(false);
+      setPdfProgressMsg(null);
+    }
 
     if (!pdfBlob) {
       const propNo = readOnlyQuotation?.quotationNumber || readOnlyQuotation?.proposalId || proposalId;

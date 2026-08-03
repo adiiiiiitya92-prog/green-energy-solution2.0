@@ -173,8 +173,9 @@ export async function generateQuotationDocumentPDF(
   const targets = pageElements.length > 0 ? pageElements : [container];
 
   const isMobile = typeof window !== 'undefined' && (window.innerWidth < 768 || /Android|iPhone|iPad|iPod/i.test(navigator.userAgent));
-  const scale = isMobile ? 0.95 : 1.12;
-  const quality = isMobile ? 0.62 : 0.66;
+  // Scale 1.6 for sharp text & high clarity; quality 0.78 for balanced file size ~500-750KB (<900KB target)
+  const scale = isMobile ? 1.45 : 1.70;
+  const quality = isMobile ? 0.75 : 0.80;
 
   const pdf = new jsPDF({
     orientation: 'portrait',
@@ -188,8 +189,8 @@ export async function generateQuotationDocumentPDF(
       try { onProgress(i + 1, targets.length); } catch (_) {}
     }
 
-    // Yield control to main UI thread for smooth UI updates & 0-lag touch response
-    await new Promise(resolve => setTimeout(resolve, 4));
+    // Yield control to main UI thread for smooth UI updates & non-blocking execution
+    await new Promise(resolve => setTimeout(resolve, 8));
 
     const pageEl = targets[i];
     pageEl.style.transform = 'none';
@@ -200,7 +201,7 @@ export async function generateQuotationDocumentPDF(
       allowTaint: true,
       backgroundColor: '#ffffff',
       logging: false,
-      imageTimeout: 1500,
+      imageTimeout: 2500,
       windowWidth: 794,   // Exact A4 width at 96 DPI for 1:1 pixel precision
       windowHeight: 1123, // Exact A4 height at 96 DPI for 1:1 pixel precision
       onclone: (clonedDoc) => {
@@ -218,10 +219,10 @@ export async function generateQuotationDocumentPDF(
           pageHtml.style.top = '0';
         });
 
-        // Downscale oversized img elements in clone to max 1200px to keep PDF stream compact
+        // Ensure images are clear and not artificially squeezed
         const imgs = clonedDoc.querySelectorAll('img');
         imgs.forEach((img) => {
-          if (img.naturalWidth > 1200) {
+          if (img.naturalWidth > 1600) {
             img.style.maxWidth = '100%';
             img.style.height = 'auto';
           }

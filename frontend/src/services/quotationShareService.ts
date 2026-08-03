@@ -54,8 +54,21 @@ export async function shareQuotationViaWhatsapp(params: ShareQuotationParams): P
 
   const pdfFile = new File([pdfBlob], pdfFileName, { type: 'application/pdf' });
 
-  // Native Web Share API (Mobile Android / iOS):
-  // Immediately opens WhatsApp / WhatsApp Business directly with PDF attached
+  // 1. Auto-download locally first so PDF is saved in mobile Downloads instantly
+  try {
+    const blobUrl = URL.createObjectURL(pdfBlob);
+    const a = document.createElement('a');
+    a.href = blobUrl;
+    a.download = pdfFileName;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(blobUrl), 5000);
+  } catch (e) {
+    console.warn('Auto-download note during share:', e);
+  }
+
+  // 2. Open Native Web Share Sheet (WhatsApp / Apps)
   if (typeof navigator !== 'undefined' && (navigator as any).canShare && (navigator as any).canShare({ files: [pdfFile] })) {
     try {
       await (navigator as any).share({

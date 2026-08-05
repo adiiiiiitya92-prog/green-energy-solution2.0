@@ -110,12 +110,25 @@ export function sortAndFormatBomItems(items: BomItem[]): BomItem[] {
 
 export function getQuotationTotalAmount(q: any): number {
   if (!q) return 0;
-  if (typeof q.grandTotal === 'number' && q.grandTotal > 0) return q.grandTotal;
-  if (typeof q.total === 'number' && q.total > 0) return q.total;
-  if (typeof q.subtotal === 'number' && q.subtotal > 0) return q.subtotal;
-  if (Array.isArray(q.items) && q.items.length > 0) {
-    const sum = q.items.reduce((s: number, i: any) => s + (Number(i.amount) || Number(i.rate) || 0), 0);
-    if (sum > 0) return sum;
+  const items = q.items || q.lineItems || [];
+  const subtotal = q.subtotal !== undefined && q.subtotal !== null && Number(q.subtotal) > 0
+    ? Number(q.subtotal)
+    : (Array.isArray(items) ? items.reduce((s: number, i: any) => s + (Number(i.amount) || (Number(i.qty || 1) * Number(i.rate || 0)) || 0), 0) : 0);
+
+  const gstRateVal = q.gstRate !== undefined && q.gstRate !== null ? Number(q.gstRate) : 0;
+  const taxAmt = Math.round(subtotal * (gstRateVal / 100));
+  const subtotalWithTax = subtotal + taxAmt;
+
+  if (subtotalWithTax > 0) {
+    return subtotalWithTax;
+  }
+
+  if (typeof q.grandTotal === 'number' && q.grandTotal > 0) {
+    const subsidyVal = Number(q.subsidyAmount) || 0;
+    if (subsidyVal > 0 && q.grandTotal < (subtotal + taxAmt)) {
+      return q.grandTotal + subsidyVal;
+    }
+    return q.grandTotal;
   }
   return 0;
 }

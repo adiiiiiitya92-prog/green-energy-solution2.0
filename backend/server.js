@@ -354,7 +354,55 @@ app.post('/api/visits', async (req, res) => {
   }
 });
 
+// ===================================
+// 6. B2B BUSINESSES & STOCK TRANSACTIONS API
+// ===================================
+app.get('/api/b2b-businesses', async (req, res) => {
+  try {
+    const snapshot = await db.collection('b2bBusinesses').orderBy('createdAt', 'desc').get();
+    const businesses = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+    res.json(businesses);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to fetch B2B businesses', details: String(err) });
+  }
+});
+
+app.post('/api/b2b-businesses', async (req, res) => {
+  try {
+    const id = req.body.id || `b2b_${Date.now()}`;
+    const now = new Date().toISOString();
+    const newBusiness = { ...req.body, id, updatedAt: now };
+    if (!newBusiness.createdAt) newBusiness.createdAt = now;
+    await db.collection('b2bBusinesses').doc(id).set(newBusiness, { merge: true });
+    res.status(201).json(newBusiness);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to save B2B business', details: String(err) });
+  }
+});
+
+app.get('/api/stock-transactions', async (req, res) => {
+  try {
+    const snapshot = await db.collection('stockTransactions').orderBy('timestamp', 'desc').get();
+    const txns = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+    res.json(txns);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to fetch stock transactions', details: String(err) });
+  }
+});
+
+app.post('/api/stock-transactions', async (req, res) => {
+  try {
+    const id = req.body.id || `stk_txn_${Date.now()}`;
+    const newTxn = { ...req.body, id, timestamp: req.body.timestamp || new Date().toISOString() };
+    await db.collection('stockTransactions').doc(id).set(newTxn, { merge: true });
+    res.status(201).json(newTxn);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to save stock transaction', details: String(err) });
+  }
+});
+
 const PORT = process.env.PORT || 5050;
 app.listen(PORT, () => {
   console.log(`🚀 Solar CRM Backend Server running on port ${PORT}`);
 });
+

@@ -12,7 +12,10 @@ import type {
   Product,
   Challan,
   ShadowAnalysisRecord,
-  DeletionRequest
+  DeletionRequest,
+  B2BBusiness,
+  StockTransaction,
+  Package
 } from '../types';
 
 export interface DeletedRecord {
@@ -36,6 +39,9 @@ export class SolarCRMDatabase extends Dexie {
   shadowAnalyses!: Table<ShadowAnalysisRecord>;
   deletedRecords!: Table<DeletedRecord>;
   deletionRequests!: Table<DeletionRequest>;
+  b2bBusinesses!: Table<B2BBusiness>;
+  stockTransactions!: Table<StockTransaction>;
+  packages!: Table<Package>;
 
   constructor() {
     super('GreenEnergyCRMDatabase');
@@ -83,6 +89,43 @@ export class SolarCRMDatabase extends Dexie {
       shadowAnalyses: 'id, leadId, projectName, createdAt',
       deletedRecords: 'id, collectionName, deletedAt',
       deletionRequests: 'id, status, entityType, requestedByUserId, requestedAt'
+    });
+    this.version(6).stores({
+      profiles: 'id, role, isActive',
+      leads: 'id, assignedEmployeeId, status, createdAt',
+      quotations: 'id, leadId, quotationNumber, createdAt',
+      orderConfirmations: 'id, leadId, quotationId',
+      clientDocuments: 'id, leadId, docType',
+      clientRegistrations: 'leadId',
+      installationPhotos: 'id, leadId, photoType',
+      releaseDocuments: 'id, leadId',
+      fieldVisitReports: 'id, employeeId, leadId, visitedAt',
+      products: 'id, name, category',
+      challans: 'id, leadId, assignedEmployeeId, challanNumber, createdAt',
+      shadowAnalyses: 'id, leadId, projectName, createdAt',
+      deletedRecords: 'id, collectionName, deletedAt',
+      deletionRequests: 'id, status, entityType, requestedByUserId, requestedAt',
+      b2bBusinesses: 'id, businessName, mobileNumber, gstNumber, contactPerson, createdAt',
+      stockTransactions: 'id, challanId, challanNumber, productId, timestamp'
+    });
+    this.version(7).stores({
+      profiles: 'id, role, isActive',
+      leads: 'id, assignedEmployeeId, status, createdAt',
+      quotations: 'id, leadId, quotationNumber, createdAt',
+      orderConfirmations: 'id, leadId, quotationId',
+      clientDocuments: 'id, leadId, docType',
+      clientRegistrations: 'leadId',
+      installationPhotos: 'id, leadId, photoType',
+      releaseDocuments: 'id, leadId',
+      fieldVisitReports: 'id, employeeId, leadId, visitedAt',
+      products: 'id, name, category',
+      challans: 'id, leadId, assignedEmployeeId, challanNumber, createdAt',
+      shadowAnalyses: 'id, leadId, projectName, createdAt',
+      deletedRecords: 'id, collectionName, deletedAt',
+      deletionRequests: 'id, status, entityType, requestedByUserId, requestedAt',
+      b2bBusinesses: 'id, businessName, mobileNumber, gstNumber, contactPerson, createdAt',
+      stockTransactions: 'id, challanId, challanNumber, productId, timestamp',
+      packages: 'id, name, code, status, createdAt'
     });
   }
 }

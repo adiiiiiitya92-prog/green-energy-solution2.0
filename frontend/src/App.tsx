@@ -11,6 +11,7 @@ import { Settings } from './views/SuperAdmin/Settings';
 import { ProfileView } from './views/FieldEmployee/Profile';
 import { Products } from './views/Admin/Products';
 import { Challans } from './views/Admin/Challans';
+import { B2BBusinesses } from './views/Admin/B2BBusinesses';
 import { ShadowAnalysisContainer } from './components/ShadowAnalysis';
 import { DcrDocument } from './views/Admin/DcrDocument';
 import { WcrDocument } from './views/Admin/WcrDocument';
@@ -73,6 +74,7 @@ export const App: React.FC = () => {
               <Route path="/inventory-panel" element={<InventoryPanel />} />
               <Route path="/products" element={<Products />} />
               <Route path="/challans" element={<Challans />} />
+              <Route path="/b2b-businesses" element={<B2BBusinesses />} />
               <Route path="*" element={<Navigate to="/inventory-panel" replace />} />
             </>
           ) : !isEmployee ? (
@@ -86,6 +88,7 @@ export const App: React.FC = () => {
               <Route path="/products" element={<Products />} />
               <Route path="/employees" element={<Employees />} />
               <Route path="/challans" element={<Challans />} />
+              <Route path="/b2b-businesses" element={<B2BBusinesses />} />
               <Route path="/dcr-document" element={<DcrDocument />} />
               <Route path="/wcr-document" element={<WcrDocument />} />
               <Route path="/model-agreement" element={<ModelAgreementDocument />} />

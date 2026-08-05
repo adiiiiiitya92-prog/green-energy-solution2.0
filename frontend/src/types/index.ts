@@ -67,6 +67,7 @@ export interface Quotation {
   bomItems?: BomItem[];
   subtotal: number;
   grandTotal: number;
+  netPayable?: number;
   followUpDate: string;
   followUpNotes?: string;
   followUpSetAt?: string;
@@ -227,14 +228,27 @@ export interface ChallanItem {
   productId: string;
   productName: string;
   qty: number;
+  unit?: string;
+  rate?: number;
   serialNumbers?: string[];
 }
 
 export interface Challan {
   id: string;
   challanNumber: string;
-  leadId: string;
-  leadName: string;
+  type?: 'lead' | 'b2b';
+  leadId?: string;
+  leadName?: string;
+
+  // B2B Business details
+  b2bBusinessId?: string;
+  businessName?: string;
+  gstNumber?: string;
+  businessAddress?: string;
+  contactPerson?: string;
+  mobileNumber?: string;
+  email?: string;
+
   assignedEmployeeId: string;
   employeeName: string;
   vehicleNumber: string;
@@ -244,6 +258,30 @@ export interface Challan {
   notes?: string;
   createdAt: string;
 }
+
+export interface B2BBusiness {
+  id: string;
+  businessName: string;
+  gstNumber?: string;
+  businessAddress: string;
+  contactPerson?: string;
+  mobileNumber?: string;
+  email?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface StockTransaction {
+  id: string;
+  challanId: string;
+  challanNumber: string;
+  challanType: 'b2b' | 'lead' | string;
+  productId: string;
+  productName: string;
+  quantityDeducted: number;
+  timestamp: string;
+}
+
 
 export interface ShadowAnalysisRecord {
   id: string;
@@ -282,3 +320,32 @@ export interface DeletionRequest {
   reviewedAt?: string;
   metadata?: Record<string, any>;
 }
+
+export interface PackageItem {
+  productId: string;
+  name: string;
+  category: 'solar_panel' | 'inverter' | 'battery' | 'structure' | 'other' | 'bom_item' | string;
+  bomCategory?: string;
+  unit?: string;
+  brand?: string;
+  rate: number;
+  qty: number;
+  description?: string;
+}
+
+export interface Package {
+  id: string;
+  name: string;
+  code?: string;
+  description?: string;
+  status: 'active' | 'inactive';
+  commercialItems: PackageItem[];
+  bomItems: PackageItem[];
+  calculatedCommercialTotal: number;
+  calculatedBomTotal: number;
+  calculatedCombinedTotal: number;
+  finalPrice: number;
+  createdAt: string;
+  updatedAt: string;
+}
+

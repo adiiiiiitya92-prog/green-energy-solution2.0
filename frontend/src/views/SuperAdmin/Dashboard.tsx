@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { db } from '../../services/db';
 import { leadService } from '../../services/leadService';
-import { quotationService } from '../../services/quotationService';
+import { quotationService, getQuotationTotalAmount } from '../../services/quotationService';
 import { orderService } from '../../services/orderService';
 import { visitService } from '../../services/visitService';
 import { employeeService } from '../../services/employeeService';
@@ -106,7 +106,7 @@ export const Dashboard: React.FC = () => {
   };
 
   // 2. Revenue calculation with multi-installment support
-  const getQVal = (q: Quotation) => q.grandTotal || q.total || q.subtotal || 0;
+  const getQVal = (q: Quotation) => getQuotationTotalAmount(q);
   const totalQuotedValue = quotations.reduce((sum, q) => sum + getQVal(q), 0);
   const totalConfirmedValue = confirmations.reduce((sum, c) => sum + (c.subtotal || 0), 0);
   const totalPaymentsCollected = confirmations.reduce((sum, c) => {

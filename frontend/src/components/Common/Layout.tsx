@@ -16,6 +16,7 @@ import {
   Menu,
   X,
   Truck,
+  Building2,
   LogOut,
   Sun,
   Package,
@@ -96,6 +97,12 @@ export const Layout: React.FC<LayoutProps> = ({ children }) => {
       path: '/challans',
       roles: ['super_admin', 'admin', 'inventory_manager'],
       icon: Truck
+    },
+    {
+      name: 'B2B Businesses',
+      path: '/b2b-businesses',
+      roles: ['super_admin', 'admin', 'inventory_manager'],
+      icon: Building2
     },
     {
       name: 'Field Visits',

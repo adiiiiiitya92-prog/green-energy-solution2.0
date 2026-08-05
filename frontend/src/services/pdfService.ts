@@ -1213,10 +1213,12 @@ export const pdfService = {
     doc.text('SOLAR POWER SYSTEMS • MATERIAL DISPATCH NOTE', 14, 28);
 
     // Document Header Right Side (Clean Box)
+    const isB2B = ch.type === 'b2b';
+    const headerTitle = isB2B ? 'B2B DELIVERY CHALLAN' : 'DELIVERY CHALLAN';
     doc.setTextColor(slateDark[0], slateDark[1], slateDark[2]);
     doc.setFont('helvetica', 'bold');
     doc.setFontSize(14);
-    doc.text('DELIVERY CHALLAN', 196, 14, { align: 'right' });
+    doc.text(headerTitle, 196, 14, { align: 'right' });
 
     doc.setFontSize(9);
     doc.setFont('helvetica', 'bold');
@@ -1238,7 +1240,7 @@ export const pdfService = {
     // ===================================
     const sec1Y = 36;
 
-    // Box 1: Deliver To (Customer)
+    // Box 1: Deliver To (Customer / Business)
     doc.setFillColor(248, 250, 252);
     doc.roundedRect(14, sec1Y, 90, 32, 2, 2, 'F');
     doc.setDrawColor(226, 232, 240);
@@ -1247,20 +1249,46 @@ export const pdfService = {
     doc.setTextColor(slateDark[0], slateDark[1], slateDark[2]);
     doc.setFont('helvetica', 'bold');
     doc.setFontSize(9);
-    doc.text('DELIVER TO (CUSTOMER DETAILS)', 18, sec1Y + 6);
 
-    doc.setDrawColor(203, 213, 225);
-    doc.line(18, sec1Y + 8, 98, sec1Y + 8);
+    if (isB2B) {
+      doc.text('DELIVER TO (BUSINESS DETAILS)', 18, sec1Y + 6);
+      doc.setDrawColor(203, 213, 225);
+      doc.line(18, sec1Y + 8, 98, sec1Y + 8);
 
-    doc.setFont('helvetica', 'bold');
-    doc.setFontSize(8.5);
-    doc.text(`Client Name: ${ch.leadName}`, 18, sec1Y + 14);
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(8.5);
+      const bName = ch.businessName || ch.leadName || 'N/A';
+      doc.text(`Business: ${bName.length > 28 ? bName.substring(0, 25) + '...' : bName}`, 18, sec1Y + 13.5);
 
-    doc.setFont('helvetica', 'normal');
-    doc.setFontSize(8);
-    doc.setTextColor(slateGray[0], slateGray[1], slateGray[2]);
-    doc.text(`Project Ref ID: ${ch.leadId}`, 18, sec1Y + 19.5);
-    doc.text(`Destination: Client Site Address`, 18, sec1Y + 25);
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(7.5);
+      doc.setTextColor(slateGray[0], slateGray[1], slateGray[2]);
+      if (ch.gstNumber) {
+        doc.text(`GSTIN: ${ch.gstNumber}`, 18, sec1Y + 18);
+      }
+      const addr = ch.businessAddress || 'Client Site Address';
+      const truncAddr = addr.length > 40 ? addr.substring(0, 37) + '...' : addr;
+      doc.text(`Address: ${truncAddr}`, 18, sec1Y + 22);
+
+      const contactStr = [ch.contactPerson, ch.mobileNumber].filter(Boolean).join(' | ');
+      if (contactStr) {
+        doc.text(`Contact: ${contactStr}`, 18, sec1Y + 26);
+      }
+    } else {
+      doc.text('DELIVER TO (CUSTOMER DETAILS)', 18, sec1Y + 6);
+      doc.setDrawColor(203, 213, 225);
+      doc.line(18, sec1Y + 8, 98, sec1Y + 8);
+
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(8.5);
+      doc.text(`Client Name: ${ch.leadName}`, 18, sec1Y + 14);
+
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(8);
+      doc.setTextColor(slateGray[0], slateGray[1], slateGray[2]);
+      doc.text(`Project Ref ID: ${ch.leadId || 'N/A'}`, 18, sec1Y + 19.5);
+      doc.text(`Destination: Client Site Address`, 18, sec1Y + 25);
+    }
 
     // Box 2: Transport & Vehicle Info
     doc.setFillColor(248, 250, 252);

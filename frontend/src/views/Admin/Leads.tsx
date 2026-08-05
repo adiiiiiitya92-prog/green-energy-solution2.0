@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { useAuthStore } from '../../store/authStore';
 import { leadService } from '../../services/leadService';
-import { quotationService, getCleanWhatsAppPhone } from '../../services/quotationService';
+import { quotationService, getCleanWhatsAppPhone, getQuotationTotalAmount } from '../../services/quotationService';
 import { shareQuotationViaWhatsapp } from '../../services/quotationShareService';
 import { orderService } from '../../services/orderService';
 import { employeeService } from '../../services/employeeService';
@@ -305,7 +305,7 @@ export const Leads: React.FC = () => {
         const quotes = await quotationService.getQuotationsByLeadId(l.id);
         const mainQuote = Array.isArray(quotes) && quotes.length > 0 ? quotes[0] : undefined;
 
-        const quoteTotal = mainQuote ? (mainQuote.grandTotal || mainQuote.subtotal || 0) : 0;
+        const quoteTotal = mainQuote ? getQuotationTotalAmount(mainQuote) : 0;
         const ocSubtotal = oc ? (oc.subtotal || (Array.isArray(oc.itemsConfirmed) ? oc.itemsConfirmed.reduce((s, i) => s + (i.amount || 0), 0) : 0) || oc.advanceAmount || 0) : 0;
 
         totalValue = quoteTotal > 0 ? quoteTotal : ocSubtotal;
@@ -555,7 +555,7 @@ export const Leads: React.FC = () => {
     if (quotations.length > 0) {
       const q = quotations[0];
       setBookingItems(q.items || []);
-      const latestQuoteTotal = q.grandTotal || q.subtotal || 0;
+      const latestQuoteTotal = getQuotationTotalAmount(q);
 
       if (oc && latestQuoteTotal > 0 && oc.subtotal !== latestQuoteTotal) {
         oc.subtotal = latestQuoteTotal;

@@ -3,12 +3,13 @@ import { leadService } from '../../services/leadService';
 import { quotationService, getCleanWhatsAppPhone, sortAndFormatBomItems, DEFAULT_BOM_ITEMS } from '../../services/quotationService';
 import { shareQuotationViaWhatsapp } from '../../services/quotationShareService';
 import { productService } from '../../services/productService';
+import { packageService } from '../../services/packageService';
 import { pdfService, createNewQuotationProposalHtml, printQuotationHTML } from '../../services/pdfService';
 import { uploadImageToFirebase, uploadPdfToFirebase } from '../../services/firebase';
 import { getCachedPdfBlob, setCachedPdfBlob, ensurePdfBlobForQuotation } from '../../services/pdfCacheService';
 import { useAuthStore } from '../../store/authStore';
 import { employeeService } from '../../services/employeeService';
-import type { Lead, Quotation, QuotationItem, Product, BomItem, Profile } from '../../types';
+import type { Lead, Quotation, QuotationItem, Product, BomItem, Profile, Package as PackageRecord } from '../../types';
 import {
   FileText,
   Plus,
@@ -31,6 +32,7 @@ import {
   Square,
   Search,
   Package,
+  Boxes,
   ChevronDown,
   ChevronUp,
   Printer
@@ -180,6 +182,90 @@ export const QuotationDocument: React.FC<{
   const [multiBomSelectedMap, setMultiBomSelectedMap] = useState<Record<string, { selected: boolean; qty: number; category: string }>>({});
   const [multiBomCategoryFilter, setMultiBomCategoryFilter] = useState<string>('all');
   const [multiBomSearchTerm, setMultiBomSearchTerm] = useState<string>('');
+
+  // Dedicated Package Selection Modal State
+  const [isPackageSelectModalOpen, setIsPackageSelectModalOpen] = useState(false);
+  const [availablePackages, setAvailablePackages] = useState<PackageRecord[]>([]);
+  const [packageSearchTerm, setPackageSearchTerm] = useState('');
+
+  const handleOpenPackageModal = async () => {
+    try {
+      const list = await packageService.getPackages();
+      setAvailablePackages(list.filter(p => p.status === 'active'));
+    } catch (err) {
+      console.error("Error loading active packages:", err);
+    }
+    setIsPackageSelectModalOpen(true);
+  };
+
+  const handleSelectPackageIntoQuotation = (pkg: PackageRecord) => {
+    let commAddedCount = 0;
+    let bomAddedCount = 0;
+
+    const targetPrice = pkg.finalPrice !== undefined && pkg.finalPrice >= 0
+      ? Number(pkg.finalPrice)
+      : Number(pkg.calculatedCombinedTotal || 0);
+
+    if (pkg.commercialItems && pkg.commercialItems.length > 0) {
+      const rawSum = pkg.commercialItems.reduce((acc, item) => acc + ((Number(item.qty) || 1) * (Number(item.rate) || 0)), 0);
+
+      const newCommercialItems: QuotationItem[] = pkg.commercialItems.map(cItem => {
+        const itemQty = Number(cItem.qty) || 1;
+        let itemRate = Number(cItem.rate) || 0;
+
+        if (targetPrice > 0) {
+          if (rawSum > 0) {
+            // Scale rate proportionally based on final package price vs raw sum
+            itemRate = Math.round((itemRate * targetPrice) / rawSum);
+          } else {
+            // If raw item rates were zero, distribute target package price evenly among commercial items
+            itemRate = Math.round(targetPrice / pkg.commercialItems.length / itemQty);
+          }
+        }
+
+        return {
+          id: 'qitem_' + Math.random().toString(36).substring(2, 9),
+          name: cItem.name,
+          qty: itemQty,
+          rate: itemRate,
+          amount: itemQty * itemRate
+        };
+      });
+
+      setItems(prev => [...prev, ...newCommercialItems]);
+      commAddedCount = newCommercialItems.length;
+    } else if (targetPrice > 0) {
+      // If package has no commercial items, but has a final package price, create a commercial line item for the Package
+      const newCommercialItem: QuotationItem = {
+        id: 'qitem_' + Math.random().toString(36).substring(2, 9),
+        name: pkg.name,
+        qty: 1,
+        rate: targetPrice,
+        amount: targetPrice
+      };
+      setItems(prev => [...prev, newCommercialItem]);
+      commAddedCount = 1;
+    }
+
+    if (pkg.bomItems && pkg.bomItems.length > 0) {
+      const newBomItems: BomItem[] = pkg.bomItems.map((bItem, idx) => ({
+        srNo: bomItems.length + idx + 1,
+        itemName: bItem.name,
+        qty: Number(bItem.qty) || 1,
+        unit: bItem.unit || 'Nos',
+        brand: bItem.brand || '',
+        category: bItem.bomCategory || 'Other Accessories',
+        description: bItem.description || ''
+      }));
+      setBomItems(prev => sortAndFormatBomItems([...prev, ...newBomItems]));
+      setIsBomSectionOpen(true);
+      bomAddedCount = newBomItems.length;
+    }
+
+    setOpenSections(prev => ({ ...prev, items: true, bom: true }));
+    setIsPackageSelectModalOpen(false);
+    alert(`✅ Package "${pkg.name}" loaded into quotation successfully!\n• Package Price applied: ₹${targetPrice.toLocaleString('en-IN')}\n• ${commAddedCount} Commercial Item(s) inserted\n• ${bomAddedCount} BOM Item(s) inserted`);
+  };
 
   // Bill of Materials (BOM) Customization State (Default Blank)
   const [bomItems, setBomItems] = useState<BomItem[]>(
@@ -628,7 +714,8 @@ export const QuotationDocument: React.FC<{
   const cgstAmount = Math.round(taxAmount / 2);
   const sgstAmount = taxAmount - cgstAmount;
   const subsidyVal = Number(subsidyAmount) || 0;
-  const grandTotal = Math.max(0, (subtotal + taxAmount) - subsidyVal);
+  const grandTotal = Math.max(0, subtotal + taxAmount); // Total Proposal Value (Subtotal + Tax)
+  const netPayable = Math.max(0, grandTotal - subsidyVal); // Net Customer Payable after Subsidy Credit
 
   // Handle GST Preset change
   const handleGstPresetChange = (preset: string) => {
@@ -706,6 +793,7 @@ export const QuotationDocument: React.FC<{
         bomItems,
         subtotal,
         grandTotal,
+        netPayable,
         followUpDate: latestLead?.nextFollowUpDate || selectedLead?.nextFollowUpDate || readOnlyQuotation?.followUpDate || '',
         consumerName: consumerName || selectedLead?.name || 'Valued Customer',
         consumerMobile: consumerMobile || selectedLead?.phoneNumber || '',
@@ -1716,6 +1804,16 @@ export const QuotationDocument: React.FC<{
                       </button>
                     )}
 
+                    {/* Select Package Shortcut Button */}
+                    <button
+                      type="button"
+                      onClick={handleOpenPackageModal}
+                      className="w-full sm:w-auto px-3 py-2 bg-indigo-600 hover:bg-indigo-700 active:bg-indigo-800 text-white font-extrabold text-xs rounded-xl shadow-xs flex items-center justify-center gap-2 transition-all cursor-pointer"
+                    >
+                      <Boxes className="w-4 h-4 text-indigo-200" />
+                      <span>📦 Select Package</span>
+                    </button>
+
                     {/* Multi-Select Products Button */}
                     <button
                       type="button"
@@ -1908,7 +2006,7 @@ export const QuotationDocument: React.FC<{
                   </div>
                   <div className="flex justify-between text-slate-300">
                     <span>Subtotal + Tax:</span>
-                    <span className="font-bold">₹{(subtotal + taxAmount).toLocaleString('en-IN')}</span>
+                    <span className="font-bold">₹{grandTotal.toLocaleString('en-IN')}</span>
                   </div>
                   <div className="flex justify-between text-amber-300">
                     <span>Govt Subsidy Credit:</span>
@@ -1916,7 +2014,7 @@ export const QuotationDocument: React.FC<{
                   </div>
                   <div className="flex justify-between pt-2 border-t border-slate-800 text-sm font-black">
                     <span className="text-emerald-400">Net Customer Payable:</span>
-                    <span className="text-emerald-400">₹{grandTotal > 0 ? grandTotal.toLocaleString('en-IN') : 0}</span>
+                    <span className="text-emerald-400">₹{netPayable > 0 ? netPayable.toLocaleString('en-IN') : 0}</span>
                   </div>
                 </div>
               </div>
@@ -2531,6 +2629,117 @@ export const QuotationDocument: React.FC<{
           </div>
         </div>
       )}
+
+      {/* MODAL: Select Pre-Built Package for Quotation */}
+      {isPackageSelectModalOpen && (
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl max-w-2xl w-full max-h-[90vh] flex flex-col shadow-2xl overflow-hidden animate-in zoom-in-95 duration-200">
+            {/* Modal Header */}
+            <div className="p-5 bg-gradient-to-r from-indigo-900 via-slate-900 to-indigo-950 text-white flex justify-between items-center">
+              <div className="flex items-center space-x-3">
+                <div className="p-2 bg-indigo-500/20 rounded-xl border border-indigo-400/30 text-indigo-300">
+                  <Boxes className="w-6 h-6" />
+                </div>
+                <div>
+                  <h3 className="font-black text-base text-white">Select Saved Package</h3>
+                  <p className="text-xs text-indigo-200">Populate both Commercial Products and BOM items into this quotation with one click.</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsPackageSelectModalOpen(false)}
+                className="p-2 bg-white/10 hover:bg-white/20 text-white rounded-xl cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Search Input */}
+            <div className="p-4 bg-slate-50 border-b border-slate-200">
+              <div className="relative">
+                <Search className="w-4 h-4 text-slate-400 absolute left-3 top-3" />
+                <input
+                  type="text"
+                  placeholder="Search package by name or code..."
+                  value={packageSearchTerm}
+                  onChange={e => setPackageSearchTerm(e.target.value)}
+                  className="w-full pl-9 pr-3 py-2 text-xs font-semibold bg-white border border-slate-300 rounded-xl focus:outline-none focus:border-indigo-500"
+                />
+              </div>
+            </div>
+
+            {/* Packages List */}
+            <div className="p-5 overflow-y-auto flex-1 space-y-3">
+              {availablePackages
+                .filter(pkg => {
+                  if (!packageSearchTerm.trim()) return true;
+                  const q = packageSearchTerm.toLowerCase();
+                  return (
+                    pkg.name.toLowerCase().includes(q) ||
+                    (pkg.code && pkg.code.toLowerCase().includes(q)) ||
+                    (pkg.description && pkg.description.toLowerCase().includes(q))
+                  );
+                })
+                .map(pkg => {
+                  const commCount = pkg.commercialItems?.length || 0;
+                  const bomCount = pkg.bomItems?.length || 0;
+
+                  return (
+                    <div
+                      key={pkg.id}
+                      className="bg-white p-4 rounded-2xl border border-slate-200 hover:border-indigo-500 hover:shadow-md transition-all flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4"
+                    >
+                      <div className="space-y-1.5 flex-1">
+                        <div className="flex items-center space-x-2">
+                          <h4 className="font-extrabold text-slate-900 text-sm">{pkg.name}</h4>
+                          {pkg.code && (
+                            <span className="text-[10px] font-mono font-bold bg-indigo-50 text-indigo-700 px-2 py-0.5 rounded">
+                              {pkg.code}
+                            </span>
+                          )}
+                        </div>
+                        {pkg.description && (
+                          <p className="text-xs text-slate-500 line-clamp-1">{pkg.description}</p>
+                        )}
+                        <div className="flex items-center space-x-3 text-xs font-semibold text-slate-600">
+                          <span className="flex items-center gap-1 text-emerald-700">
+                            <Package className="w-3.5 h-3.5" /> {commCount} Commercial Products
+                          </span>
+                          <span className="text-slate-300">•</span>
+                          <span className="flex items-center gap-1 text-purple-700">
+                            <Layers className="w-3.5 h-3.5" /> {bomCount} BOM Items
+                          </span>
+                        </div>
+                      </div>
+
+                      <div className="flex sm:flex-col items-center sm:items-end justify-between w-full sm:w-auto gap-2 border-t sm:border-t-0 pt-2 sm:pt-0 shrink-0">
+                        <div className="text-left sm:text-right">
+                          <span className="text-[9px] uppercase font-bold text-slate-400 block">Package Price</span>
+                          <span className="text-sm font-black text-emerald-700">₹{pkg.finalPrice.toLocaleString('en-IN')}</span>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => handleSelectPackageIntoQuotation(pkg)}
+                          className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-extrabold text-xs rounded-xl shadow-xs cursor-pointer flex items-center gap-1.5 transition-all"
+                        >
+                          <Boxes className="w-3.5 h-3.5" />
+                          <span>Insert Package</span>
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+
+              {availablePackages.length === 0 && (
+                <div className="py-12 text-center text-slate-400 font-bold text-xs bg-slate-50 border-2 border-dashed border-slate-200 rounded-2xl">
+                  No active packages found in catalog. Create system packages in Product Catalog first.
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
       {pdfProgressMsg && (
         <div className="fixed bottom-6 right-6 z-[9999] bg-slate-900/95 text-white backdrop-blur-md px-5 py-3.5 rounded-2xl shadow-2xl border border-emerald-500/40 flex items-center gap-3 animate-fade-in text-xs font-bold">
           <div className="w-5 h-5 border-2 border-emerald-400 border-t-transparent rounded-full animate-spin shrink-0" />

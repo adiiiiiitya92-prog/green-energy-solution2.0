@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import type { Product, ProductUnit } from '../../types';
 import { productService } from '../../services/productService';
 import { useAuthStore } from '../../store/authStore';
+import { PackageManager } from '../../components/Packages/PackageManager';
 import {
   Plus, Search, Trash2, Tag, Layers, Package, Filter, Pencil, Check, X,
   Barcode, RefreshCw, Clipboard, CheckCircle2, ChevronDown, ChevronUp, AlertCircle, Boxes, Calendar
@@ -108,7 +109,7 @@ const normalizeProductUnits = (p: Product): ProductUnit[] => {
 export const Products: React.FC = () => {
   const [products, setProducts] = useState<Product[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
-  const [activeTab, setActiveTab] = useState<'commercial' | 'bom'>('commercial');
+  const [activeTab, setActiveTab] = useState<'commercial' | 'bom' | 'packages'>('commercial');
   const [selectedBomCategoryFilter, setSelectedBomCategoryFilter] = useState<string>('all');
   const [showAddModal, setShowAddModal] = useState(false);
   const [showAddBomModal, setShowAddBomModal] = useState(false);
@@ -747,237 +748,245 @@ export const Products: React.FC = () => {
         </div>
       )}
 
-      {/* Catalog Tabs Switcher (Commercial vs BOM Catalog) */}
-      <div className="flex border-b border-slate-200 gap-2">
+      {/* Catalog Tabs Switcher (Commercial vs BOM Catalog vs Packages) */}
+      <div className="flex border-b border-slate-200 gap-2 overflow-x-auto">
         <button
           onClick={() => setActiveTab('commercial')}
-          className={`pb-3 px-4 text-xs font-black flex items-center gap-2 transition-all cursor-pointer border-b-2 ${
+          className={`pb-3 px-4 text-xs font-black flex items-center gap-2 transition-all cursor-pointer border-b-2 shrink-0 ${
             activeTab === 'commercial'
               ? 'border-emerald-600 text-emerald-700'
               : 'border-transparent text-slate-400 hover:text-slate-600'
           }`}
         >
           <Package className="w-4 h-4" />
-          <span>📦 Commercial Products ({commercialProducts.length})</span>
+          <span>Commercial Products ({commercialProducts.length})</span>
         </button>
 
         <button
           onClick={() => setActiveTab('bom')}
-          className={`pb-3 px-4 text-xs font-black flex items-center gap-2 transition-all cursor-pointer border-b-2 ${
+          className={`pb-3 px-4 text-xs font-black flex items-center gap-2 transition-all cursor-pointer border-b-2 shrink-0 ${
             activeTab === 'bom'
               ? 'border-purple-600 text-purple-700'
               : 'border-transparent text-slate-400 hover:text-slate-600'
           }`}
         >
           <Layers className="w-4 h-4" />
-          <span>📄 Bill of Materials (BOM) Catalog ({bomProducts.length})</span>
+          <span>Bill of Materials (BOM) Catalog ({bomProducts.length})</span>
+        </button>
+
+        <button
+          onClick={() => setActiveTab('packages')}
+          className={`pb-3 px-4 text-xs font-black flex items-center gap-2 transition-all cursor-pointer border-b-2 shrink-0 ${
+            activeTab === 'packages'
+              ? 'border-indigo-600 text-indigo-700'
+              : 'border-transparent text-slate-400 hover:text-slate-600'
+          }`}
+        >
+          <Boxes className="w-4 h-4" />
+          <span>Packages Builder</span>
         </button>
       </div>
 
-      {/* BOM Category Filter Sub-Bar (Visible in BOM tab) */}
-      {activeTab === 'bom' && (
-        <div className="flex items-center gap-2 overflow-x-auto pb-1 text-xs">
-          <span className="text-slate-400 font-bold flex items-center gap-1 shrink-0">
-            <Filter className="w-3.5 h-3.5" /> Filter Category:
-          </span>
-          <button
-            onClick={() => setSelectedBomCategoryFilter('all')}
-            className={`px-3 py-1 rounded-full font-bold text-[11px] transition-all cursor-pointer shrink-0 ${
-              selectedBomCategoryFilter === 'all'
-                ? 'bg-purple-600 text-white shadow-xs'
-                : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-            }`}
-          >
-            All BOM Categories ({bomProducts.length})
-          </button>
-          {bomCategoriesList.map(cat => {
-            const count = bomProducts.filter(p => p.bomCategory === cat).length;
-            if (count === 0) return null;
-            return (
+      {/* Packages Tab Content */}
+      {activeTab === 'packages' ? (
+        <PackageManager products={products} showToast={showToast} />
+      ) : (
+        <>
+          {/* BOM Category Filter Sub-Bar (Visible in BOM tab) */}
+          {activeTab === 'bom' && (
+            <div className="flex items-center gap-2 overflow-x-auto pb-1 text-xs">
+              <span className="text-slate-400 font-bold flex items-center gap-1 shrink-0">
+                <Filter className="w-3.5 h-3.5" /> Filter Category:
+              </span>
               <button
-                key={cat}
-                onClick={() => setSelectedBomCategoryFilter(cat)}
+                onClick={() => setSelectedBomCategoryFilter('all')}
                 className={`px-3 py-1 rounded-full font-bold text-[11px] transition-all cursor-pointer shrink-0 ${
-                  selectedBomCategoryFilter === cat
+                  selectedBomCategoryFilter === 'all'
                     ? 'bg-purple-600 text-white shadow-xs'
                     : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
                 }`}
               >
-                {cat} ({count})
+                All BOM Categories ({bomProducts.length})
               </button>
-            );
-          })}
-        </div>
-      )}
-
-      {/* Search Input */}
-      <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-xs flex items-center space-x-3">
-        <Search className="w-4 h-4 text-slate-400 shrink-0" />
-        <input
-          type="text"
-          placeholder={
-            activeTab === 'commercial'
-              ? "Search commercial products by name, brand, description, unit or category..."
-              : "Search BOM components by item name, brand, description, category or unit..."
-          }
-          value={searchTerm}
-          onChange={(e) => setSearchTerm(e.target.value)}
-          className="text-xs font-medium text-slate-800 focus:outline-none w-full bg-transparent"
-        />
-      </div>
-
-      {/* Low Stock Alert Banner (Commercial Products only) */}
-      {activeTab === 'commercial' && lowStockItems.length > 0 && (
-        <div className="bg-amber-50 border-l-4 border-amber-500 p-4 rounded-xl flex items-center justify-between shadow-xs">
-          <div className="flex items-center space-x-3">
-            <span className="text-lg">⚠️</span>
-            <div className="text-xs">
-              <p className="font-extrabold text-amber-800">Inventory Alert: {lowStockItems.length} items are running low in stock!</p>
-              <p className="text-amber-600 font-bold mt-0.5">Some components have fallen to or below their configured minimum alert threshold.</p>
+              {bomCategoriesList.map(cat => {
+                const count = bomProducts.filter(p => p.bomCategory === cat).length;
+                if (count === 0) return null;
+                return (
+                  <button
+                    key={cat}
+                    onClick={() => setSelectedBomCategoryFilter(cat)}
+                    className={`px-3 py-1 rounded-full font-bold text-[11px] transition-all cursor-pointer shrink-0 ${
+                      selectedBomCategoryFilter === cat
+                        ? 'bg-purple-600 text-white shadow-xs'
+                        : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                    }`}
+                  >
+                    {cat} ({count})
+                  </button>
+                );
+              })}
             </div>
+          )}
+
+          {/* Search Input */}
+          <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-xs flex items-center space-x-3">
+            <Search className="w-4 h-4 text-slate-400 shrink-0" />
+            <input
+              type="text"
+              placeholder={
+                activeTab === 'commercial'
+                  ? "Search commercial products by name, brand, description, unit or category..."
+                  : "Search BOM components by item name, brand, description, category or unit..."
+              }
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              className="text-xs font-medium text-slate-800 focus:outline-none w-full bg-transparent"
+            />
           </div>
-        </div>
-      )}
 
-      {/* Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-        {filteredProducts.map((p) => {
-          const unitsList = p.productUnits && p.productUnits.length > 0
-            ? p.productUnits
-            : (p.serialNumbers || []).map((sn, i) => ({ id: `u_${i}`, unitNumber: i + 1, serialNumber: sn, status: 'available' as const }));
-
-          const availableCount = unitsList.filter(u => u.status === 'available' || !u.status).length;
-          const soldCount = unitsList.filter(u => u.status && u.status !== 'available').length;
-          const totalUnits = unitsList.length || p.stockQuantity || 0;
-
-          return (
-            <div
-              key={p.id}
-              className={`bg-white border rounded-2xl p-5 hover:shadow-md transition-shadow relative flex flex-col justify-between min-h-[210px] ${
-                p.category === 'bom_item' ? 'border-purple-200/90 shadow-2xs' : 'border-slate-200'
-              }`}
-            >
-              <div>
-                <div className="flex justify-between items-start gap-2">
-                  <div className="flex flex-wrap gap-1 items-center">
-                    <span
-                      className={`inline-flex items-center px-2 py-0.5 rounded text-[9px] font-extrabold uppercase tracking-wider border ${
-                        p.category === 'bom_item'
-                          ? 'bg-purple-100 text-purple-900 border-purple-200'
-                          : 'bg-emerald-50 text-emerald-800 border-emerald-100'
-                      }`}
-                    >
-                      {getCategoryLabel(p.category, p.bomCategory)}
-                    </span>
-
-                    {p.brand && (
-                      <span className="inline-flex items-center px-2 py-0.5 rounded text-[9px] font-black bg-blue-50 text-blue-800 border border-blue-100 uppercase tracking-wider">
-                        🏷️ {p.brand}
-                      </span>
-                    )}
-
-                    <span className="inline-flex items-center px-2 py-0.5 rounded text-[9px] font-black bg-amber-50 text-amber-900 border border-amber-200 uppercase tracking-wider">
-                      📐 {p.unit || 'Nos'}
-                    </span>
-                  </div>
-
-                  <div className="flex items-center gap-1.5 shrink-0">
-                    {/* EDIT BUTTON */}
-                    <button
-                      onClick={() => handleOpenEditModal(p)}
-                      className="p-1 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors cursor-pointer"
-                      title="Edit Description & Specifications"
-                    >
-                      <Pencil className="w-4 h-4" />
-                    </button>
-
-                    {/* DELETE BUTTON */}
-                    <button
-                      onClick={() => handleDeleteProduct(p.id)}
-                      className="p-1 text-slate-300 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer"
-                      title="Remove from Catalog"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </button>
-                  </div>
-                </div>
-
-                <h4 className="text-sm font-bold text-slate-900 mt-2.5">{p.name}</h4>
-
-                {/* Description & Technical Specifications Box */}
-                {p.description ? (
-                  <div className="mt-2 bg-slate-50 border border-slate-100 p-2 rounded-xl text-xs text-slate-600 font-medium leading-relaxed">
-                    <span className="text-[10px] uppercase font-bold text-slate-400 block mb-0.5">Description & Specs:</span>
-                    <p className="whitespace-pre-line line-clamp-3">{p.description}</p>
-                  </div>
-                ) : (
-                  <button
-                    onClick={() => handleOpenEditModal(p)}
-                    className="mt-2 text-[11px] text-blue-600 hover:underline font-bold flex items-center gap-1 cursor-pointer"
-                  >
-                    <Pencil className="w-3 h-3" /> + Add description & specifications...
-                  </button>
-                )}
-              </div>
-
-              {/* Stock Level & Serial Numbers Control (Commercial Only) */}
-              {p.category !== 'bom_item' && (
-                <div className="mt-3 flex items-center justify-between text-[11px] font-bold border-t border-slate-100 pt-2 gap-2 flex-wrap">
-                  <div className="flex items-center gap-1.5">
-                    <span className="text-slate-400 font-semibold">Stock:</span>
-                    <span className={`px-2 py-0.5 rounded-full font-black text-[10px] ${availableCount <= p.minStockThreshold ? 'bg-orange-100 text-orange-700 border border-orange-200' : 'bg-slate-100 text-slate-700'}`}>
-                      {availableCount} {p.unit || 'units'}
-                    </span>
-                    {soldCount > 0 && (
-                      <span className="text-[9px] font-extrabold text-rose-600 bg-rose-50 px-1.5 py-0.5 rounded border border-rose-200/60">
-                        ({soldCount} Sold)
-                      </span>
-                    )}
-                  </div>
-
-                  <button
-                    onClick={() => handleOpenManageSerialsModal(p)}
-                    className="px-2.5 py-1 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 text-emerald-800 font-extrabold text-[10px] rounded-lg flex items-center gap-1.5 transition-colors cursor-pointer shadow-2xs"
-                    title="View, Search & Edit Individual Unit Serial Numbers"
-                  >
-                    <Barcode className="w-3.5 h-3.5 text-emerald-600" />
-                    <span>🔢 Serial Numbers ({totalUnits})</span>
-                  </button>
-                </div>
-              )}
-
-              {/* Price & Total Stock Value Rows */}
-              <div className="mt-3 pt-2.5 border-t border-slate-100 space-y-2 text-xs">
-                <div className="flex justify-between items-center">
-                  <span className="text-slate-400 font-semibold">Standard Rate:</span>
-                  <span className="text-sm font-extrabold text-slate-950">
-                    ₹{p.rate.toLocaleString('en-IN')}{' '}
-                    <span className="text-[10px] font-medium text-slate-400">/ {p.unit || 'Nos'}</span>
-                  </span>
-                </div>
-
-                <div className="flex justify-between items-center bg-slate-50/80 p-2 rounded-xl border border-slate-100">
-                  <span className="text-slate-500 font-bold text-[11px]">Total Stock Value:</span>
-                  <span className="text-xs font-black text-emerald-800 bg-emerald-50 px-2.5 py-0.5 rounded-lg border border-emerald-200/80 shadow-2xs">
-                    ₹{((p.rate || p.bomRate || 0) * availableCount).toLocaleString('en-IN')}
-                  </span>
+          {/* Low Stock Alert Banner (Commercial Products only) */}
+          {activeTab === 'commercial' && lowStockItems.length > 0 && (
+            <div className="bg-amber-50 border-l-4 border-amber-500 p-4 rounded-xl flex items-center justify-between shadow-xs">
+              <div className="flex items-center space-x-3">
+                <span className="text-lg">⚠️</span>
+                <div className="text-xs">
+                  <p className="font-extrabold text-amber-800">Inventory Alert: {lowStockItems.length} items are running low in stock!</p>
+                  <p className="text-amber-600 font-bold mt-0.5">Some components have fallen to or below their configured minimum alert threshold.</p>
                 </div>
               </div>
             </div>
-          );
-        })}
+          )}
 
-        {filteredProducts.length === 0 && (
-          <div className="col-span-full bg-slate-50 border-2 border-dashed border-slate-200 p-8 text-center rounded-xl">
-            <Tag className="w-8 h-8 text-slate-300 mx-auto mb-2" />
-            <p className="text-xs text-slate-400 font-bold">
-              {activeTab === 'commercial'
-                ? 'No commercial products found. Click "➕ Add Product" to create new ones.'
-                : 'No Bill of Materials (BOM) items found. Click "📄 Add Bill of Materials (BOM)" to add components like cables, earthing kits, or switches.'}
-            </p>
+          {/* Grid */}
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            {filteredProducts.map((p) => {
+              const unitsList = p.productUnits && p.productUnits.length > 0
+                ? p.productUnits
+                : (p.serialNumbers || []).map((sn, i) => ({ id: `u_${i}`, unitNumber: i + 1, serialNumber: sn, status: 'available' as const }));
+
+              const availableCount = unitsList.filter(u => u.status === 'available' || !u.status).length;
+              const soldCount = unitsList.filter(u => u.status && u.status !== 'available').length;
+              const totalUnits = unitsList.length || p.stockQuantity || 0;
+
+              return (
+                <div
+                  key={p.id}
+                  className={`bg-white border rounded-2xl p-5 hover:shadow-md transition-shadow relative flex flex-col justify-between min-h-[210px] ${
+                    p.category === 'bom_item' ? 'border-purple-200/90 shadow-2xs' : 'border-slate-200'
+                  }`}
+                >
+                  <div>
+                    <div className="flex justify-between items-start gap-2">
+                      <div className="flex flex-wrap gap-1 items-center">
+                        <span
+                          className={`inline-flex items-center px-2 py-0.5 rounded text-[9px] font-extrabold uppercase tracking-wider border ${
+                            p.category === 'bom_item'
+                              ? 'bg-purple-100 text-purple-900 border-purple-200'
+                              : 'bg-emerald-50 text-emerald-800 border-emerald-100'
+                          }`}
+                        >
+                          {getCategoryLabel(p.category, p.bomCategory)}
+                        </span>
+
+                        {p.brand && (
+                          <span className="inline-flex items-center px-2 py-0.5 rounded text-[9px] font-black bg-blue-50 text-blue-800 border border-blue-100 uppercase tracking-wider">
+                            🏷️ {p.brand}
+                          </span>
+                        )}
+
+                        <span className="inline-flex items-center px-2 py-0.5 rounded text-[9px] font-black bg-amber-50 text-amber-900 border border-amber-200 uppercase tracking-wider">
+                          📐 {p.unit || 'Nos'}
+                        </span>
+                      </div>
+
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        {/* EDIT BUTTON */}
+                        <button
+                          onClick={() => handleOpenEditModal(p)}
+                          className="p-1 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors cursor-pointer"
+                          title="Edit Description & Specifications"
+                        >
+                          <Pencil className="w-4 h-4" />
+                        </button>
+
+                        {/* DELETE BUTTON */}
+                        <button
+                          onClick={() => handleDeleteProduct(p.id)}
+                          className="p-1 text-slate-300 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer"
+                          title="Remove from Catalog"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
+                    </div>
+
+                    <h3 className="font-black text-slate-900 text-sm mt-3">{p.name}</h3>
+
+                    {p.description && (
+                      <p className="text-xs text-slate-500 mt-1 line-clamp-2">{p.description}</p>
+                    )}
+                  </div>
+
+                  <div className="mt-4 pt-3 border-t border-slate-100 space-y-2">
+                    {p.category !== 'bom_item' ? (
+                      <div className="flex justify-between items-center text-xs">
+                        <span className="text-slate-500 font-bold">Standard Price Rate:</span>
+                        <span className="font-extrabold text-slate-900 text-sm">₹{(p.rate || 0).toLocaleString('en-IN')}</span>
+                      </div>
+                    ) : (
+                      <div className="flex justify-between items-center text-xs">
+                        <span className="text-purple-700 font-bold">Category Component:</span>
+                        <span className="font-extrabold text-purple-900 text-xs bg-purple-50 px-2 py-0.5 rounded">
+                          {p.bomCategory || 'General'}
+                        </span>
+                      </div>
+                    )}
+
+                    <div className="flex justify-between items-center text-xs bg-slate-50 p-2.5 rounded-xl border border-slate-100">
+                      <div>
+                        <span className="text-[10px] text-slate-400 font-extrabold block uppercase tracking-wider">
+                          {p.category === 'bom_item' ? 'Standard Stock' : 'Inventory Units'}
+                        </span>
+                        <span className="font-black text-slate-800 text-xs">
+                          {availableCount} Available {soldCount > 0 ? `(${soldCount} Dispatched)` : ''}
+                        </span>
+                      </div>
+
+                      {p.category !== 'bom_item' && (
+                        <button
+                          onClick={() => handleOpenManageSerialsModal(p)}
+                          className="px-2.5 py-1 bg-blue-50 hover:bg-blue-100 text-blue-700 font-extrabold text-[10px] rounded-lg border border-blue-200 transition-colors flex items-center gap-1 cursor-pointer"
+                        >
+                          <Barcode className="w-3.5 h-3.5" />
+                          <span>Serials ({totalUnits})</span>
+                        </button>
+                      )}
+                    </div>
+
+                    <div className="flex justify-between items-center text-xs pt-1">
+                      <span className="text-slate-500 font-bold text-[11px]">Total Stock Value:</span>
+                      <span className="text-xs font-black text-emerald-800 bg-emerald-50 px-2.5 py-0.5 rounded-lg border border-emerald-200/80 shadow-2xs">
+                        ₹{((p.rate || p.bomRate || 0) * availableCount).toLocaleString('en-IN')}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+
+            {filteredProducts.length === 0 && (
+              <div className="col-span-full bg-slate-50 border-2 border-dashed border-slate-200 p-8 text-center rounded-xl">
+                <Tag className="w-8 h-8 text-slate-300 mx-auto mb-2" />
+                <p className="text-xs text-slate-400 font-bold">
+                  {activeTab === 'commercial'
+                    ? 'No commercial products found. Click "➕ Add Product" to create new ones.'
+                    : 'No Bill of Materials (BOM) items found. Click "📄 Add Bill of Materials (BOM)" to add components like cables, earthing kits, or switches.'}
+                </p>
+              </div>
+            )}
           </div>
-        )}
-      </div>
+        </>
+      )}
 
       {/* MODAL 1: Add Commercial Product Modal */}
       {showAddModal && (

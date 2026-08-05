@@ -1,6 +1,8 @@
 import { db, markRecordAsDeleted, getDeletedRecordIdsSet } from './db';
-import type { Challan } from '../types';
+import type { Challan, Product } from '../types';
 import { saveRecordToFirestore, fetchCollectionFromFirestore } from './firebase';
+import { b2bBusinessService } from './b2bBusinessService';
+import { stockTransactionService } from './stockTransactionService';
 
 export const challanService = {
   async getChallans(): Promise<Challan[]> {
@@ -35,16 +37,46 @@ export const challanService = {
   },
 
   async createChallan(cData: Omit<Challan, 'id' | 'createdAt' | 'challanNumber'>): Promise<string> {
+    // 1. Stock Check Validation
+    for (const item of cData.items) {
+      const product = await db.products.get(item.productId);
+      const available = product ? product.stockQuantity : 0;
+      if (!product || available < item.qty) {
+        throw new Error("Insufficient stock available.");
+      }
+    }
+
+    // 2. Auto-save B2B Business info if B2B Challan
+    let b2bBusinessId = cData.b2bBusinessId;
+    if (cData.type === 'b2b' && cData.businessName && cData.businessAddress) {
+      try {
+        const savedBusiness = await b2bBusinessService.saveOrUpdateBusiness({
+          id: b2bBusinessId,
+          businessName: cData.businessName,
+          gstNumber: cData.gstNumber,
+          businessAddress: cData.businessAddress,
+          contactPerson: cData.contactPerson,
+          mobileNumber: cData.mobileNumber,
+          email: cData.email
+        });
+        b2bBusinessId = savedBusiness.id;
+      } catch (err) {
+        console.warn("B2B Business auto-save note:", err);
+      }
+    }
+
     const id = 'ch_' + Math.random().toString(36).substring(2, 11);
     const dateCode = new Date().getFullYear().toString();
     const randNum = Math.floor(1000 + Math.random() * 9000);
     const challanNumber = `CH-${dateCode}-${randNum}`;
+    const createdAt = new Date().toISOString();
 
     const newChallan: Challan = {
       ...cData,
       id,
+      b2bBusinessId,
       challanNumber,
-      createdAt: new Date().toISOString()
+      createdAt
     };
 
     await db.transaction('rw', [db.challans, db.products], async () => {
@@ -74,6 +106,20 @@ export const challanService = {
       }
     });
 
+    // 3. Log Stock Transaction History
+    const challanTypeLabel = cData.type === 'b2b' ? 'B2B' : 'Lead';
+    for (const item of cData.items) {
+      await stockTransactionService.addTransaction({
+        challanId: id,
+        challanNumber,
+        challanType: challanTypeLabel,
+        productId: item.productId,
+        productName: item.productName,
+        quantityDeducted: item.qty,
+        timestamp: createdAt
+      });
+    }
+
     saveRecordToFirestore('challans', id, newChallan);
     return id;
   },
@@ -86,6 +132,36 @@ export const challanService = {
     const oldChallan = await db.challans.get(id);
     if (!oldChallan) {
       throw new Error("Challan not found");
+    }
+
+    // Stock check validation for edit
+    for (const newItem of updatedChallan.items) {
+      const targetProduct = await db.products.get(newItem.productId);
+      const oldItem = oldChallan.items.find(item => item.productId === newItem.productId);
+      const originalQty = oldItem ? oldItem.qty : 0;
+      const availableBuffer = (targetProduct ? targetProduct.stockQuantity : 0) + originalQty;
+
+      if (!targetProduct || availableBuffer < newItem.qty) {
+        throw new Error("Insufficient stock available.");
+      }
+    }
+
+    // Auto-update B2B Business info if edited
+    if (updatedChallan.type === 'b2b' && updatedChallan.businessName && updatedChallan.businessAddress) {
+      try {
+        const savedBusiness = await b2bBusinessService.saveOrUpdateBusiness({
+          id: updatedChallan.b2bBusinessId,
+          businessName: updatedChallan.businessName,
+          gstNumber: updatedChallan.gstNumber,
+          businessAddress: updatedChallan.businessAddress,
+          contactPerson: updatedChallan.contactPerson,
+          mobileNumber: updatedChallan.mobileNumber,
+          email: updatedChallan.email
+        });
+        updatedChallan.b2bBusinessId = savedBusiness.id;
+      } catch (err) {
+        console.warn("B2B Business update note:", err);
+      }
     }
 
     await db.transaction('rw', [db.challans, db.products], async () => {
@@ -133,6 +209,21 @@ export const challanService = {
 
       await db.challans.put(updatedChallan);
     });
+
+    // Log Stock Transactions for updated challan items
+    const challanTypeLabel = updatedChallan.type === 'b2b' ? 'B2B' : 'Lead';
+    const now = new Date().toISOString();
+    for (const item of updatedChallan.items) {
+      await stockTransactionService.addTransaction({
+        challanId: updatedChallan.id,
+        challanNumber: updatedChallan.challanNumber,
+        challanType: challanTypeLabel,
+        productId: item.productId,
+        productName: item.productName,
+        quantityDeducted: item.qty,
+        timestamp: now
+      });
+    }
 
     saveRecordToFirestore('challans', id, updatedChallan);
   },

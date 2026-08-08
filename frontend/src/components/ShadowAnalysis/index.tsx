@@ -21,7 +21,8 @@ import type { ShadingConfig } from '../../services/shadowAnalysisService';
 import { latLngToMeters, metersToLatLng } from '../../services/geometryUtils';
 
 import { shadowAnalysisHistoryService } from '../../services/shadowAnalysisHistoryService';
-import { leadService } from '../../services/leadService';
+import { leadService, filterLeadsForUser } from '../../services/leadService';
+import { useAuthStore } from '../../store/authStore';
 import type { ShadowAnalysisRecord, Lead } from '../../types';
 import dayjs from 'dayjs';
 
@@ -109,8 +110,9 @@ export const ShadowAnalysisContainer: React.FC = () => {
     try {
       const reports = await shadowAnalysisHistoryService.getReports();
       setSavedReports(reports);
-      const leads = await leadService.getLeads();
-      setCrmLeads(leads);
+      const { currentRole, currentUser } = useAuthStore.getState();
+      const rawLeads = await leadService.getLeads();
+      setCrmLeads(filterLeadsForUser(rawLeads, currentUser, currentRole));
     } catch (e) {
       console.warn("Error loading shadow history:", e);
     }

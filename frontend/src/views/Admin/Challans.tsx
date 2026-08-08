@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { useLocation } from 'react-router-dom';
 import type { Challan, Lead, Profile, Product, ChallanItem, B2BBusiness, StockTransaction } from '../../types';
 import { challanService } from '../../services/challanService';
-import { leadService } from '../../services/leadService';
+import { leadService, filterLeadsForUser } from '../../services/leadService';
 import { employeeService } from '../../services/employeeService';
 import { productService } from '../../services/productService';
 import { b2bBusinessService } from '../../services/b2bBusinessService';
@@ -90,10 +90,12 @@ export const Challans: React.FC = () => {
   const [stockTxnSearch, setStockTxnSearch] = useState('');
 
   const loadData = async () => {
+    const { currentRole, currentUser } = useAuthStore.getState();
     const cList = await challanService.getChallans();
     setChallans(cList);
 
-    const lList = await leadService.getLeads();
+    const rawLeads = await leadService.getLeads();
+    const lList = filterLeadsForUser(rawLeads, currentUser, currentRole);
     setLeads(lList);
 
     const eList = await employeeService.getEmployees();

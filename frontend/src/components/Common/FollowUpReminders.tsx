@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
-import { leadService } from '../../services/leadService';
+import { leadService, filterLeadsForUser } from '../../services/leadService';
 import { quotationService, getCleanWhatsAppPhone } from '../../services/quotationService';
+import { useAuthStore } from '../../store/authStore';
 import type { Lead } from '../../types';
 import {
   Bell,
@@ -61,10 +62,12 @@ export const FollowUpReminders: React.FC<{
   const fetchFollowUps = async () => {
     setLoading(true);
     try {
-      const [leads, quotations] = await Promise.all([
+      const { currentRole, currentUser } = useAuthStore.getState();
+      const [rawLeads, quotations] = await Promise.all([
         leadService.getLeads(),
         quotationService.getAllQuotations()
       ]);
+      const leads = filterLeadsForUser(rawLeads, currentUser, currentRole);
 
       const leadMap = new Map<string, Lead>();
       leads.forEach(l => leadMap.set(l.id, l));

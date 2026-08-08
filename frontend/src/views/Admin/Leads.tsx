@@ -1,6 +1,7 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { useAuthStore } from '../../store/authStore';
-import { leadService } from '../../services/leadService';
+import { leadService, filterLeadsForUser } from '../../services/leadService';
+import { challanService } from '../../services/challanService';
 import { quotationService, getCleanWhatsAppPhone, getQuotationTotalAmount } from '../../services/quotationService';
 import { shareQuotationViaWhatsapp } from '../../services/quotationShareService';
 import { orderService } from '../../services/orderService';
@@ -24,7 +25,7 @@ import {
   Search, Plus, Camera, CheckSquare, UploadCloud,
   ChevronLeft, Trash2, Send, Star, FileCheck, CheckCircle, Compass, X, Eye, Download,
   CreditCard, Wallet, Edit3, MessageSquare, Bell, Flame, FileText,
-  BarChart3, FileSpreadsheet, Printer, Calendar, RotateCcw, Sparkles
+  BarChart3, FileSpreadsheet, Printer, Calendar, RotateCcw, Sparkles, Truck
 } from 'lucide-react';
 import dayjs from 'dayjs';
 
@@ -59,6 +60,8 @@ export const Leads: React.FC = () => {
   const [statusFilter, setStatusFilter] = useState('');
   const [employeeFilter, setEmployeeFilter] = useState('');
   const [hotFilter, setHotFilter] = useState<'all' | 'hot' | 'normal'>('all');
+  const [dispatchFilter, setDispatchFilter] = useState<'all' | 'dispatched' | 'not_dispatched'>('all');
+  const [dispatchedLeadIds, setDispatchedLeadIds] = useState<Set<string>>(new Set());
 
   // Selected Lead (Details View) — restore from sessionStorage on refresh
   const [selectedLead, setSelectedLead] = useState<Lead | null>(null);
@@ -444,17 +447,20 @@ export const Leads: React.FC = () => {
   };
 
   const loadData = async () => {
-    let list = await leadService.getLeads();
-    if (currentRole === 'field_employee' && currentUser) {
-      list = list.filter(l => 
-        l.assignedSalesPersonId === currentUser.id || 
-        l.assignedAdminId === currentUser.id || 
-        l.assignedEmployeeId === currentUser.id ||
-        l.createdBy === currentUser.id ||
-        l.createdBy === currentUser.fullName
-      );
+    const list = await leadService.getLeads();
+    const filteredList = filterLeadsForUser(list, currentUser, currentRole);
+    setLeads(filteredList);
+
+    try {
+      const challans = await challanService.getChallans();
+      const dispatchedIds = new Set<string>();
+      challans.forEach(c => {
+        if (c.leadId) dispatchedIds.add(c.leadId);
+      });
+      setDispatchedLeadIds(dispatchedIds);
+    } catch (e) {
+      console.warn("Challans load error in Leads view:", e);
     }
-    setLeads(list);
 
     const empList = await employeeService.getEmployees();
     setEmployees(empList);
@@ -664,7 +670,7 @@ export const Leads: React.FC = () => {
     }
 
     const salesId = leadAssignedSalesPersonId || (currentRole === 'field_employee' ? currentUser?.id : undefined);
-    const adminId = leadAssignedAdminId || undefined;
+    const adminId = leadAssignedAdminId || (currentRole === 'admin' ? currentUser?.id : undefined);
 
     await leadService.createLead({
       name: leadName,
@@ -1266,6 +1272,7 @@ export const Leads: React.FC = () => {
   };
 
   const hotLeadsCount = leads.filter(l => l.isHot || (l.clientRating && l.clientRating >= 4)).length;
+  const dispatchedLeadsCount = leads.filter(l => dispatchedLeadIds.has(l.id)).length;
 
   const getStatusBadge = (status: Lead['status']) => {
     const classes: Record<string, string> = {
@@ -3036,6 +3043,14 @@ export const Leads: React.FC = () => {
                 (hotFilter === 'hot' && isHot) || 
                 (hotFilter === 'normal' && !isHot);
 
+              const isDispatched = dispatchedLeadIds.has(lead.id);
+              let matchesDispatch = true;
+              if (dispatchFilter === 'dispatched') {
+                matchesDispatch = isDispatched;
+              } else if (dispatchFilter === 'not_dispatched') {
+                matchesDispatch = !isDispatched;
+              }
+
               let matchesBalance = true;
               if (balanceFilter === 'pending') {
                 matchesBalance = !!fin && fin.pendingBalance > 0;
@@ -3047,7 +3062,7 @@ export const Leads: React.FC = () => {
                 matchesBalance = !fin || fin.paymentStatus === 'No Quote';
               }
 
-              return matchesSearch && matchesStatus && matchesEmployee && matchesHot && matchesBalance;
+              return matchesSearch && matchesStatus && matchesEmployee && matchesHot && matchesBalance && matchesDispatch;
             });
 
             return (
@@ -3105,6 +3120,37 @@ export const Leads: React.FC = () => {
                         {pendingBalanceLeadsCount}
                       </span>
                     </button>
+
+                    {/* Quick Dispatched Filter Toggle Pill */}
+                    <button
+                      type="button"
+                      onClick={() => setDispatchFilter(prev => prev === 'dispatched' ? 'all' : 'dispatched')}
+                      className={`px-3 py-2 rounded-lg border flex items-center gap-1.5 transition-all cursor-pointer ${
+                        dispatchFilter === 'dispatched'
+                          ? 'bg-emerald-700 text-white border-emerald-800 shadow-xs font-black'
+                          : 'bg-emerald-50 text-emerald-800 border-emerald-200 hover:bg-emerald-100 font-bold'
+                      }`}
+                      title="Filter Dispatched Leads Only"
+                    >
+                      <Truck className={`w-4 h-4 ${dispatchFilter === 'dispatched' ? 'text-white' : 'text-emerald-700'}`} />
+                      <span>🚚 Dispatched</span>
+                      <span className={`px-1.5 py-0.2 rounded-full text-[10px] ${
+                        dispatchFilter === 'dispatched' ? 'bg-white text-emerald-800 font-black' : 'bg-emerald-200/80 text-emerald-900 font-black'
+                      }`}>
+                        {dispatchedLeadsCount}
+                      </span>
+                    </button>
+
+                    {/* Dispatch Filter Select */}
+                    <select
+                      value={dispatchFilter}
+                      onChange={(e) => setDispatchFilter(e.target.value as any)}
+                      className="border border-slate-200 rounded-lg p-2.5 bg-slate-50 focus:outline-none cursor-pointer text-slate-700 font-bold"
+                    >
+                      <option value="all">All Dispatch Statuses</option>
+                      <option value="dispatched">🚚 Dispatched ({dispatchedLeadsCount})</option>
+                      <option value="not_dispatched">📦 Not Dispatched</option>
+                    </select>
 
                     {/* Remaining Balance Filter Select */}
                     <select
@@ -3187,6 +3233,17 @@ export const Leads: React.FC = () => {
                                   <Flame className={`w-3.5 h-3.5 ${isHot ? 'fill-white text-white' : 'text-slate-400'}`} />
                                   <span>{isHot ? 'HOT LEAD' : 'Mark Hot'}</span>
                                 </button>
+
+                                {/* DISPATCHED Badge */}
+                                {dispatchedLeadIds.has(lead.id) && (
+                                  <span
+                                    className="px-2.5 py-0.5 rounded-full text-[10px] font-black flex items-center gap-1 bg-emerald-700 text-white border border-emerald-800 shadow-2xs"
+                                    title="Delivery Challan generated & Goods Dispatched for this lead"
+                                  >
+                                    <Truck className="w-3.5 h-3.5 text-white" />
+                                    <span>DISPATCHED</span>
+                                  </span>
+                                )}
                               </div>
 
                               <p className="text-[10px] text-slate-400 font-semibold uppercase">📞 +91 {lead.phoneNumber}</p>

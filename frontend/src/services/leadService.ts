@@ -1,8 +1,27 @@
 import { db, markRecordAsDeleted, getDeletedRecordIdsSet } from './db';
-import type { Lead } from '../types';
+import type { Lead, Profile } from '../types';
 import { saveRecordToFirestore, deleteRecordFromFirestore, fetchCollectionFromFirestore } from './firebase';
 
 const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || '';
+
+export const filterLeadsForUser = (
+  leads: Lead[],
+  currentUser: Profile | null | undefined,
+  currentRole: string
+): Lead[] => {
+  const isSuperAdmin = currentRole === 'super_admin' || currentUser?.role === 'super_admin';
+  if (isSuperAdmin || !currentUser) {
+    return leads;
+  }
+  return leads.filter(l => 
+    l.assignedSalesPersonId === currentUser.id || 
+    l.assignedAdminId === currentUser.id || 
+    l.assignedEmployeeId === currentUser.id ||
+    l.createdBy === currentUser.id ||
+    l.createdBy === currentUser.fullName ||
+    (currentUser.email && l.createdBy === currentUser.email)
+  );
+};
 
 export const leadService = {
   async getLeads(): Promise<Lead[]> {

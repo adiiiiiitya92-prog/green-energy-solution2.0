@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { db } from '../../services/db';
-import { leadService } from '../../services/leadService';
+import { leadService, filterLeadsForUser } from '../../services/leadService';
 import { quotationService, getQuotationTotalAmount } from '../../services/quotationService';
 import { orderService } from '../../services/orderService';
 import { visitService } from '../../services/visitService';
@@ -12,6 +12,7 @@ import type { Lead, Quotation, OrderConfirmation, Profile, Product, PaymentInsta
 import { TrendingUp, DollarSign, Award, ClipboardList, PackageCheck, ShieldAlert, Boxes, Check, X } from 'lucide-react';
 
 export const Dashboard: React.FC = () => {
+  const { currentRole, currentUser } = useAuthStore();
   const [leads, setLeads] = useState<Lead[]>([]);
   const [quotations, setQuotations] = useState<Quotation[]>([]);
   const [confirmations, setConfirmations] = useState<OrderConfirmation[]>([]);
@@ -28,7 +29,8 @@ export const Dashboard: React.FC = () => {
 
   const loadData = async () => {
     try {
-      const lList = await leadService.getLeads();
+      const rawLeads = await leadService.getLeads();
+      const lList = filterLeadsForUser(rawLeads, currentUser, currentRole);
       setLeads(lList);
 
       let qList: Quotation[] = [];
@@ -115,7 +117,6 @@ export const Dashboard: React.FC = () => {
   }, 0);
   const outstandingBalance = Math.max(0, totalConfirmedValue - totalPaymentsCollected);
 
-  const { currentRole, currentUser } = useAuthStore();
   const isSuperAdmin = currentRole === 'super_admin' || currentUser?.role === 'super_admin';
 
   // 3. Inventory valuation calculation (Unit Price x Available Stock Quantity)

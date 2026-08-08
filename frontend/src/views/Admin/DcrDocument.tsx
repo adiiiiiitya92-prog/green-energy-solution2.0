@@ -1,6 +1,7 @@
 import React, { useEffect, useState, useRef } from 'react';
-import { leadService } from '../../services/leadService';
+import { leadService, filterLeadsForUser } from '../../services/leadService';
 import { orderService } from '../../services/orderService';
+import { useAuthStore } from '../../store/authStore';
 import type { Lead } from '../../types';
 import {
   FileText,
@@ -70,8 +71,9 @@ export const DcrDocument: React.FC<{
   useEffect(() => {
     const fetchLeads = async () => {
       try {
-        const lList = await leadService.getLeads();
-        setLeads(lList);
+        const { currentRole, currentUser } = useAuthStore.getState();
+        const rawLeads = await leadService.getLeads();
+        setLeads(filterLeadsForUser(rawLeads, currentUser, currentRole));
       } catch (err) {
         console.error('Error fetching leads:', err);
       }

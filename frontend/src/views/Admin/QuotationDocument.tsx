@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useRef } from 'react';
-import { leadService } from '../../services/leadService';
+import { leadService, filterLeadsForUser } from '../../services/leadService';
 import { quotationService, getCleanWhatsAppPhone, sortAndFormatBomItems, DEFAULT_BOM_ITEMS } from '../../services/quotationService';
 import { shareQuotationViaWhatsapp } from '../../services/quotationShareService';
 import { productService } from '../../services/productService';
@@ -397,10 +397,12 @@ export const QuotationDocument: React.FC<{
     });
 
     leadService.getLeads().then((list) => {
-      setLeads(list);
+      const { currentRole, currentUser } = useAuthStore.getState();
+      const filteredList = filterLeadsForUser(list, currentUser, currentRole);
+      setLeads(filteredList);
       const targetId = defaultLeadId || readOnlyQuotation?.leadId;
       if (targetId) {
-        const target = list.find(l => l.id === targetId);
+        const target = list.find(l => l.id === targetId) || filteredList.find(l => l.id === targetId);
         if (target) populateLeadData(target);
       }
     });

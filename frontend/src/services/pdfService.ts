@@ -11,29 +11,72 @@ import { generateQuotationDocumentPDF } from './pdfOptimizationService';
 import { sortAndFormatBomItems, getBomCategoryIndex, getStandardCategoryName } from './quotationService';
 
 let cachedLogoDataUrl: string | null = null;
+let cachedEngineerDataUrl: string | null = null;
+let cachedPage4DataUrl: string | null = null;
+let cachedQuotationCoverDataUrl: string | null = null;
+let cachedStampDataUrl: string | null = null;
+let cachedPaymentQrDataUrl: string | null = null;
 
-async function getLogoBase64(): Promise<string | null> {
-  if (cachedLogoDataUrl) return cachedLogoDataUrl;
+async function getCompressedAssetBase64(imgSrc: string, quality = 0.60): Promise<string | null> {
+  if (!imgSrc) return null;
   try {
     const img = new Image();
-    img.src = logoImg;
+    img.crossOrigin = 'anonymous';
+    img.src = imgSrc;
     await new Promise((resolve, reject) => {
       img.onload = resolve;
       img.onerror = reject;
     });
     const canvas = document.createElement('canvas');
-    canvas.width = img.width;
-    canvas.height = img.height;
+    canvas.width = img.width || 800;
+    canvas.height = img.height || 600;
     const ctx = canvas.getContext('2d');
     if (ctx) {
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
       ctx.drawImage(img, 0, 0);
-      cachedLogoDataUrl = canvas.toDataURL('image/png');
-      return cachedLogoDataUrl;
+      return canvas.toDataURL('image/jpeg', quality);
     }
   } catch (err) {
-    console.warn("Logo load error:", err);
+    console.warn("Asset base64 load error:", err);
   }
   return null;
+}
+
+async function getLogoBase64(): Promise<string | null> {
+  if (cachedLogoDataUrl) return cachedLogoDataUrl;
+  cachedLogoDataUrl = await getCompressedAssetBase64(logoImg, 0.65);
+  return cachedLogoDataUrl;
+}
+
+async function getSolarEngineerBase64(): Promise<string | null> {
+  if (cachedEngineerDataUrl) return cachedEngineerDataUrl;
+  cachedEngineerDataUrl = await getCompressedAssetBase64(solarEngineerImg, 0.55);
+  return cachedEngineerDataUrl;
+}
+
+async function getPage4ImgBase64(): Promise<string | null> {
+  if (cachedPage4DataUrl) return cachedPage4DataUrl;
+  cachedPage4DataUrl = await getCompressedAssetBase64(customPage4Img, 0.55);
+  return cachedPage4DataUrl;
+}
+
+async function getQuotationCoverBase64(): Promise<string | null> {
+  if (cachedQuotationCoverDataUrl) return cachedQuotationCoverDataUrl;
+  cachedQuotationCoverDataUrl = await getCompressedAssetBase64(qoutation1Img, 0.55);
+  return cachedQuotationCoverDataUrl;
+}
+
+async function getStampBase64(): Promise<string | null> {
+  if (cachedStampDataUrl) return cachedStampDataUrl;
+  cachedStampDataUrl = await getCompressedAssetBase64(stampImg, 0.65);
+  return cachedStampDataUrl;
+}
+
+async function getPaymentQrBase64(): Promise<string | null> {
+  if (cachedPaymentQrDataUrl) return cachedPaymentQrDataUrl;
+  cachedPaymentQrDataUrl = await getCompressedAssetBase64(paymentQrImg, 0.65);
+  return cachedPaymentQrDataUrl;
 }
 
 async function convertImageToBase64(srcUrlOrBlob: any): Promise<string | null> {
@@ -1074,7 +1117,8 @@ export const pdfService = {
     const doc = new jsPDF({
       orientation: 'portrait',
       unit: 'mm',
-      format: 'a4'
+      format: 'a4',
+      compress: true
     });
 
     const logoData = await getLogoBase64();
@@ -1180,7 +1224,8 @@ export const pdfService = {
     const doc = new jsPDF({
       orientation: 'portrait',
       unit: 'mm',
-      format: 'a4'
+      format: 'a4',
+      compress: true
     });
 
     const logoData = await getLogoBase64();

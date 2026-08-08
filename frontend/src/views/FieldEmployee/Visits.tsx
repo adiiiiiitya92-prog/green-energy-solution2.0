@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useAuthStore } from '../../store/authStore';
 import { visitService } from '../../services/visitService';
-import { leadService } from '../../services/leadService';
+import { leadService, filterLeadsForUser } from '../../services/leadService';
 import { employeeService } from '../../services/employeeService';
 import { mapService } from '../../services/mapService';
 import type { Coordinates } from '../../services/mapService';
@@ -168,8 +168,8 @@ export const Visits: React.FC = () => {
     setVisits(allVisits);
 
     // Load leads
-    const leadList = await leadService.getLeads();
-    setLeads(leadList);
+    const rawLeads = await leadService.getLeads();
+    setLeads(filterLeadsForUser(rawLeads, currentUser, currentRole));
 
     // Load employees
     const profiles = await employeeService.getAllProfiles();

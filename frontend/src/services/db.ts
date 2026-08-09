@@ -15,7 +15,9 @@ import type {
   DeletionRequest,
   B2BBusiness,
   StockTransaction,
-  Package
+  Package,
+  Complaint,
+  ComplaintConfigCategory
 } from '../types';
 
 export interface DeletedRecord {
@@ -42,6 +44,8 @@ export class SolarCRMDatabase extends Dexie {
   b2bBusinesses!: Table<B2BBusiness>;
   stockTransactions!: Table<StockTransaction>;
   packages!: Table<Package>;
+  complaints!: Table<Complaint>;
+  complaintConfigCategories!: Table<ComplaintConfigCategory>;
 
   constructor() {
     super('GreenEnergyCRMDatabase');
@@ -126,6 +130,27 @@ export class SolarCRMDatabase extends Dexie {
       b2bBusinesses: 'id, businessName, mobileNumber, gstNumber, contactPerson, createdAt',
       stockTransactions: 'id, challanId, challanNumber, productId, timestamp',
       packages: 'id, name, code, status, createdAt'
+    });
+    this.version(8).stores({
+      profiles: 'id, role, isActive',
+      leads: 'id, assignedEmployeeId, status, createdAt',
+      quotations: 'id, leadId, quotationNumber, createdAt',
+      orderConfirmations: 'id, leadId, quotationId',
+      clientDocuments: 'id, leadId, docType',
+      clientRegistrations: 'leadId',
+      installationPhotos: 'id, leadId, photoType',
+      releaseDocuments: 'id, leadId',
+      fieldVisitReports: 'id, employeeId, leadId, visitedAt',
+      products: 'id, name, category',
+      challans: 'id, leadId, assignedEmployeeId, challanNumber, createdAt',
+      shadowAnalyses: 'id, leadId, projectName, createdAt',
+      deletedRecords: 'id, collectionName, deletedAt',
+      deletionRequests: 'id, status, entityType, requestedByUserId, requestedAt',
+      b2bBusinesses: 'id, businessName, mobileNumber, gstNumber, contactPerson, createdAt',
+      stockTransactions: 'id, challanId, challanNumber, productId, timestamp',
+      packages: 'id, name, code, status, createdAt',
+      complaints: 'id, complaintNumber, status, priority, customerType, leadId, assignedToId, assignedDepartment, isOverdue, createdAt',
+      complaintConfigCategories: 'id, name'
     });
   }
 }
@@ -218,6 +243,21 @@ export const DEFAULT_DEMO_PROFILES: Profile[] = [
     isActive: true,
     isActivated: true,
     password: 'inv123',
+    createdAt: new Date().toISOString()
+  },
+  {
+    id: 'dealer_demo',
+    fullName: 'Authorized Dealer',
+    phone: '9876543240',
+    role: 'dealer',
+    email: 'dealer@greenenergy.com',
+    aadhaarNumber: '123456789016',
+    panNumber: 'ABCDE1234J',
+    joiningDate: new Date().toISOString().split('T')[0],
+    designation: 'Dealer Partner',
+    isActive: true,
+    isActivated: true,
+    password: 'dealer123',
     createdAt: new Date().toISOString()
   }
 ];

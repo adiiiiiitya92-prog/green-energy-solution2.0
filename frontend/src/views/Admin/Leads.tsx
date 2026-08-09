@@ -25,7 +25,7 @@ import {
   Search, Plus, Camera, CheckSquare, UploadCloud,
   ChevronLeft, Trash2, Send, Star, FileCheck, CheckCircle, Compass, X, Eye, Download,
   CreditCard, Wallet, Edit3, MessageSquare, Bell, Flame, FileText,
-  BarChart3, FileSpreadsheet, Printer, Calendar, RotateCcw, Sparkles, Truck
+  BarChart3, FileSpreadsheet, Printer, Calendar, RotateCcw, Sparkles, Truck, AlertCircle
 } from 'lucide-react';
 import dayjs from 'dayjs';
 
@@ -45,6 +45,18 @@ export interface LeadReportItem {
   installmentCount: number;
 }
 
+export const formatCleanLeadRequirement = (req?: string): string => {
+  if (!req) return 'Solar Installation';
+  return req.replace(/^New Complaint Lead:\s*/i, '').trim() || 'Solar Installation';
+};
+
+export const formatCleanLeadDescription = (desc?: string): string => {
+  if (!desc) return '';
+  return desc
+    .replace(/^Created automatically via Complaint Box\s*\[.*?\]\.?\s*/gi, '')
+    .trim();
+};
+
 export const Leads: React.FC = () => {
   const { currentRole, currentUser } = useAuthStore();
   const [leads, setLeads] = useState<Lead[]>([]);
@@ -61,6 +73,7 @@ export const Leads: React.FC = () => {
   const [employeeFilter, setEmployeeFilter] = useState('');
   const [hotFilter, setHotFilter] = useState<'all' | 'hot' | 'normal'>('all');
   const [dispatchFilter, setDispatchFilter] = useState<'all' | 'dispatched' | 'not_dispatched'>('all');
+  const [rawFilter, setRawFilter] = useState<'all' | 'raw' | 'process_done_payment_pending' | 'advanced'>('all');
   const [dispatchedLeadIds, setDispatchedLeadIds] = useState<Set<string>>(new Set());
 
   // Selected Lead (Details View) — restore from sessionStorage on refresh
@@ -87,10 +100,44 @@ export const Leads: React.FC = () => {
   const [leadAssignedSalesPersonId, setLeadAssignedSalesPersonId] = useState('');
   const [leadAssignedAdminId, setLeadAssignedAdminId] = useState('');
   const [leadIsHot, setLeadIsHot] = useState(false);
+  const [leadFollowUpDate, setLeadFollowUpDate] = useState('');
+  const [leadFollowUpNotes, setLeadFollowUpNotes] = useState('');
+
+  // Form: Edit Lead
+  const [leadToEdit, setLeadToEdit] = useState<Lead | null>(null);
+  const [editName, setEditName] = useState('');
+  const [editPhone, setEditPhone] = useState('');
+  const [editEmail, setEditEmail] = useState('');
+  const [editRequirement, setEditRequirement] = useState('');
+  const [editDescription, setEditDescription] = useState('');
+  const [editStatus, setEditStatus] = useState<Lead['status']>('new');
+  const [editIsHot, setEditIsHot] = useState(false);
+  const [editAssignedSalesPersonId, setEditAssignedSalesPersonId] = useState('');
+  const [editAssignedAdminId, setEditAssignedAdminId] = useState('');
+  const [editFollowUpDate, setEditFollowUpDate] = useState('');
+  const [editFollowUpNotes, setEditFollowUpNotes] = useState('');
+  const [isSavingEditLead, setIsSavingEditLead] = useState(false);
+
+  useEffect(() => {
+    if (leadToEdit) {
+      setEditName(leadToEdit.name || '');
+      setEditPhone(leadToEdit.phoneNumber || '');
+      setEditEmail(leadToEdit.email || '');
+      setEditRequirement(leadToEdit.requirement || '');
+      setEditDescription(leadToEdit.description || '');
+      setEditStatus(leadToEdit.status || 'new');
+      setEditIsHot(Boolean(leadToEdit.isHot || (leadToEdit.clientRating && leadToEdit.clientRating >= 4)));
+      setEditAssignedSalesPersonId(leadToEdit.assignedSalesPersonId || leadToEdit.assignedEmployeeId || '');
+      setEditAssignedAdminId(leadToEdit.assignedAdminId || '');
+      setEditFollowUpDate(leadToEdit.nextFollowUpDate || '');
+      setEditFollowUpNotes(leadToEdit.followUpNotes || '');
+    }
+  }, [leadToEdit]);
 
   // Quotation Creator States
   const [quoteFollowUp, setQuoteFollowUp] = useState('');
   const [followUpSavedToast, setFollowUpSavedToast] = useState(false);
+  const [hasAdminQuotation, setHasAdminQuotation] = useState<boolean>(false);
 
   // PDF Preview Modal State
   const [selectedQuotationForPreview, setSelectedQuotationForPreview] = useState<Quotation | null>(null);
@@ -101,22 +148,14 @@ export const Leads: React.FC = () => {
   const [pdfLoadingMsg, setPdfLoadingMsg] = useState<string | null>(null);
 
   const resolvePdfBlob = async (q: Quotation): Promise<Blob> => {
-    // 0. Check persistent CacheStorage & memory cache first (instant 0ms)
-    const propNo = q.quotationNumber || q.proposalId || q.id;
-    const cached = (await getCachedPdfBlob(propNo)) || (await getCachedPdfBlob(q.id)) || pdfBlobCache.current.get(q.id);
-    if (cached && cached.size > 100) {
-      pdfBlobCache.current.set(q.id, cached);
-      return cached;
-    }
-
-    setPdfLoadingMsg('Preparing Solar Proposal PDF... (Page 1/8)');
+    setPdfLoadingMsg('Preparing HD 8-Page Solar Proposal PDF... (Page 1/8)');
     try {
       const leadMatch = leads.find(l => l.id === q.leadId) || selectedLead;
       const blob = await ensurePdfBlobForQuotation(
         q,
         leadMatch,
         q.createdBy || 'Admin',
-        (cur, total) => setPdfLoadingMsg(`Preparing Solar Proposal PDF... (Page ${cur}/${total})`)
+        (cur, total) => setPdfLoadingMsg(`Preparing HD 8-Page Solar Proposal PDF... (Page ${cur}/${total})`)
       );
       if (blob) pdfBlobCache.current.set(q.id, blob);
       return blob;
@@ -340,7 +379,7 @@ export const Leads: React.FC = () => {
           leadId: l.id,
           name: l.name || 'Unnamed Client',
           phone: l.phoneNumber || '',
-          requirement: l.requirement || 'Solar Installation',
+          requirement: formatCleanLeadRequirement(l.requirement),
           status: l.status,
           assignedSalesName: empNames[l.assignedSalesPersonId || l.assignedEmployeeId || ''] || 'Unassigned',
           assignedAdminName: empNames[l.assignedAdminId || ''] || 'Unassigned',
@@ -558,6 +597,7 @@ export const Leads: React.FC = () => {
 
     // Auto load quote items if quotation exists
     const quotations = await quotationService.getQuotationsByLeadId(lead.id);
+    setHasAdminQuotation(quotations.length > 0);
     if (quotations.length > 0) {
       const q = quotations[0];
       setBookingItems(q.items || []);
@@ -669,8 +709,11 @@ export const Leads: React.FC = () => {
       return;
     }
 
+    const isDealer = currentRole === 'dealer' || currentUser?.role === 'dealer';
     const salesId = leadAssignedSalesPersonId || (currentRole === 'field_employee' ? currentUser?.id : undefined);
     const adminId = leadAssignedAdminId || (currentRole === 'admin' ? currentUser?.id : undefined);
+    const nowIso = new Date().toISOString();
+    const formattedFollowUpDate = leadFollowUpDate ? dayjs(leadFollowUpDate).format('YYYY-MM-DD') : undefined;
 
     await leadService.createLead({
       name: leadName,
@@ -681,10 +724,18 @@ export const Leads: React.FC = () => {
       assignedSalesPersonId: salesId,
       assignedAdminId: adminId,
       assignedEmployeeId: salesId || adminId,
-      createdBy: currentUser?.id || 'mock_admin',
+      createdBy: currentUser?.fullName || currentUser?.id || 'Admin',
+      createdByDealer: isDealer || undefined,
+      dealerId: isDealer ? currentUser?.id : undefined,
+      dealerName: isDealer ? (currentUser?.fullName || 'Authorized Dealer') : undefined,
       status: 'new',
       isHot: leadIsHot,
-      clientRating: leadIsHot ? 5 : 3
+      clientRating: leadIsHot ? 5 : 3,
+      nextFollowUpDate: formattedFollowUpDate,
+      followUpNotes: leadFollowUpNotes.trim() || undefined,
+      followUpSetAt: formattedFollowUpDate ? nowIso : undefined,
+      followUpSetBy: formattedFollowUpDate ? (currentUser?.fullName || 'Admin') : undefined,
+      followUpCompleted: false
     });
 
     // Reset
@@ -697,8 +748,63 @@ export const Leads: React.FC = () => {
     setLeadAssignedSalesPersonId('');
     setLeadAssignedAdminId('');
     setLeadIsHot(false);
+    setLeadFollowUpDate('');
+    setLeadFollowUpNotes('');
     setShowCreateModal(false);
     loadData();
+    window.dispatchEvent(new CustomEvent('app-realtime-update'));
+  };
+
+  const handleSaveEditLead = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!leadToEdit || !leadToEdit.id) return;
+    if (!editName.trim() || !editPhone.trim() || !editRequirement.trim()) {
+      alert('Please fill out Name, Phone Number, and Requirement.');
+      return;
+    }
+
+    setIsSavingEditLead(true);
+    try {
+      const formattedEditFollowUpDate = editFollowUpDate ? dayjs(editFollowUpDate).format('YYYY-MM-DD') : undefined;
+      const updatedPatch: Partial<Lead> = {
+        name: editName.trim(),
+        phoneNumber: editPhone.trim(),
+        email: editEmail.trim() || undefined,
+        requirement: editRequirement.trim(),
+        description: editDescription.trim(),
+        status: editStatus,
+        isHot: editIsHot,
+        clientRating: editIsHot ? 5 : (leadToEdit.clientRating || 3),
+        assignedSalesPersonId: editAssignedSalesPersonId || undefined,
+        assignedAdminId: editAssignedAdminId || undefined,
+        assignedEmployeeId: editAssignedSalesPersonId || editAssignedAdminId || leadToEdit.assignedEmployeeId,
+        nextFollowUpDate: formattedEditFollowUpDate,
+        followUpNotes: editFollowUpNotes.trim() || undefined,
+        followUpSetAt: formattedEditFollowUpDate ? new Date().toISOString() : leadToEdit.followUpSetAt,
+        followUpCompleted: false
+      };
+
+      await leadService.updateLead(leadToEdit.id, updatedPatch);
+
+      if (selectedLead && selectedLead.id === leadToEdit.id) {
+        const refreshed = await leadService.getLeadById(leadToEdit.id);
+        if (refreshed) {
+          setSelectedLead(refreshed);
+        } else {
+          setSelectedLead({ ...selectedLead, ...updatedPatch, updatedAt: new Date().toISOString() });
+        }
+      }
+
+      setLeadToEdit(null);
+      alert('✅ Lead details updated successfully!');
+      loadData();
+      window.dispatchEvent(new CustomEvent('app-realtime-update'));
+    } catch (err: any) {
+      console.error('Error saving lead edits:', err);
+      alert('Failed to save lead edits: ' + (err?.message || 'Unknown error'));
+    } finally {
+      setIsSavingEditLead(false);
+    }
   };
 
   const handleToggleHotLead = async (lead: Lead, e: React.MouseEvent) => {
@@ -1308,6 +1414,20 @@ export const Leads: React.FC = () => {
 
             <div className="flex items-center gap-2">
               {getStatusBadge(selectedLead.status)}
+              {(selectedLead.createdByDealer || selectedLead.dealerName) && (
+                <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black bg-purple-100 text-purple-800 border border-purple-300 shadow-2xs">
+                  🏪 CREATED BY DEALER: {selectedLead.dealerName || selectedLead.createdBy}
+                </span>
+              )}
+              <button
+                type="button"
+                onClick={() => setLeadToEdit(selectedLead)}
+                className="px-3 py-1.5 text-blue-700 bg-blue-50 hover:bg-blue-100 border border-blue-200 rounded-xl transition-colors cursor-pointer flex items-center space-x-1.5 text-xs font-bold shadow-2xs"
+                title="Edit Lead Information"
+              >
+                <Edit3 className="w-4 h-4 text-blue-600" />
+                <span>Edit Lead Details</span>
+              </button>
               {currentRole !== 'field_employee' && (
                 <button
                   type="button"
@@ -1328,7 +1448,10 @@ export const Leads: React.FC = () => {
               <h2 className="text-lg font-black text-slate-900">{selectedLead.name}</h2>
               <p className="text-xs text-slate-500 font-semibold">📞 +91 {selectedLead.phoneNumber} | ✉️ {selectedLead.email || 'No email provided'}</p>
               <p className="text-xs text-slate-600 mt-2 bg-slate-50 p-3 rounded-lg border border-slate-100">
-                <strong>Project:</strong> {selectedLead.requirement}
+                <strong>Project:</strong> {formatCleanLeadRequirement(selectedLead.requirement)}
+                {formatCleanLeadDescription(selectedLead.description) ? (
+                  <span className="block mt-1 text-slate-500 font-normal">{formatCleanLeadDescription(selectedLead.description)}</span>
+                ) : null}
               </p>
             </div>
 
@@ -1376,8 +1499,8 @@ export const Leads: React.FC = () => {
               Timeline Stepper
             </button>
             
-            {/* Quotations builder available for Employee, Admin & Super Admin */}
-            {['super_admin', 'admin', 'field_employee'].includes(currentRole) && (
+            {/* Quotations builder available for Admin & Super Admin */}
+            {['super_admin', 'admin'].includes(currentRole) && (
               <button
                 onClick={() => switchTab('quotation')}
                 className={`py-3 px-4 border-b-2 cursor-pointer transition-all whitespace-nowrap ${
@@ -1389,7 +1512,7 @@ export const Leads: React.FC = () => {
             )}
 
             {/* Confirm booking receipt */}
-            {['super_admin', 'admin', 'field_employee'].includes(currentRole) && (
+            {['super_admin', 'admin', 'field_employee', 'dealer'].includes(currentRole) && (
               <button
                 onClick={() => switchTab('order')}
                 className={`py-3 px-4 border-b-2 cursor-pointer transition-all whitespace-nowrap flex items-center gap-1.5 ${
@@ -1406,27 +1529,31 @@ export const Leads: React.FC = () => {
             )}
 
             {/* Geo photos */}
-            <button
-              onClick={() => switchTab('installation')}
-              className={`py-3 px-4 border-b-2 cursor-pointer transition-all whitespace-nowrap ${
-                activeTab === 'installation' ? 'border-emerald-600 text-emerald-600 font-extrabold' : 'border-transparent hover:text-slate-800'
-              }`}
-            >
-              Installation Photos
-            </button>
+            {currentRole !== 'dealer' && currentUser?.role !== 'dealer' && (
+              <button
+                onClick={() => switchTab('installation')}
+                className={`py-3 px-4 border-b-2 cursor-pointer transition-all whitespace-nowrap ${
+                  activeTab === 'installation' ? 'border-emerald-600 text-emerald-600 font-extrabold' : 'border-transparent hover:text-slate-800'
+                }`}
+              >
+                Installation Photos
+              </button>
+            )}
 
             {/* Documentation tab containing DCR Certificate generator */}
-            <button
-              onClick={() => switchTab('documentation')}
-              className={`py-3 px-4 border-b-2 cursor-pointer transition-all whitespace-nowrap ${
-                activeTab === 'documentation' ? 'border-emerald-600 text-emerald-600 font-extrabold' : 'border-transparent hover:text-slate-800'
-              }`}
-            >
-              Documentation
-            </button>
+            {currentRole !== 'dealer' && currentUser?.role !== 'dealer' && (
+              <button
+                onClick={() => switchTab('documentation')}
+                className={`py-3 px-4 border-b-2 cursor-pointer transition-all whitespace-nowrap ${
+                  activeTab === 'documentation' ? 'border-emerald-600 text-emerald-600 font-extrabold' : 'border-transparent hover:text-slate-800'
+                }`}
+              >
+                Documentation
+              </button>
+            )}
 
             {/* Registration checklists & Release (Admin only) */}
-            {currentRole !== 'field_employee' && (
+            {currentRole !== 'field_employee' && currentRole !== 'dealer' && currentUser?.role !== 'dealer' && (
               <button
                 onClick={() => switchTab('registration')}
                 className={`py-3 px-4 border-b-2 cursor-pointer transition-all whitespace-nowrap ${
@@ -1516,6 +1643,7 @@ export const Leads: React.FC = () => {
               const nextLabel = getOrdinalLabel(nextInstallmentNo);
 
               const hasPaymentsRecorded = paymentsList.length > 0;
+              const isQuotationCreated = hasAdminQuotation || (bookingItems && bookingItems.length > 0) || (existingOc && existingOc.subtotal > 0);
 
               return (
                 <div className="space-y-8 text-xs font-semibold">
@@ -1530,7 +1658,7 @@ export const Leads: React.FC = () => {
                         <p className="text-[10px] text-slate-400 font-medium mt-0.5">Track 1st advance deposits, 2nd & 3rd installments, remaining balances, and receipts.</p>
                       </div>
 
-                      {hasPaymentsRecorded && (
+                      {hasPaymentsRecorded && isQuotationCreated && (
                         <div className="flex items-center gap-2 flex-wrap">
                           <span className={`px-2.5 py-1 rounded-full text-[11px] font-black uppercase tracking-wider ${
                             remainingBalance <= 0
@@ -1560,8 +1688,24 @@ export const Leads: React.FC = () => {
                       )}
                     </div>
 
-                    {/* If payments exist: Show Payment Summary Stats Cards, History & 2nd/3rd Installment Form */}
-                    {hasPaymentsRecorded ? (
+                    {/* LOCK PAYMENT COLLECTION IF QUOTATION NOT CREATED BY ADMIN YET */}
+                    {!isQuotationCreated ? (
+                      <div className="bg-amber-50/80 border-2 border-amber-300 rounded-2xl p-6 text-center space-y-3 shadow-xs">
+                        <div className="w-12 h-12 rounded-full bg-amber-100 border border-amber-300 text-amber-700 flex items-center justify-center font-bold mx-auto text-xl">
+                          ⚠️
+                        </div>
+                        <h3 className="text-sm font-black text-amber-900 uppercase tracking-wider">Quotation Pending From Admin</h3>
+                        <p className="text-xs text-amber-800 font-semibold max-w-md mx-auto leading-relaxed">
+                          Payment collection for this lead is currently <strong>LOCKED</strong> because Admin has not created a quotation yet.
+                          Once Admin prepares and saves the official quotation for this lead, payment collection will automatically unlock.
+                        </p>
+                        {currentRole === 'dealer' && (
+                          <p className="text-[11px] text-purple-800 font-bold bg-purple-100 border border-purple-200 px-3 py-1.5 rounded-lg inline-block mt-2">
+                            🏪 Dealer Note: Please request Admin to prepare the quotation so you can collect payments.
+                          </p>
+                        )}
+                      </div>
+                    ) : hasPaymentsRecorded ? (
                       <div className="space-y-6">
                         {/* 3 Metric Cards */}
                         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
@@ -1857,101 +2001,105 @@ export const Leads: React.FC = () => {
                     )}
                   </div>
 
-                  {/* KYC Document uploads slots */}
-                  <div className="bg-white border border-slate-200 rounded-2xl p-5 space-y-4">
-                    <div className="border-b border-slate-100 pb-3">
-                      <h3 className="text-sm font-bold text-slate-800 uppercase tracking-wider">Utility & KYC Document Uploads (5 Slots)</h3>
-                      <p className="text-[10px] text-slate-400 font-medium">Verify identity and billing accounts. Target size compressed automatically &lt; 1MB.</p>
-                    </div>
+                  {/* KYC Document uploads slots (Restricted / Removed for Dealer) */}
+                  {currentRole !== 'dealer' && currentUser?.role !== 'dealer' && (
+                    <div className="bg-white border border-slate-200 rounded-2xl p-5 space-y-4">
+                      <div className="border-b border-slate-100 pb-3 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-1">
+                        <div>
+                          <h3 className="text-sm font-bold text-slate-800 uppercase tracking-wider">Utility & KYC Document Uploads (5 Slots)</h3>
+                          <p className="text-[10px] text-slate-400 font-medium">Verify identity and billing accounts. Target size compressed automatically &lt; 1MB.</p>
+                        </div>
+                      </div>
 
-                    <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
-                      {(['pan_card', 'aadhar_card', 'electricity_bill', 'tax_paper', 'account_details'] as const).map((docType) => {
-                        const doc = kycDocs.find(d => d.docType === docType);
-                        return (
-                          <div key={docType} className="border border-slate-200 rounded-xl p-4 bg-slate-50 relative flex flex-col justify-between h-36">
-                            <div>
-                              <span className="text-[10px] uppercase font-bold text-slate-400 block mb-1">
-                                {docType.replace('_', ' ')}
-                              </span>
-                              {doc ? (
-                                <div className="space-y-1.5">
-                                  <span className="text-xs font-bold text-emerald-600 flex items-center gap-1">
-                                    <CheckCircle className="w-4 h-4" /> Completed
-                                  </span>
-                                  <p className="text-[9px] text-slate-400 font-medium">Uploaded: {dayjs(doc.uploadedAt).format('DD MMM YYYY')}</p>
-                                </div>
-                              ) : (
-                                <span className="text-xs font-bold text-slate-400 italic">Document Missing</span>
-                              )}
-                            </div>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
+                        {(['pan_card', 'aadhar_card', 'electricity_bill', 'tax_paper', 'account_details'] as const).map((docType) => {
+                          const doc = kycDocs.find(d => d.docType === docType);
+                          return (
+                            <div key={docType} className="border border-slate-200 rounded-xl p-4 bg-slate-50 relative flex flex-col justify-between h-36">
+                              <div>
+                                <span className="text-[10px] uppercase font-bold text-slate-400 block mb-1">
+                                  {docType.replace('_', ' ')}
+                                </span>
+                                {doc ? (
+                                  <div className="space-y-1.5">
+                                    <span className="text-xs font-bold text-emerald-600 flex items-center gap-1">
+                                      <CheckCircle className="w-4 h-4" /> Completed
+                                    </span>
+                                    <p className="text-[9px] text-slate-400 font-medium">Uploaded: {dayjs(doc.uploadedAt).format('DD MMM YYYY')}</p>
+                                  </div>
+                                ) : (
+                                  <span className="text-xs font-bold text-slate-400 italic">Document Missing</span>
+                                )}
+                              </div>
 
-                            <div className="mt-3 pt-3 border-t border-slate-200/50 flex justify-between items-center">
-                              {doc ? (
-                                <>
-                                  <div className="flex gap-2.5">
+                              <div className="mt-3 pt-3 border-t border-slate-200/50 flex justify-between items-center">
+                                {doc ? (
+                                  <>
+                                    <div className="flex gap-2.5">
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          const url = typeof doc.fileBlob === 'string' ? doc.fileBlob : URL.createObjectURL(doc.fileBlob);
+                                          setPreviewDoc({
+                                            name: doc.docType.replace('_', ' ').toUpperCase(),
+                                            url,
+                                            type: (doc.fileBlob as any)?.type || (url.includes('.pdf') ? 'application/pdf' : 'image/webp')
+                                          });
+                                        }}
+                                        className="text-[10px] text-emerald-600 hover:text-emerald-800 font-black cursor-pointer"
+                                      >
+                                        View
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          const url = typeof doc.fileBlob === 'string' ? doc.fileBlob : URL.createObjectURL(doc.fileBlob);
+                                          const a = document.createElement('a');
+                                          a.href = url;
+                                          a.target = '_blank';
+                                          a.download = `${doc.docType}_${selectedLead.name.replace(/\s+/g, '_')}`;
+                                          document.body.appendChild(a);
+                                          a.click();
+                                          document.body.removeChild(a);
+                                        }}
+                                        className="text-[10px] text-indigo-600 hover:text-indigo-800 font-bold cursor-pointer"
+                                      >
+                                        Download
+                                      </button>
+                                    </div>
                                     <button
                                       type="button"
-                                      onClick={() => {
-                                        const url = typeof doc.fileBlob === 'string' ? doc.fileBlob : URL.createObjectURL(doc.fileBlob);
-                                        setPreviewDoc({
-                                          name: doc.docType.replace('_', ' ').toUpperCase(),
-                                          url,
-                                          type: (doc.fileBlob as any)?.type || (url.includes('.pdf') ? 'application/pdf' : 'image/webp')
-                                        });
-                                      }}
-                                      className="text-[10px] text-emerald-600 hover:text-emerald-800 font-black cursor-pointer"
+                                      onClick={() => handleDocDelete(doc.id)}
+                                      className="text-rose-500 hover:text-rose-700 cursor-pointer"
                                     >
-                                      View
+                                      <Trash2 className="w-3.5 h-3.5" />
                                     </button>
+                                  </>
+                                ) : (
+                                  <div className="relative overflow-hidden w-full">
+                                    <input
+                                      type="file"
+                                      accept="image/*,application/pdf"
+                                      disabled={uploadingDocType === docType}
+                                      onChange={(e) => e.target.files?.[0] && handleDocUpload(docType, e.target.files[0])}
+                                      className="absolute inset-0 opacity-0 cursor-pointer w-full disabled:cursor-not-allowed"
+                                    />
                                     <button
                                       type="button"
-                                      onClick={() => {
-                                        const url = typeof doc.fileBlob === 'string' ? doc.fileBlob : URL.createObjectURL(doc.fileBlob);
-                                        const a = document.createElement('a');
-                                        a.href = url;
-                                        a.target = '_blank';
-                                        a.download = `${doc.docType}_${selectedLead.name.replace(/\s+/g, '_')}`;
-                                        document.body.appendChild(a);
-                                        a.click();
-                                        document.body.removeChild(a);
-                                      }}
-                                      className="text-[10px] text-indigo-600 hover:text-indigo-800 font-bold cursor-pointer"
+                                      className={`w-full py-1.5 ${uploadingDocType === docType ? 'bg-amber-600 animate-pulse' : 'bg-slate-800 hover:bg-slate-700'} text-white rounded-lg text-[10px] font-bold transition-all text-center flex items-center justify-center gap-1 pointer-events-none`}
                                     >
-                                      Download
+                                      <UploadCloud className={`w-3.5 h-3.5 ${uploadingDocType === docType ? 'animate-spin' : ''}`} />
+                                      <span>{uploadingDocType === docType ? 'Uploading to B2...' : 'Choose File'}</span>
                                     </button>
                                   </div>
-                                  <button
-                                    type="button"
-                                    onClick={() => handleDocDelete(doc.id)}
-                                    className="text-rose-500 hover:text-rose-700 cursor-pointer"
-                                  >
-                                    <Trash2 className="w-3.5 h-3.5" />
-                                  </button>
-                                </>
-                              ) : (
-                                <div className="relative overflow-hidden w-full">
-                                  <input
-                                    type="file"
-                                    accept="image/*,application/pdf"
-                                    disabled={uploadingDocType === docType}
-                                    onChange={(e) => e.target.files?.[0] && handleDocUpload(docType, e.target.files[0])}
-                                    className="absolute inset-0 opacity-0 cursor-pointer w-full disabled:cursor-not-allowed"
-                                  />
-                                  <button
-                                    type="button"
-                                    className={`w-full py-1.5 ${uploadingDocType === docType ? 'bg-amber-600 animate-pulse' : 'bg-slate-800 hover:bg-slate-700'} text-white rounded-lg text-[10px] font-bold transition-all text-center flex items-center justify-center gap-1 pointer-events-none`}
-                                  >
-                                    <UploadCloud className={`w-3.5 h-3.5 ${uploadingDocType === docType ? 'animate-spin' : ''}`} />
-                                    <span>{uploadingDocType === docType ? 'Uploading to B2...' : 'Choose File'}</span>
-                                  </button>
-                                </div>
-                              )}
+                                )}
+                              </div>
                             </div>
-                          </div>
-                        );
-                      })}
+                          );
+                        })}
+                      </div>
                     </div>
-                  </div>
+                  )}
                 </div>
               );
             })()}
@@ -3018,6 +3166,16 @@ export const Leads: React.FC = () => {
               return fin && fin.pendingBalance > 0;
             }).length;
 
+            const rawLeadsCount = leads.filter(l => 
+              (l.status === 'new' || l.status === 'quotation_sent') && !dispatchedLeadIds.has(l.id)
+            ).length;
+
+            const processDonePaymentDueCount = leads.filter(l => {
+              const isProcessDone = (l.status === 'closed' || l.status === 'installed');
+              const fin = leadFinancialMap[l.id];
+              return isProcessDone && fin && fin.pendingBalance > 0;
+            }).length;
+
             const filteredLeads = leads.filter(lead => {
               const searchStr = (searchTerm || '').toLowerCase().trim();
               const fin = leadFinancialMap[lead.id];
@@ -3051,6 +3209,19 @@ export const Leads: React.FC = () => {
                 matchesDispatch = !isDispatched;
               }
 
+              const isRaw = (lead.status === 'new' || lead.status === 'quotation_sent') && !isDispatched;
+              const isProcessDone = (lead.status === 'closed' || lead.status === 'installed');
+              const isProcessDonePaymentPending = isProcessDone && !!fin && fin.pendingBalance > 0;
+
+              let matchesRaw = true;
+              if (rawFilter === 'raw') {
+                matchesRaw = isRaw;
+              } else if (rawFilter === 'process_done_payment_pending') {
+                matchesRaw = isProcessDonePaymentPending;
+              } else if (rawFilter === 'advanced') {
+                matchesRaw = !isRaw;
+              }
+
               let matchesBalance = true;
               if (balanceFilter === 'pending') {
                 matchesBalance = !!fin && fin.pendingBalance > 0;
@@ -3062,7 +3233,7 @@ export const Leads: React.FC = () => {
                 matchesBalance = !fin || fin.paymentStatus === 'No Quote';
               }
 
-              return matchesSearch && matchesStatus && matchesEmployee && matchesHot && matchesBalance && matchesDispatch;
+              return matchesSearch && matchesStatus && matchesEmployee && matchesHot && matchesBalance && matchesDispatch && matchesRaw;
             });
 
             return (
@@ -3081,6 +3252,46 @@ export const Leads: React.FC = () => {
                   </div>
 
                   <div className="flex flex-wrap items-center gap-2">
+                    {/* Quick Raw Lead Filter Toggle Pill */}
+                    <button
+                      type="button"
+                      onClick={() => setRawFilter(prev => prev === 'raw' ? 'all' : 'raw')}
+                      className={`px-3 py-2 rounded-lg border flex items-center gap-1.5 transition-all cursor-pointer ${
+                        rawFilter === 'raw'
+                          ? 'bg-blue-600 text-white border-blue-700 shadow-xs font-black'
+                          : 'bg-blue-50 text-blue-800 border-blue-200 hover:bg-blue-100 font-bold'
+                      }`}
+                      title="Filter Raw Leads (Follow-up & Proposal Stage Only)"
+                    >
+                      <Compass className={`w-4 h-4 ${rawFilter === 'raw' ? 'text-white' : 'text-blue-600'}`} />
+                      <span>🌱 Raw Leads</span>
+                      <span className={`px-1.5 py-0.2 rounded-full text-[10px] ${
+                        rawFilter === 'raw' ? 'bg-white text-blue-700 font-black' : 'bg-blue-200/80 text-blue-900 font-black'
+                      }`}>
+                        {rawLeadsCount}
+                      </span>
+                    </button>
+
+                    {/* Quick Process Done & Payment Due Filter Toggle Pill */}
+                    <button
+                      type="button"
+                      onClick={() => setRawFilter(prev => prev === 'process_done_payment_pending' ? 'all' : 'process_done_payment_pending')}
+                      className={`px-3 py-2 rounded-lg border flex items-center gap-1.5 transition-all cursor-pointer ${
+                        rawFilter === 'process_done_payment_pending'
+                          ? 'bg-purple-700 text-white border-purple-800 shadow-xs font-black'
+                          : 'bg-purple-50 text-purple-800 border-purple-200 hover:bg-purple-100 font-bold'
+                      }`}
+                      title="Filter Leads with Process Completed but Payment Pending"
+                    >
+                      <AlertCircle className={`w-4 h-4 ${rawFilter === 'process_done_payment_pending' ? 'text-white' : 'text-purple-700'}`} />
+                      <span>⚠️ Process Done (Payment Due)</span>
+                      <span className={`px-1.5 py-0.2 rounded-full text-[10px] ${
+                        rawFilter === 'process_done_payment_pending' ? 'bg-white text-purple-800 font-black' : 'bg-purple-200/80 text-purple-900 font-black'
+                      }`}>
+                        {processDonePaymentDueCount}
+                      </span>
+                    </button>
+
                     {/* Quick Hot Lead Filter Toggle Pill */}
                     <button
                       type="button"
@@ -3140,6 +3351,18 @@ export const Leads: React.FC = () => {
                         {dispatchedLeadsCount}
                       </span>
                     </button>
+
+                    {/* Raw Lead Filter Select */}
+                    <select
+                      value={rawFilter}
+                      onChange={(e) => setRawFilter(e.target.value as any)}
+                      className="border border-slate-200 rounded-lg p-2.5 bg-slate-50 focus:outline-none cursor-pointer text-slate-700 font-bold"
+                    >
+                      <option value="all">All Lead Pipeline Types</option>
+                      <option value="raw">🌱 Raw Leads ({rawLeadsCount})</option>
+                      <option value="process_done_payment_pending">⚠️ Process Done - Payment Due ({processDonePaymentDueCount})</option>
+                      <option value="advanced">⚡ Advanced / Confirmed Leads</option>
+                    </select>
 
                     {/* Dispatch Filter Select */}
                     <select
@@ -3234,7 +3457,7 @@ export const Leads: React.FC = () => {
                                   <span>{isHot ? 'HOT LEAD' : 'Mark Hot'}</span>
                                 </button>
 
-                                {/* DISPATCHED Badge */}
+                                 {/* DISPATCHED Badge */}
                                 {dispatchedLeadIds.has(lead.id) && (
                                   <span
                                     className="px-2.5 py-0.5 rounded-full text-[10px] font-black flex items-center gap-1 bg-emerald-700 text-white border border-emerald-800 shadow-2xs"
@@ -3244,6 +3467,38 @@ export const Leads: React.FC = () => {
                                     <span>DISPATCHED</span>
                                   </span>
                                 )}
+
+                                {/* RAW LEAD Badge */}
+                                {(lead.status === 'new' || lead.status === 'quotation_sent') && !dispatchedLeadIds.has(lead.id) && (
+                                  <span
+                                    className="px-2.5 py-0.5 rounded-full text-[10px] font-black flex items-center gap-1 bg-blue-100 text-blue-800 border border-blue-200 shadow-2xs"
+                                    title="Raw Lead (Initial Follow-up & Quotation Stage)"
+                                  >
+                                    <Compass className="w-3.5 h-3.5 text-blue-600" />
+                                    <span>RAW LEAD</span>
+                                  </span>
+                                )}
+
+                                {/* CREATED BY DEALER Badge */}
+                                {(lead.createdByDealer || lead.dealerName) && (
+                                  <span
+                                    className="px-2.5 py-0.5 rounded-full text-[10px] font-black flex items-center gap-1 bg-purple-100 text-purple-800 border border-purple-300 shadow-2xs"
+                                    title={`Lead created by Dealer Partner: ${lead.dealerName || lead.createdBy}`}
+                                  >
+                                    <span>🏪 CREATED BY DEALER: {lead.dealerName || lead.createdBy}</span>
+                                  </span>
+                                )}
+
+                                {/* PROCESS DONE - PAYMENT DUE Badge */}
+                                {(lead.status === 'closed' || lead.status === 'installed') && fin && fin.pendingBalance > 0 && (
+                                  <span
+                                    className="px-2.5 py-0.5 rounded-full text-[10px] font-black flex items-center gap-1 bg-purple-100 text-purple-800 border border-purple-200 shadow-2xs"
+                                    title={`Process completed (Closed/Installed), but remaining balance of ₹${fin.pendingBalance.toLocaleString('en-IN')} is due`}
+                                  >
+                                    <AlertCircle className="w-3.5 h-3.5 text-purple-700" />
+                                    <span>PROCESS DONE (PAYMENT DUE)</span>
+                                  </span>
+                                )}
                               </div>
 
                               <p className="text-[10px] text-slate-400 font-semibold uppercase">📞 +91 {lead.phoneNumber}</p>
@@ -3251,6 +3506,17 @@ export const Leads: React.FC = () => {
 
                             <div className="flex items-center space-x-1.5 shrink-0">
                               {getStatusBadge(lead.status)}
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setLeadToEdit(lead);
+                                }}
+                                className="p-1 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors cursor-pointer"
+                                title="Edit Lead Details"
+                              >
+                                <Edit3 className="w-3.5 h-3.5" />
+                              </button>
                               {currentRole !== 'field_employee' && (
                                 <button
                                   type="button"
@@ -3296,9 +3562,11 @@ export const Leads: React.FC = () => {
                           </div>
 
                           <div className="mt-3 p-2 bg-slate-50 border border-slate-100 rounded-lg text-xs font-semibold text-slate-700">
-                            {lead.requirement}
+                            {formatCleanLeadRequirement(lead.requirement)}
                           </div>
-                          <p className="text-xs text-slate-400 mt-2 line-clamp-2">{lead.description}</p>
+                          {formatCleanLeadDescription(lead.description) ? (
+                            <p className="text-xs text-slate-400 mt-2 line-clamp-2">{formatCleanLeadDescription(lead.description)}</p>
+                          ) : null}
 
                           {/* Prominent Financial & Remaining Pending Balance Box inside Card */}
                           {fin && (fin.totalValue > 0 || fin.paidAmount > 0) ? (
@@ -3475,6 +3743,39 @@ export const Leads: React.FC = () => {
                 </label>
               </div>
 
+              {/* Follow-up Reminder Schedule Block */}
+              <div className="bg-emerald-50/70 border border-emerald-200/90 rounded-xl p-3.5 space-y-2.5">
+                <div className="flex items-center gap-1.5 text-xs font-extrabold text-emerald-900">
+                  <Calendar className="w-4 h-4 text-emerald-600" />
+                  <span>📅 Schedule Follow-up Reminder (Optional)</span>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-[11px] font-bold text-slate-600 mb-1">Follow-up Date</label>
+                    <input
+                      type="date"
+                      value={leadFollowUpDate}
+                      onChange={(e) => setLeadFollowUpDate(e.target.value)}
+                      className="w-full border border-emerald-300 rounded-xl px-3 py-2 bg-white text-slate-800 font-bold focus:outline-none focus:border-emerald-600 shadow-2xs"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[11px] font-bold text-slate-600 mb-1">Remarks / Notes</label>
+                    <input
+                      type="text"
+                      value={leadFollowUpNotes}
+                      onChange={(e) => setLeadFollowUpNotes(e.target.value)}
+                      placeholder="e.g. Initial callback / Site inspection"
+                      className="w-full border border-emerald-300 rounded-xl px-3 py-2 bg-white text-slate-800 font-medium focus:outline-none focus:border-emerald-600 shadow-2xs"
+                    />
+                  </div>
+                </div>
+                <p className="text-[10px] text-emerald-700 font-semibold">
+                  💡 Setting a date automatically adds this lead under <strong>Follow-up Reminders</strong> (Today / Upcoming / Overdue).
+                </p>
+              </div>
+
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <label className="block text-slate-500 mb-1">💼 Assign Sales Person</label>
@@ -3530,6 +3831,226 @@ export const Leads: React.FC = () => {
                     Save Lead
                   </button>
                 </div>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Edit Lead Modal popup */}
+      {leadToEdit && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 backdrop-blur-xs">
+          <div className="bg-white rounded-2xl border border-slate-200 shadow-xl w-full max-w-md p-6 m-4 animate-scale-in max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between mb-4 border-b border-slate-100 pb-3">
+              <div>
+                <h3 className="text-lg font-black text-slate-900 flex items-center gap-2">
+                  <Edit3 className="w-5 h-5 text-blue-600" />
+                  <span>Edit Lead Details</span>
+                </h3>
+                <p className="text-[11px] text-slate-400 font-medium">Update client info, requirement, assignment & stage without losing history.</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setLeadToEdit(null)}
+                className="p-1.5 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-lg transition-colors cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveEditLead} className="space-y-4 text-xs font-semibold">
+              <div>
+                <label className="block text-slate-500 mb-1">Lead Name *</label>
+                <input
+                  type="text"
+                  required
+                  value={editName}
+                  onChange={(e) => setEditName(e.target.value)}
+                  placeholder="Client Full Name"
+                  className="w-full border border-slate-200 rounded-xl px-3 py-2.5 bg-slate-50 focus:outline-none focus:border-blue-500 font-bold text-slate-800"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-slate-500 mb-1">Phone Number *</label>
+                  <input
+                    type="tel"
+                    required
+                    value={editPhone}
+                    onChange={(e) => setEditPhone(e.target.value)}
+                    placeholder="10 digit phone number"
+                    className="w-full border border-slate-200 rounded-xl px-3 py-2.5 bg-slate-50 focus:outline-none focus:border-blue-500 font-bold text-slate-800"
+                  />
+                </div>
+                <div>
+                  <label className="block text-slate-500 mb-1">Email Address</label>
+                  <input
+                    type="email"
+                    value={editEmail}
+                    onChange={(e) => setEditEmail(e.target.value)}
+                    placeholder="name@example.com"
+                    className="w-full border border-slate-200 rounded-xl px-3 py-2.5 bg-slate-50 focus:outline-none focus:border-blue-500 font-medium text-slate-800"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-slate-500 mb-1 font-bold">Primary Requirement *</label>
+                <input
+                  type="text"
+                  list="edit-lead-catalog-products"
+                  required
+                  value={editRequirement}
+                  onChange={(e) => setEditRequirement(e.target.value)}
+                  placeholder="Solar Rooftop System / System capacity..."
+                  className="w-full border border-slate-200 rounded-xl px-3 py-2.5 bg-slate-50 focus:outline-none focus:border-blue-500 font-semibold text-slate-800"
+                />
+                <datalist id="edit-lead-catalog-products">
+                  {catalogProducts
+                    .filter(p => p.category !== 'bom_item')
+                    .map(p => (
+                      <option key={p.id} value={p.brand ? `${p.name} (${p.brand})` : p.name} />
+                    ))}
+                  <option value="3 kW Solar Rooftop System" />
+                  <option value="5 kW Solar Rooftop System" />
+                  <option value="10 kW Commercial Solar System" />
+                  <option value="15 kW Commercial Solar System" />
+                  <option value="20 kW Commercial Solar System" />
+                  <option value="3.3 kW On-Grid System" />
+                  <option value="5 kW Hybrid System with Battery Backup" />
+                  <option value="Off-Grid Solar System" />
+                </datalist>
+              </div>
+
+              <div>
+                <label className="block text-slate-500 mb-1">Additional Project Details / Notes</label>
+                <textarea
+                  rows={2}
+                  value={editDescription}
+                  onChange={(e) => setEditDescription(e.target.value)}
+                  placeholder="Address, roof type, shading details, special requests..."
+                  className="w-full border border-slate-200 rounded-xl px-3 py-2.5 bg-slate-50 focus:outline-none resize-none font-medium text-slate-800"
+                />
+              </div>
+
+              {/* Status Select */}
+              <div>
+                <label className="block text-slate-500 mb-1 font-bold">Pipeline Stage</label>
+                <select
+                  value={editStatus}
+                  onChange={(e) => setEditStatus(e.target.value as any)}
+                  className="w-full border border-slate-200 rounded-xl px-3 py-2.5 bg-slate-50 focus:outline-none cursor-pointer text-slate-800 font-bold text-xs"
+                >
+                  <option value="new">🆕 NEW LEAD</option>
+                  <option value="quotation_sent">📄 QUOTATION SENT</option>
+                  <option value="confirmed">⚡ ORDER CONFIRMED</option>
+                  <option value="registered">📋 REGISTERED</option>
+                  <option value="installed">🔧 INSTALLED</option>
+                  <option value="closed">🏆 CLOSED / RELEASED</option>
+                  <option value="lost">❌ LOST</option>
+                </select>
+              </div>
+
+              {/* Hot Lead Checkbox */}
+              <div className="flex items-center space-x-2 pt-1 bg-amber-50/80 border border-amber-200 rounded-xl p-3">
+                <input
+                  type="checkbox"
+                  id="editIsHotLead"
+                  checked={editIsHot}
+                  onChange={(e) => setEditIsHot(e.target.checked)}
+                  className="w-4 h-4 rounded text-amber-500 focus:ring-amber-400 cursor-pointer"
+                />
+                <label htmlFor="editIsHotLead" className="text-xs font-extrabold text-amber-900 cursor-pointer flex items-center gap-1.5 select-none">
+                  <Flame className="w-4 h-4 text-amber-500 fill-amber-500" />
+                  <span>Mark as High Priority Hot Lead 🔥</span>
+                </label>
+              </div>
+
+              {/* Follow-up Reminder Schedule Block */}
+              <div className="bg-blue-50/70 border border-blue-200/90 rounded-xl p-3.5 space-y-2.5">
+                <div className="flex items-center gap-1.5 text-xs font-extrabold text-blue-900">
+                  <Calendar className="w-4 h-4 text-blue-600" />
+                  <span>📅 Schedule / Reschedule Follow-up Reminder</span>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-[11px] font-bold text-slate-600 mb-1">Follow-up Date</label>
+                    <input
+                      type="date"
+                      value={editFollowUpDate}
+                      onChange={(e) => setEditFollowUpDate(e.target.value)}
+                      className="w-full border border-blue-300 rounded-xl px-3 py-2 bg-white text-slate-800 font-bold focus:outline-none focus:border-blue-600 shadow-2xs"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[11px] font-bold text-slate-600 mb-1">Remarks / Notes</label>
+                    <input
+                      type="text"
+                      value={editFollowUpNotes}
+                      onChange={(e) => setEditFollowUpNotes(e.target.value)}
+                      placeholder="e.g. Call client regarding proposal..."
+                      className="w-full border border-blue-300 rounded-xl px-3 py-2 bg-white text-slate-800 font-medium focus:outline-none focus:border-blue-600 shadow-2xs"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-slate-500 mb-1">💼 Assign Sales Person</label>
+                  <select
+                    value={editAssignedSalesPersonId}
+                    onChange={(e) => setEditAssignedSalesPersonId(e.target.value)}
+                    className="w-full border border-slate-200 rounded-xl px-3 py-2 bg-slate-50 focus:outline-none cursor-pointer text-slate-700 font-bold text-xs"
+                  >
+                    <option value="">-- Unassigned (Sales) --</option>
+                    {employees.map(emp => (
+                      <option key={emp.id} value={emp.id}>{emp.fullName}</option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-slate-500 mb-1">🏢 Assign Administration</label>
+                  <select
+                    value={editAssignedAdminId}
+                    onChange={(e) => setEditAssignedAdminId(e.target.value)}
+                    className="w-full border border-slate-200 rounded-xl px-3 py-2 bg-slate-50 focus:outline-none cursor-pointer text-slate-700 font-bold text-xs"
+                  >
+                    <option value="">-- Unassigned (Admin) --</option>
+                    {employees.map(emp => (
+                      <option key={emp.id} value={emp.id}>{emp.fullName}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              <div className="flex items-center justify-end gap-2 pt-4 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => setLeadToEdit(null)}
+                  className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-xl font-bold cursor-pointer transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={isSavingEditLead}
+                  className="px-5 py-2 bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white rounded-xl font-bold cursor-pointer shadow-md flex items-center gap-1.5 transition-all disabled:opacity-50"
+                >
+                  {isSavingEditLead ? (
+                    <>
+                      <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                      <span>Saving...</span>
+                    </>
+                  ) : (
+                    <>
+                      <CheckCircle className="w-4 h-4" />
+                      <span>Save Lead Changes</span>
+                    </>
+                  )}
+                </button>
               </div>
             </form>
           </div>

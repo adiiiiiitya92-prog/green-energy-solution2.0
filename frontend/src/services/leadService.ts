@@ -19,7 +19,9 @@ export const filterLeadsForUser = (
     l.assignedEmployeeId === currentUser.id ||
     l.createdBy === currentUser.id ||
     l.createdBy === currentUser.fullName ||
-    (currentUser.email && l.createdBy === currentUser.email)
+    (currentUser.email && l.createdBy === currentUser.email) ||
+    l.dealerId === currentUser.id ||
+    (l.createdByDealer && (l.createdBy === currentUser.fullName || l.createdBy === currentUser.id))
   );
 };
 
@@ -61,7 +63,33 @@ export const leadService = {
     await syncRemote();
     const refreshed = await db.leads.orderBy('createdAt').reverse().toArray();
     const freshDeleted = await getDeletedRecordIdsSet();
-    return refreshed.filter(l => !freshDeleted.has(l.id));
+    const activeLeads = refreshed.filter(l => !freshDeleted.has(l.id));
+
+    // Auto-sanitize existing complaint leads so no complaint text appears on leads UI
+    for (const lead of activeLeads) {
+      let needsFix = false;
+      let cleanReq = lead.requirement;
+      let cleanDesc = lead.description;
+
+      if (cleanReq && cleanReq.includes('New Complaint Lead:')) {
+        cleanReq = cleanReq.replace(/^New Complaint Lead:\s*/i, '').trim();
+        needsFix = true;
+      }
+      if (cleanDesc && cleanDesc.includes('Created automatically via Complaint Box')) {
+        cleanDesc = cleanDesc.replace(/^Created automatically via Complaint Box\s*\[.*?\]\.?\s*/gi, '').trim();
+        needsFix = true;
+      }
+
+      if (needsFix) {
+        lead.requirement = cleanReq || 'Service Request';
+        lead.description = cleanDesc;
+        lead.updatedAt = new Date().toISOString();
+        await db.leads.put(lead);
+        saveRecordToFirestore('leads', lead.id, lead);
+      }
+    }
+
+    return activeLeads;
   },
 
   async getLeadById(id: string): Promise<Lead | undefined> {

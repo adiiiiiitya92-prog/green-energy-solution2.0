@@ -64,8 +64,8 @@ export async function generateOptimizedPDF(
   element: HTMLElement,
   options: PDFGeneratorOptions = {}
 ): Promise<{ pdfBlob: Blob; pdfUrl?: string; fileSizeKB: number }> {
-  const quality = options.quality || 0.65;
-  const scale = options.scale || 1.3;
+  const quality = options.quality || 0.92;
+  const scale = options.scale || 2.0;
   const fileName = options.fileName || `document_${Date.now()}.pdf`;
 
   // Find target pages in element or DOM
@@ -138,7 +138,7 @@ export async function generateOptimizedPDF(
 
       const imgData = canvas.toDataURL('image/jpeg', quality);
       if (i > 0) pdf.addPage();
-      pdf.addImage(imgData, 'JPEG', 0, 0, 210, 297, undefined, 'FAST');
+      pdf.addImage(imgData, 'JPEG', 0, 0, 210, 297, undefined, 'SLOW');
     } finally {
       targetEl.style.display = originalDisplay;
       targetEl.style.visibility = originalVisibility;
@@ -161,8 +161,8 @@ export async function generateOptimizedPDF(
 }
 
 /**
- * Generates an exact 8-Page PDF from the live .quotation-print-container element.
- * Uses optimized canvas rendering and unblocks event loop for 0-lag ultra-fast generation.
+ * Generates an exact High-Definition 8-Page PDF from the live .quotation-print-container element.
+ * Uses 2.0x scale and 0.95 quality rendering to deliver crystal-clear, HD text & images matching exact preview & print quality.
  */
 export async function generateQuotationDocumentPDF(
   container: HTMLElement,
@@ -171,10 +171,15 @@ export async function generateQuotationDocumentPDF(
 ): Promise<Blob> {
   const pageElements = Array.from(container.querySelectorAll('.quotation-document-page')) as HTMLElement[];
   const targets = pageElements.length > 0 ? pageElements : [container];
-  const isMobile = typeof window !== 'undefined' && (window.innerWidth < 768 || /Android|iPhone|iPad|iPod/i.test(navigator.userAgent));
-  // Scale 1.35 on mobile and 1.50 on desktop to deliver crisp readable text in 2-3x faster time
-  const scale = isMobile ? 1.35 : 1.50;
-  const quality = isMobile ? 0.72 : 0.78;
+
+  // Ensure all custom web fonts are 100% loaded and metrics ready before capturing canvas
+  if (typeof document !== 'undefined' && document.fonts && document.fonts.ready) {
+    try { await document.fonts.ready; } catch (_) {}
+  }
+
+  // HD Retina Quality Scale 2.0x & Quality 0.98 for crystal-clear 1 MB max proposal PDF
+  const scale = 2.0;
+  const quality = 0.98;
 
   const pdf = new jsPDF({
     orientation: 'portrait',
@@ -188,8 +193,8 @@ export async function generateQuotationDocumentPDF(
       try { onProgress(i + 1, targets.length); } catch (_) {}
     }
 
-    // Fast yield to main UI thread (1ms) for responsive UI progress
-    await new Promise(resolve => setTimeout(resolve, 1));
+    // Yield to UI thread (15ms) for smooth layout stability & font metric rendering
+    await new Promise(resolve => setTimeout(resolve, 15));
 
     const pageEl = targets[i];
     pageEl.style.transform = 'none';
@@ -200,9 +205,7 @@ export async function generateQuotationDocumentPDF(
       allowTaint: true,
       backgroundColor: '#ffffff',
       logging: false,
-      imageTimeout: 800,
-      windowWidth: 794,   // Exact A4 width at 96 DPI for 1:1 pixel precision
-      windowHeight: 1123, // Exact A4 height at 96 DPI for 1:1 pixel precision
+      imageTimeout: 2000,
       onclone: (clonedDoc) => {
         sanitizeClonedDocumentForHtml2Canvas(clonedDoc);
         const pages = clonedDoc.querySelectorAll('.quotation-document-page');
@@ -216,6 +219,16 @@ export async function generateQuotationDocumentPDF(
           pageHtml.style.position = 'relative';
           pageHtml.style.left = '0';
           pageHtml.style.top = '0';
+
+          // Fix potential html2canvas text line height baseline overlap
+          const textEls = pageHtml.querySelectorAll('h1, h2, h3, h4, p, span, td, th');
+          textEls.forEach((el) => {
+            const h = el as HTMLElement;
+            const computedStyle = clonedDoc.defaultView?.getComputedStyle(h);
+            if (computedStyle && (computedStyle.lineHeight === 'normal' || parseFloat(computedStyle.lineHeight) < 1.1 * parseFloat(computedStyle.fontSize))) {
+              h.style.lineHeight = '1.25';
+            }
+          });
         });
 
         // Ensure images are clear and not artificially squeezed
@@ -231,12 +244,12 @@ export async function generateQuotationDocumentPDF(
 
     const imgData = canvas.toDataURL('image/jpeg', quality);
     if (i > 0) pdf.addPage();
-    pdf.addImage(imgData, 'JPEG', 0, 0, 210, 297, undefined, 'FAST');
+    pdf.addImage(imgData, 'JPEG', 0, 0, 210, 297, undefined, 'SLOW');
   }
 
   const pdfBlob = pdf.output('blob');
   const sizeKB = Math.round(pdfBlob.size / 1024);
-  console.log(`📄 High-Speed Proposal PDF Generated: ${fileName} (${sizeKB} KB, target ~500KB achieved)`);
+  console.log(`📄 High-Definition Proposal PDF Generated: ${fileName} (${sizeKB} KB)`);
   return pdfBlob;
 }
 

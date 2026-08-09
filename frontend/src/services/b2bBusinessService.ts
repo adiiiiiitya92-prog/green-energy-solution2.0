@@ -8,6 +8,40 @@ export const b2bBusinessService = {
     const local = await db.b2bBusinesses.orderBy('createdAt').reverse().toArray();
     const validLocal = local.filter(b => !deletedIds.has(b.id));
 
+    const syncFromChallans = async (existing: B2BBusiness[]) => {
+      try {
+        const existingNames = new Set(existing.map(b => b.businessName.trim().toLowerCase()));
+        const challans = await db.challans.toArray();
+        const now = new Date().toISOString();
+
+        for (const ch of challans) {
+          if (ch.type === 'b2b' && ch.businessName && ch.businessName.trim()) {
+            const normName = ch.businessName.trim().toLowerCase();
+            if (!existingNames.has(normName)) {
+              existingNames.add(normName);
+              const newId = ch.b2bBusinessId || 'b2b_' + Math.random().toString(36).substring(2, 11);
+              const newBiz: B2BBusiness = {
+                id: newId,
+                businessName: ch.businessName.trim(),
+                gstNumber: ch.gstNumber || '',
+                businessAddress: ch.businessAddress || '',
+                contactPerson: ch.contactPerson || '',
+                mobileNumber: ch.mobileNumber || '',
+                email: ch.email || '',
+                createdAt: ch.createdAt || now,
+                updatedAt: now
+              };
+              await db.b2bBusinesses.put(newBiz);
+              saveRecordToFirestore('b2bBusinesses', newId, newBiz);
+              existing.push(newBiz);
+            }
+          }
+        }
+      } catch (err) {
+        console.warn("Sync B2B businesses from challans note:", err);
+      }
+    };
+
     const syncRemote = async () => {
       try {
         const remote = await fetchCollectionFromFirestore<B2BBusiness>('b2bBusinesses');
@@ -25,13 +59,16 @@ export const b2bBusinessService = {
 
     if (validLocal.length > 0) {
       syncRemote();
+      await syncFromChallans(validLocal);
       return validLocal;
     }
 
     await syncRemote();
     const freshDeleted = await getDeletedRecordIdsSet();
     const refreshed = await db.b2bBusinesses.orderBy('createdAt').reverse().toArray();
-    return refreshed.filter(b => !freshDeleted.has(b.id));
+    const result = refreshed.filter(b => !freshDeleted.has(b.id));
+    await syncFromChallans(result);
+    return result;
   },
 
   async getBusinessById(id: string): Promise<B2BBusiness | undefined> {
@@ -42,7 +79,7 @@ export const b2bBusinessService = {
     id?: string;
     businessName: string;
     gstNumber?: string;
-    businessAddress: string;
+    businessAddress?: string;
     contactPerson?: string;
     mobileNumber?: string;
     email?: string;
@@ -52,7 +89,6 @@ export const b2bBusinessService = {
       throw new Error("Business Name is required");
     }
 
-    // Check if business already exists by ID or by exact/normalized Business Name
     let existing: B2BBusiness | undefined = undefined;
 
     if (bData.id) {
@@ -60,8 +96,8 @@ export const b2bBusinessService = {
     }
 
     if (!existing) {
-      const all = await this.getBusinesses();
-      existing = all.find(
+      const allLocal = await db.b2bBusinesses.toArray();
+      existing = allLocal.find(
         b => b.businessName.trim().toLowerCase() === trimmedName.toLowerCase()
       );
     }
@@ -73,7 +109,7 @@ export const b2bBusinessService = {
         ...existing,
         businessName: trimmedName,
         gstNumber: bData.gstNumber !== undefined ? bData.gstNumber : existing.gstNumber,
-        businessAddress: bData.businessAddress || existing.businessAddress,
+        businessAddress: bData.businessAddress !== undefined ? bData.businessAddress : existing.businessAddress,
         contactPerson: bData.contactPerson !== undefined ? bData.contactPerson : existing.contactPerson,
         mobileNumber: bData.mobileNumber !== undefined ? bData.mobileNumber : existing.mobileNumber,
         email: bData.email !== undefined ? bData.email : existing.email,
@@ -82,6 +118,7 @@ export const b2bBusinessService = {
 
       await db.b2bBusinesses.put(updatedBusiness);
       saveRecordToFirestore('b2bBusinesses', updatedBusiness.id, updatedBusiness);
+      window.dispatchEvent(new CustomEvent('app-realtime-update'));
       return updatedBusiness;
     } else {
       const newId = bData.id || 'b2b_' + Math.random().toString(36).substring(2, 11);
@@ -97,8 +134,9 @@ export const b2bBusinessService = {
         updatedAt: now
       };
 
-      await db.b2bBusinesses.add(newBusiness);
+      await db.b2bBusinesses.put(newBusiness);
       saveRecordToFirestore('b2bBusinesses', newId, newBusiness);
+      window.dispatchEvent(new CustomEvent('app-realtime-update'));
       return newBusiness;
     }
   },

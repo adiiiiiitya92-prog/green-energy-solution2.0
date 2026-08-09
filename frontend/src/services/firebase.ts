@@ -707,6 +707,20 @@ export async function syncAllLocalDataToFirestore(): Promise<void> {
       console.warn("Client document sync note:", err);
     }
 
+    // 5. Reconcile & Sync Complaints
+    try {
+      const localComplaints = await db.complaints.toArray();
+      for (const cmp of localComplaints) {
+        if (deletedIds.has(cmp.id)) {
+          await db.complaints.delete(cmp.id);
+          continue;
+        }
+        await saveRecordToFirestore('complaints', cmp.id, cmp);
+      }
+    } catch (err) {
+      console.warn("Complaint sync note:", err);
+    }
+
     console.log("🔥 Initialized background dual-sync & reconciliation of all local data to Firestore!");
   } catch (err) {
     console.warn("syncAllLocalDataToFirestore note:", err);
@@ -718,16 +732,30 @@ export async function syncAllLocalDataToFirestore(): Promise<void> {
  */
 let isRealtimeSyncInitialized = false;
 
+const realtimeChannel = typeof BroadcastChannel !== 'undefined' ? new BroadcastChannel('app_realtime_broadcast_channel') : null;
+
+if (realtimeChannel) {
+  realtimeChannel.onmessage = (event) => {
+    if (event.data?.type === 'REALTIME_UPDATE') {
+      window.dispatchEvent(new CustomEvent('app-realtime-update'));
+    }
+  };
+}
+
 export function initializeRealtimeFirestoreSync(): void {
   if (isRealtimeSyncInitialized) return;
   isRealtimeSyncInitialized = true;
 
   let dispatchTimer: any = null;
   const dispatchRealtimeUpdate = () => {
+    window.dispatchEvent(new CustomEvent('app-realtime-update'));
+    if (realtimeChannel) {
+      try { realtimeChannel.postMessage({ type: 'REALTIME_UPDATE' }); } catch (e) {}
+    }
     if (dispatchTimer) clearTimeout(dispatchTimer);
     dispatchTimer = setTimeout(() => {
       window.dispatchEvent(new CustomEvent('app-realtime-update'));
-    }, 250);
+    }, 100);
   };
 
   // 1. Subscribe to deletedRecords tombstones collection
@@ -772,6 +800,12 @@ export function initializeRealtimeFirestoreSync(): void {
               await db.fieldVisitReports.delete(id);
             } else if (collectionName === 'shadowAnalyses') {
               await db.shadowAnalyses.delete(id);
+            } else if (collectionName === 'complaints') {
+              await db.complaints.delete(id);
+            } else if (collectionName === 'b2b_businesses' || collectionName === 'b2bBusinesses') {
+              await db.b2bBusinesses.delete(id);
+            } else if (collectionName === 'profiles') {
+              await db.profiles.delete(id);
             }
             changed = true;
           } catch (e) {
@@ -827,5 +861,18 @@ export function initializeRealtimeFirestoreSync(): void {
   setupCollectionListener('products', (db) => db.products);
   setupCollectionListener('challans', (db) => db.challans);
   setupCollectionListener('fieldVisitReports', (db) => db.fieldVisitReports);
+  setupCollectionListener('complaints', (db) => db.complaints);
+  setupCollectionListener('b2b_businesses', (db) => db.b2bBusinesses);
+  setupCollectionListener('b2bBusinesses', (db) => db.b2bBusinesses);
+  setupCollectionListener('profiles', (db) => db.profiles);
+  setupCollectionListener('clientDocuments', (db) => db.clientDocuments);
+  setupCollectionListener('clientRegistrations', (db) => db.clientRegistrations);
+  setupCollectionListener('installationPhotos', (db) => db.installationPhotos);
+  setupCollectionListener('releaseDocuments', (db) => db.releaseDocuments);
+  setupCollectionListener('shadowAnalyses', (db) => db.shadowAnalyses);
+  setupCollectionListener('deletionRequests', (db) => db.deletionRequests);
+  setupCollectionListener('stockTransactions', (db) => db.stockTransactions);
+  setupCollectionListener('packages', (db) => db.packages);
+  setupCollectionListener('complaintConfigCategories', (db) => db.complaintConfigCategories);
 }
 

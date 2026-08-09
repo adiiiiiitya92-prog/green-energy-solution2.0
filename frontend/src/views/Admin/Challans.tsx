@@ -107,6 +107,13 @@ export const Challans: React.FC = () => {
 
   useEffect(() => {
     loadData();
+    const handleRealtimeUpdate = () => loadData();
+    window.addEventListener('app-realtime-update', handleRealtimeUpdate);
+    window.addEventListener('storage', handleRealtimeUpdate);
+    return () => {
+      window.removeEventListener('app-realtime-update', handleRealtimeUpdate);
+      window.removeEventListener('storage', handleRealtimeUpdate);
+    };
   }, []);
 
   // Handle location state navigation triggers (e.g. from B2B Businesses page)

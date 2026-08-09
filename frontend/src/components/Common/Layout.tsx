@@ -77,7 +77,7 @@ export const Layout: React.FC<LayoutProps> = ({ children }) => {
     {
       name: 'Lead Pipeline',
       path: '/leads',
-      roles: ['super_admin', 'admin', 'field_employee'],
+      roles: ['super_admin', 'admin', 'field_employee', 'dealer'],
       icon: Compass
     },
     {
@@ -107,7 +107,7 @@ export const Layout: React.FC<LayoutProps> = ({ children }) => {
     {
       name: 'Field Visits',
       path: '/visits',
-      roles: ['super_admin', 'admin', 'field_employee'],
+      roles: ['super_admin', 'admin', 'field_employee', 'dealer'],
       icon: MapPin
     },
     {
@@ -121,6 +121,12 @@ export const Layout: React.FC<LayoutProps> = ({ children }) => {
       path: '/employees',
       roles: ['super_admin', 'admin'],
       icon: Users
+    },
+    {
+      name: 'Complaint Box',
+      path: '/complaints',
+      roles: ['super_admin', 'admin', 'field_employee', 'inventory_manager', 'dealer'],
+      icon: ShieldAlert
     },
     {
       name: 'System Settings',

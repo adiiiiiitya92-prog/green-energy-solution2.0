@@ -262,7 +262,7 @@ export const FollowUpReminders: React.FC<{
         const q = await quotationService.getQuotationById(qId);
         if (q) {
           q.followUpDate = newDate;
-          q.followUpNotes = newNotes || q.followUpNotes;
+          q.followUpNotes = newNotes.trim();
           q.followUpSetAt = setAtNow;
           q.followUpCompleted = false;
           await quotationService.createQuotation(q);
@@ -272,7 +272,7 @@ export const FollowUpReminders: React.FC<{
       const lead = await leadService.getLeadById(item.leadId);
       if (lead) {
         lead.nextFollowUpDate = newDate;
-        lead.followUpNotes = newNotes || lead.followUpNotes;
+        lead.followUpNotes = newNotes.trim();
         lead.followUpSetAt = setAtNow;
         lead.followUpCompleted = false;
         await leadService.updateLead(lead);
@@ -280,6 +280,7 @@ export const FollowUpReminders: React.FC<{
 
       setSelectedItemForReschedule(null);
       await fetchFollowUps();
+      window.dispatchEvent(new CustomEvent('app-realtime-update'));
     } catch (err) {
       console.error('Error rescheduling follow-up:', err);
     } finally {

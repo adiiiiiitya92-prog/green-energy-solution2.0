@@ -1,7 +1,7 @@
 import type { Quotation, Lead } from '../types';
 import { pdfService } from './pdfService';
 
-const CACHE_NAME = 'ges-quotation-pdf-v1';
+const CACHE_NAME = 'ges-quotation-pdf-v3';
 const memoryPdfCache = new Map<string, Blob>();
 
 /**
@@ -76,36 +76,11 @@ export async function ensurePdfBlobForQuotation(
   if (!quotation) return new Blob([], { type: 'application/pdf' });
   const propNo = quotation.quotationNumber || quotation.proposalId || quotation.id || 'EST';
 
-  // 1. Try cache
+  // 1. Try cache (v3 HD exact match)
   const cached = await getCachedPdfBlob(propNo);
-  if (cached) return cached;
-  if (quotation.id) {
-    const cachedById = await getCachedPdfBlob(quotation.id);
-    if (cachedById) return cachedById;
-  }
+  if (cached && cached.size > 100) return cached;
 
-  // 2. Try in-memory pdfBlob property
-  if (quotation.pdfBlob && quotation.pdfBlob.size > 0) {
-    await setCachedPdfBlob(propNo, quotation.pdfBlob);
-    return quotation.pdfBlob;
-  }
-
-  // 3. Try fetching from Cloud URL (if pdfUrl exists)
-  if (quotation.pdfUrl && typeof quotation.pdfUrl === 'string' && quotation.pdfUrl.startsWith('http')) {
-    try {
-      const res = await fetch(quotation.pdfUrl);
-      if (res.ok) {
-        const blob = await res.blob();
-        await setCachedPdfBlob(propNo, blob);
-        if (quotation.id) await setCachedPdfBlob(quotation.id, blob);
-        return blob;
-      }
-    } catch (e) {
-      console.warn('Cloud PDF fetch note:', e);
-    }
-  }
-
-  // 4. Generate on-the-fly & cache
+  // 2. Generate exact 8-Page HD Proposal PDF on-the-fly
   const mockLead: Lead = lead || {
     id: quotation.leadId || '',
     name: quotation.consumerName || 'Valued Customer',

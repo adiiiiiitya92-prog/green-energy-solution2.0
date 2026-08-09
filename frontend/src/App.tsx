@@ -17,6 +17,7 @@ import { DcrDocument } from './views/Admin/DcrDocument';
 import { WcrDocument } from './views/Admin/WcrDocument';
 import { ModelAgreementDocument } from './views/Admin/ModelAgreementDocument';
 import { QuotationDocument } from './views/Admin/QuotationDocument';
+import { Complaints } from './views/Admin/Complaints';
 
 import { InventoryPanel } from './views/InventoryManager/InventoryPanel';
 
@@ -63,15 +64,25 @@ export const App: React.FC = () => {
   // Routing checks based on mock persona
   const isEmployee = currentRole === 'field_employee';
   const isInventoryManager = currentRole === 'inventory_manager';
+  const isDealer = currentRole === 'dealer';
 
   return (
     <BrowserRouter>
       <Layout>
         <Routes>
-          {/* Inventory Manager Dedicated Panel & Routes */}
-          {isInventoryManager ? (
+          {/* Dealer Dedicated Panel & Routes */}
+          {isDealer ? (
+            <>
+              <Route path="/leads" element={<Leads />} />
+              <Route path="/complaints" element={<Complaints />} />
+              <Route path="/visits" element={<Visits />} />
+              <Route path="/profile" element={<ProfileView />} />
+              <Route path="*" element={<Navigate to="/leads" replace />} />
+            </>
+          ) : isInventoryManager ? (
             <>
               <Route path="/inventory-panel" element={<InventoryPanel />} />
+              <Route path="/complaints" element={<Complaints />} />
               <Route path="/products" element={<Products />} />
               <Route path="/challans" element={<Challans />} />
               <Route path="/b2b-businesses" element={<B2BBusinesses />} />
@@ -82,6 +93,7 @@ export const App: React.FC = () => {
             <>
               <Route path="/dashboard" element={<Dashboard />} />
               <Route path="/inventory-panel" element={<InventoryPanel />} />
+              <Route path="/complaints" element={<Complaints />} />
               <Route path="/leads" element={<Leads />} />
               <Route path="/visits" element={<Visits />} />
               <Route path="/shadow-analysis" element={<ShadowAnalysisContainer />} />
@@ -105,6 +117,7 @@ export const App: React.FC = () => {
           ) : (
             // Field Employee routes
             <>
+              <Route path="/complaints" element={<Complaints />} />
               <Route path="/leads" element={<Leads />} />
               <Route path="/visits" element={<Visits />} />
               <Route path="/visits/new" element={<VisitsNewAutoOpen />} />

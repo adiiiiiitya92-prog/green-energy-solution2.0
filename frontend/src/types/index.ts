@@ -2,7 +2,7 @@ export interface Profile {
   id: string;
   fullName: string;
   phone: string;
-  role: 'super_admin' | 'admin' | 'field_employee' | 'inventory_manager';
+  role: 'super_admin' | 'admin' | 'field_employee' | 'inventory_manager' | 'dealer';
   email?: string;
   aadhaarNumber?: string;
   panNumber?: string;
@@ -26,6 +26,9 @@ export interface Lead {
   assignedSalesPersonId?: string; // 👤 Sales Person
   assignedAdminId?: string; // 🏢 Administration Person
   createdBy: string;
+  createdByDealer?: boolean;
+  dealerId?: string;
+  dealerName?: string;
   status: 'new' | 'quotation_sent' | 'confirmed' | 'registered' | 'installed' | 'closed' | 'lost';
   clientRating?: 1 | 2 | 3 | 4 | 5;
   isHot?: boolean;
@@ -345,6 +348,204 @@ export interface Package {
   calculatedBomTotal: number;
   calculatedCombinedTotal: number;
   finalPrice: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+// ── Complaint Box & Service Management Types ──
+export type CustomerType = 'existing' | 'new_lead' | 'internal';
+export type ComplaintPriority = 'Low' | 'Medium' | 'High' | 'Urgent';
+
+export type ComplaintStatus =
+  | 'New'
+  | 'Complaint Registered'
+  | 'Under Review'
+  | 'Observation'
+  | 'Assigned'
+  | 'In Process'
+  | 'Waiting for Customer'
+  | 'Waiting for Product / Inventory'
+  | 'Waiting for Approval'
+  | 'Site Visit Required'
+  | 'Field Work in Progress'
+  | 'Vendor / Manufacturer Support Required'
+  | 'Resolved'
+  | 'Closed'
+  | 'Reopened'
+  | string;
+
+export interface FieldVisitTask {
+  id: string;
+  assignedFieldEmployeeId: string;
+  assignedFieldEmployeeName: string;
+  visitDate: string;
+  visitTime?: string;
+  expectedCompletionDate?: string;
+  instructions?: string;
+  status: 'Scheduled' | 'In Progress' | 'Completed' | 'Cancelled';
+  workNotes?: string;
+  beforePhotos?: (Blob | string)[];
+  afterPhotos?: (Blob | string)[];
+  additionalNotes?: string;
+  completedAt?: string;
+  createdAt: string;
+}
+
+export interface InventoryRequestItem {
+  id: string;
+  productId: string;
+  productName: string;
+  requestedQty: number;
+  approvedQty?: number;
+  issuedQty?: number;
+  returnedQty?: number;
+  serialNumber?: string;
+  unit?: string;
+  status: 'Requested' | 'Approved' | 'Issued' | 'Rejected' | 'Returned';
+  requestedBy: string;
+  requestedAt: string;
+  issuedAt?: string;
+  notes?: string;
+}
+
+export interface ComplaintCommunicationNote {
+  id: string;
+  type: 'internal_note' | 'Call' | 'WhatsApp' | 'Email' | 'SMS' | 'Site Visit';
+  communicatedBy: string;
+  communicatedByName: string;
+  communicatedByRole: string;
+  summary: string;
+  nextFollowUpDate?: string;
+  isInternalOnly: boolean;
+  createdAt: string;
+}
+
+export interface ComplaintAttachment {
+  id: string;
+  fileName: string;
+  fileType: 'image' | 'pdf' | 'document' | 'video' | 'other';
+  fileBlobUrl: string;
+  uploadedBy: string;
+  uploadedByName: string;
+  uploadedAt: string;
+}
+
+export interface ComplaintTimelineEntry {
+  id: string;
+  userId: string;
+  userName: string;
+  userRole: string;
+  action: string;
+  details?: string;
+  timestamp: string;
+}
+
+export interface ComplaintAssignmentHistory {
+  id: string;
+  assignedBy: string;
+  assignedByName: string;
+  assignedToId: string;
+  assignedToName: string;
+  assignedToRole?: string;
+  department?: string;
+  assignedAt: string;
+  reason?: string;
+}
+
+export interface ComplaintConfigCategory {
+  id: string;
+  name: string;
+  isCustom?: boolean;
+}
+
+export interface ComplaintConfigStatus {
+  id: string;
+  name: string;
+  isCustom?: boolean;
+  enabled: boolean;
+}
+
+export interface Complaint {
+  id: string;
+  complaintNumber: string;
+  title: string;
+  category: string;
+  description: string;
+  customerType: CustomerType;
+
+  // Existing Customer / Lead details
+  leadId?: string;
+  customerName: string;
+  mobileNumber: string;
+  alternateNumber?: string;
+  email?: string;
+  address: string;
+  city?: string;
+  state?: string;
+  pincode?: string;
+  landmark?: string;
+  companyName?: string;
+
+  // Solar / Project details
+  projectId?: string;
+  projectType?: string;
+  installationType?: string;
+  installedCapacityKw?: string;
+  panelDetails?: string;
+  inverterDetails?: string;
+  batteryDetails?: string;
+  installationDate?: string;
+  assignedSalesEmployeeId?: string;
+  assignedSalesEmployeeName?: string;
+  assignedFieldEmployeeId?: string;
+  assignedFieldEmployeeName?: string;
+
+  // Internal Complaint Details
+  complaintAgainstDepartment?: string;
+  relatedEmployeeId?: string;
+  relatedEmployeeName?: string;
+
+  // Core Management
+  priority: ComplaintPriority;
+  status: ComplaintStatus;
+  
+  // Assignment
+  assignedToId?: string;
+  assignedToName?: string;
+  assignedToRole?: string;
+  assignedDepartment?: string;
+  assignmentHistory?: ComplaintAssignmentHistory[];
+
+  // SLA & Dates
+  dueDate?: string;
+  isOverdue?: boolean;
+  resolvedAt?: string;
+  resolvedByUserId?: string;
+  resolvedByUserName?: string;
+  closedAt?: string;
+  closedByUserId?: string;
+  closedByUserName?: string;
+  reopenedAt?: string;
+  reopenCount?: number;
+
+  // Resolution & Feedback
+  resolutionSummary?: string;
+  workPerformed?: string;
+  productsReplacedSummary?: string;
+  customerFeedback?: string;
+  customerRating?: 1 | 2 | 3 | 4 | 5;
+
+  // Associated Data
+  fieldVisits?: FieldVisitTask[];
+  inventoryRequests?: InventoryRequestItem[];
+  communications?: ComplaintCommunicationNote[];
+  attachments?: ComplaintAttachment[];
+  timeline?: ComplaintTimelineEntry[];
+
+  // Audit info
+  createdByUserId: string;
+  createdByUserName: string;
+  createdByUserRole: string;
   createdAt: string;
   updatedAt: string;
 }

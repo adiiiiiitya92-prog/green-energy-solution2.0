@@ -69,6 +69,13 @@ export const B2BBusinesses: React.FC = () => {
 
   useEffect(() => {
     loadData();
+    const handleRealtimeUpdate = () => loadData();
+    window.addEventListener('app-realtime-update', handleRealtimeUpdate);
+    window.addEventListener('storage', handleRealtimeUpdate);
+    return () => {
+      window.removeEventListener('app-realtime-update', handleRealtimeUpdate);
+      window.removeEventListener('storage', handleRealtimeUpdate);
+    };
   }, []);
 
   useEffect(() => {

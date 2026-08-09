@@ -17,7 +17,7 @@ let cachedQuotationCoverDataUrl: string | null = null;
 let cachedStampDataUrl: string | null = null;
 let cachedPaymentQrDataUrl: string | null = null;
 
-async function getCompressedAssetBase64(imgSrc: string, quality = 0.60): Promise<string | null> {
+async function getCompressedAssetBase64(imgSrc: string, quality = 0.92): Promise<string | null> {
   if (!imgSrc) return null;
   try {
     const img = new Image();
@@ -45,37 +45,37 @@ async function getCompressedAssetBase64(imgSrc: string, quality = 0.60): Promise
 
 async function getLogoBase64(): Promise<string | null> {
   if (cachedLogoDataUrl) return cachedLogoDataUrl;
-  cachedLogoDataUrl = await getCompressedAssetBase64(logoImg, 0.65);
+  cachedLogoDataUrl = await getCompressedAssetBase64(logoImg, 0.95);
   return cachedLogoDataUrl;
 }
 
 async function getSolarEngineerBase64(): Promise<string | null> {
   if (cachedEngineerDataUrl) return cachedEngineerDataUrl;
-  cachedEngineerDataUrl = await getCompressedAssetBase64(solarEngineerImg, 0.55);
+  cachedEngineerDataUrl = await getCompressedAssetBase64(solarEngineerImg, 0.90);
   return cachedEngineerDataUrl;
 }
 
 async function getPage4ImgBase64(): Promise<string | null> {
   if (cachedPage4DataUrl) return cachedPage4DataUrl;
-  cachedPage4DataUrl = await getCompressedAssetBase64(customPage4Img, 0.55);
+  cachedPage4DataUrl = await getCompressedAssetBase64(customPage4Img, 0.90);
   return cachedPage4DataUrl;
 }
 
 async function getQuotationCoverBase64(): Promise<string | null> {
   if (cachedQuotationCoverDataUrl) return cachedQuotationCoverDataUrl;
-  cachedQuotationCoverDataUrl = await getCompressedAssetBase64(qoutation1Img, 0.55);
+  cachedQuotationCoverDataUrl = await getCompressedAssetBase64(qoutation1Img, 0.92);
   return cachedQuotationCoverDataUrl;
 }
 
 async function getStampBase64(): Promise<string | null> {
   if (cachedStampDataUrl) return cachedStampDataUrl;
-  cachedStampDataUrl = await getCompressedAssetBase64(stampImg, 0.65);
+  cachedStampDataUrl = await getCompressedAssetBase64(stampImg, 0.92);
   return cachedStampDataUrl;
 }
 
 async function getPaymentQrBase64(): Promise<string | null> {
   if (cachedPaymentQrDataUrl) return cachedPaymentQrDataUrl;
-  cachedPaymentQrDataUrl = await getCompressedAssetBase64(paymentQrImg, 0.65);
+  cachedPaymentQrDataUrl = await getCompressedAssetBase64(paymentQrImg, 0.92);
   return cachedPaymentQrDataUrl;
 }
 
@@ -222,6 +222,15 @@ export function createNewQuotationProposalHtml(q: any, lead: any, creatorName: s
   const byName = q.createdBy || creatorName || 'Nitin Thakre';
   const city = q.city || (lead?.description ? lead.description.split(',')[0] : 'Nagpur');
   const statePin = q.statePin || 'Maharashtra';
+
+  const cNameTrimmed = cName.trim();
+  const cNameLen = cNameTrimmed.length;
+  const nameFontSize = cNameLen > 30 ? '13px' : cNameLen > 22 ? '15px' : cNameLen > 15 ? '17px' : '19.5px';
+
+  const fullAddrStr = `${city}${statePin && !city.includes(statePin) ? `, ${statePin}` : ''}`;
+  const addrLen = fullAddrStr.trim().length;
+  const addrFontSize = addrLen > 55 ? '10px' : addrLen > 35 ? '11px' : '12.5px';
+
   const capacity = q.systemCapacity || '5.0';
   const pvMake = q.pvModuleMake || '';
   const pvCount = q.pvModuleCount || `${Math.ceil((parseFloat(capacity) || 5) * 1000 / 540)} Qty`;
@@ -363,13 +372,13 @@ export function createNewQuotationProposalHtml(q: any, lead: any, creatorName: s
         <span style="background: #EAA20A; color: #ffffff; font-size: 12px; font-weight: 800; padding: 6px 18px; border-radius: 14px; letter-spacing: 1px; text-transform: uppercase; display: inline-block;">
           PROPOSAL FOR
         </span>
-        <h1 style="font-size: 52px; font-weight: 900; color: #0d2847; margin: 12px 0 0 0; text-transform: uppercase; letter-spacing: 1px; line-height: 0.92;">
+        <h1 style="font-size: 50px; font-weight: 900; color: #0d2847; margin: 10px 0 0 0; text-transform: uppercase; letter-spacing: 1px; line-height: 1.05; display: block;">
           ROOFTOP
         </h1>
-        <h2 style="font-size: 58px; font-weight: 900; color: #EAA20A; margin: 3px 0 0 0; text-transform: uppercase; letter-spacing: 1px; line-height: 0.92;">
+        <h2 style="font-size: 54px; font-weight: 900; color: #EAA20A; margin: 2px 0 0 0; text-transform: uppercase; letter-spacing: 1px; line-height: 1.05; display: block;">
           SOLAR
         </h2>
-        <h3 style="font-size: 30px; font-weight: 800; color: #0d2847; margin: 6px 0 0 0; text-transform: uppercase; letter-spacing: 6px;">
+        <h3 style="font-size: 28px; font-weight: 800; color: #0d2847; margin: 4px 0 0 0; text-transform: uppercase; letter-spacing: 6px; line-height: 1.15; display: block;">
           PROJECT
         </h3>
         <div style="display: flex; align-items: center; margin-top: 14px;">
@@ -379,29 +388,29 @@ export function createNewQuotationProposalHtml(q: any, lead: any, creatorName: s
       </div>
 
       <!-- Dark Blue Customer Info Bar Overlay (Middle Right - Perfectly Inside Dark Blue Bar with Generous Spacing) -->
-      <div style="position: absolute; top: 568px; right: 0px; width: 54%; height: 130px; display: flex; align-items: center; padding-left: 32px; box-sizing: border-box;">
+      <div style="position: absolute; top: 560px; right: 0px; width: 55%; height: 138px; display: flex; align-items: center; padding-left: 20px; padding-right: 14px; box-sizing: border-box; overflow: hidden;">
         <!-- Yellow User Icon Circle -->
-        <div style="width: 52px; height: 52px; border-radius: 50%; background: #EAA20A; display: flex; align-items: center; justify-content: center; margin-right: 18px; flex-shrink: 0; box-shadow: 0 4px 12px rgba(0,0,0,0.3);">
-          <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#ffffff" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+        <div style="width: 44px; height: 44px; border-radius: 50%; background: #EAA20A; display: flex; align-items: center; justify-content: center; margin-right: 12px; flex-shrink: 0; box-shadow: 0 4px 12px rgba(0,0,0,0.3);">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#ffffff" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
             <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path>
             <circle cx="12" cy="7" r="4"></circle>
           </svg>
         </div>
         <!-- Customer Details (Generous Spacing, Clean Line Height, Zero Overlap) -->
-        <div style="color: #ffffff; text-align: left; display: flex; flex-direction: column; justify-content: center; width: calc(100% - 70px);">
-          <h2 style="font-size: 21px; font-weight: 900; margin: 0 0 8px 0; text-transform: uppercase; color: #ffffff; letter-spacing: 0.8px; line-height: 1.25; word-break: break-word;">
+        <div style="color: #ffffff; text-align: left; display: flex; flex-direction: column; justify-content: center; width: calc(100% - 56px); max-height: 128px; overflow: hidden;">
+          <h2 style="font-size: ${nameFontSize}; font-weight: 900; margin: 0 0 3px 0; text-transform: uppercase; color: #ffffff; letter-spacing: 0.5px; line-height: 1.25; word-break: break-word; max-height: 48px; overflow: hidden;">
             ${cName}
           </h2>
-          <div style="font-size: 13px; font-weight: 600; color: #ffffff; margin-bottom: 5px; display: flex; align-items: center; gap: 8px;">
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="#EAA20A" stroke="#EAA20A" stroke-width="1" style="flex-shrink: 0;">
+          <div style="font-size: ${addrFontSize}; font-weight: 600; color: #ffffff; margin-bottom: 2px; display: flex; align-items: flex-start; gap: 6px; line-height: 1.25;">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="#EAA20A" stroke="#EAA20A" stroke-width="1" style="flex-shrink: 0; margin-top: 2px;">
               <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"></path>
               <circle cx="12" cy="10" r="3" fill="#0d2847"></circle>
             </svg>
-            <span style="line-height: 1.2; font-weight: 700;">${city}, ${statePin}</span>
+            <span style="line-height: 1.25; font-weight: 700; word-break: break-word; max-height: 42px; overflow: hidden;">${fullAddrStr}</span>
           </div>
           ${cMobile ? `
-            <div style="font-size: 12.5px; font-weight: 600; color: #ffffff; margin-top: 1px; display: flex; align-items: center; gap: 8px;">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="#EAA20A" stroke="#EAA20A" style="flex-shrink: 0;">
+            <div style="font-size: 11.5px; font-weight: 600; color: #ffffff; margin-top: 1px; display: flex; align-items: center; gap: 6px;">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="#EAA20A" stroke="#EAA20A" style="flex-shrink: 0;">
                 <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"></path>
               </svg>
               <span style="line-height: 1.2; font-weight: 700;">${cMobile}</span>
@@ -1062,6 +1071,40 @@ export function printQuotationHTML(htmlString: string, title: string = 'Quotatio
   printWindow.document.close();
 }
 
+function renderPdfDocHeader(doc: jsPDF, title: string, propNo: string, logoBase64: string | null) {
+  doc.setFillColor(15, 23, 42);
+  doc.rect(0, 0, 210, 28, 'F');
+  doc.setFillColor(16, 185, 129);
+  doc.rect(0, 28, 210, 2, 'F');
+
+  if (logoBase64) {
+    try { doc.addImage(logoBase64, 'PNG', 12, 4, 45, 14); } catch (_) {}
+  } else {
+    doc.setTextColor(255, 255, 255);
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(14);
+    doc.text('GREEN ENERGY SOLUTION', 15, 16);
+  }
+
+  doc.setTextColor(255, 255, 255);
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(10);
+  doc.text(title, 195, 14, { align: 'right' });
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(8);
+  doc.text(`Proposal Ref: ${propNo}`, 195, 21, { align: 'right' });
+}
+
+function renderPdfDocFooter(doc: jsPDF, pageNum: number) {
+  doc.setDrawColor(226, 232, 240);
+  doc.line(15, 285, 195, 285);
+  doc.setTextColor(148, 163, 184);
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(8);
+  doc.text('Green Energy Solution | Solar Rooftop Systems & EPC Solutions', 15, 290);
+  doc.text(`Page ${pageNum} of 6`, 195, 290, { align: 'right' });
+}
+
 export const pdfService = {
   printQuotationHTML,
 
@@ -1071,41 +1114,365 @@ export const pdfService = {
     creatorName: string,
     onProgress?: (current: number, total: number) => void
   ): Promise<Blob> {
-    // Always render from a clean, un-transformed off-screen container for 1:1 pixel-perfect layout precision
-    const tempDiv = document.createElement('div');
-    tempDiv.className = 'quotation-pdf-export-container';
-    tempDiv.style.position = 'fixed';
-    tempDiv.style.left = '-9999px';
-    tempDiv.style.top = '-9999px';
-    tempDiv.style.width = '210mm';
-    tempDiv.style.zIndex = '-9999';
-    tempDiv.style.opacity = '1';
-    tempDiv.style.pointerEvents = 'none';
-    tempDiv.style.backgroundColor = '#ffffff';
-    tempDiv.style.transform = 'none';
-    tempDiv.innerHTML = createNewQuotationProposalHtml(q, lead, creatorName);
-    document.body.appendChild(tempDiv);
+    const propNo = q.quotationNumber || q.proposalId || 'EST-001';
+    const sanitizedPropNo = propNo.replace(/\//g, '_');
+    const fileName = `Solar_Quotation_${sanitizedPropNo}.pdf`;
 
-    // Pre-load all images (qoutation 1.png, logo, engineer, stamp) for sub-second ultra-fast PDF generation
-    const images = Array.from(tempDiv.querySelectorAll('img'));
-    await Promise.all(
-      images.map(img => {
-        if (img.complete) return Promise.resolve();
-        return new Promise(resolve => {
-          img.onload = resolve;
-          img.onerror = resolve;
-        });
-      })
-    );
-
-    try {
-      const blob = await generateQuotationDocumentPDF(tempDiv, `Solar_Quotation_${q.quotationNumber || 'EST'}.pdf`, onProgress);
-      return blob;
-    } finally {
-      if (document.body.contains(tempDiv)) {
-        document.body.removeChild(tempDiv);
+    // 1. Check if an active quotation print container is already in DOM
+    if (typeof document !== 'undefined') {
+      const liveContainer = document.querySelector('.quotation-print-container') as HTMLElement;
+      if (liveContainer) {
+        return await generateQuotationDocumentPDF(liveContainer, fileName, onProgress);
       }
     }
+
+    // 2. Render the exact 8-Page Proposal HTML template into a temporary DOM container
+    if (typeof document !== 'undefined') {
+      const htmlContent = createNewQuotationProposalHtml(q, lead, creatorName);
+      const tempDiv = document.createElement('div');
+      tempDiv.className = 'quotation-print-container temp-pdf-render-container';
+      tempDiv.style.position = 'fixed';
+      tempDiv.style.left = '-9999px';
+      tempDiv.style.top = '0';
+      tempDiv.style.width = '794px';
+      tempDiv.style.zIndex = '-9999';
+      tempDiv.style.opacity = '1';
+      tempDiv.style.visibility = 'visible';
+      tempDiv.innerHTML = htmlContent;
+      document.body.appendChild(tempDiv);
+
+      try {
+        const blob = await generateQuotationDocumentPDF(tempDiv, fileName, onProgress);
+        return blob;
+      } finally {
+        if (document.body.contains(tempDiv)) {
+          document.body.removeChild(tempDiv);
+        }
+      }
+    }
+
+    return new Blob([], { type: 'application/pdf' });
+  },
+
+  async generateQuotationPDF_Old(
+    q: Quotation,
+    lead: Lead,
+    creatorName: string,
+    onProgress?: (current: number, total: number) => void
+  ): Promise<Blob> {
+    const doc = new jsPDF({
+      orientation: 'portrait',
+      unit: 'mm',
+      format: 'a4',
+      compress: true
+    });
+
+    const propNo = q.quotationNumber || q.proposalId || 'EST-001';
+    const consumerName = q.consumerName || lead?.name || 'Valued Customer';
+    const consumerMobile = q.consumerMobile || lead?.phoneNumber || '';
+    const consumerAddress = q.consumerAddress || q.city || lead?.description || '';
+    const createdAtStr = dayjs(q.createdAt || new Date()).format('DD MMM YYYY');
+
+    const emerald = [16, 185, 129];
+    const slateDark = [15, 23, 42];
+    const slateLight = [248, 250, 252];
+
+    // Pre-cache static base64 images (0ms latency)
+    const [logoBase64, engineerBase64, page4Base64, coverBase64, stampBase64, qrBase64] = await Promise.all([
+      getLogoBase64(),
+      getSolarEngineerBase64(),
+      getPage4ImgBase64(),
+      getQuotationCoverBase64(),
+      getStampBase64(),
+      getPaymentQrBase64()
+    ]);
+
+    // PAGE 1: COVER PAGE
+    if (coverBase64) {
+      try { doc.addImage(coverBase64, 'JPEG', 0, 0, 210, 297); } catch (_) {}
+    } else {
+      doc.setFillColor(slateDark[0], slateDark[1], slateDark[2]);
+      doc.rect(0, 0, 210, 297, 'F');
+    }
+
+    // Cover Overlay Header & Client Details Box
+    doc.setFillColor(255, 255, 255);
+    doc.roundedRect(15, 180, 180, 95, 4, 4, 'F');
+    doc.setDrawColor(emerald[0], emerald[1], emerald[2]);
+    doc.setLineWidth(0.8);
+    doc.roundedRect(15, 180, 180, 95, 4, 4, 'D');
+
+    if (logoBase64) {
+      try { doc.addImage(logoBase64, 'PNG', 22, 188, 55, 16); } catch (_) {}
+    }
+
+    doc.setTextColor(emerald[0], emerald[1], emerald[2]);
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(16);
+    doc.text('SOLAR POWER SYSTEM PROPOSAL', 22, 212);
+
+    doc.setTextColor(slateDark[0], slateDark[1], slateDark[2]);
+    doc.setFontSize(10);
+    doc.text(`Proposal Ref: ${propNo}`, 22, 222);
+    doc.text(`Date: ${createdAtStr}`, 22, 228);
+
+    doc.setDrawColor(226, 232, 240);
+    doc.line(22, 232, 188, 232);
+
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(9.5);
+    doc.text('PREPARED FOR:', 22, 240);
+    doc.setFont('helvetica', 'normal');
+    doc.text(`Client Name: ${consumerName}`, 22, 246);
+    doc.text(`Contact: +91 ${consumerMobile}`, 22, 252);
+    if (consumerAddress) doc.text(`Location: ${consumerAddress.substring(0, 50)}`, 22, 258);
+
+    doc.setFont('helvetica', 'bold');
+    doc.text('PREPARED BY:', 115, 240);
+    doc.setFont('helvetica', 'normal');
+    doc.text('Green Energy Solutions', 115, 246);
+    doc.text(`Executive: ${creatorName}`, 115, 252);
+    doc.text('Phone: +91 9822363789', 115, 258);
+
+    // PAGE 2: SYSTEM OVERVIEW & PROPOSAL SUMMARY
+    doc.addPage();
+    renderPdfDocHeader(doc, 'SYSTEM OVERVIEW & PROPOSAL SUMMARY', propNo, logoBase64);
+
+    doc.setFillColor(slateLight[0], slateLight[1], slateLight[2]);
+    doc.roundedRect(15, 38, 180, 35, 3, 3, 'F');
+    doc.setDrawColor(203, 213, 225);
+    doc.roundedRect(15, 38, 180, 35, 3, 3, 'D');
+
+    doc.setTextColor(slateDark[0], slateDark[1], slateDark[2]);
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(12);
+    doc.text(`System Capacity: ${q.systemCapacity || '5 kW'} Solar Rooftop Plant`, 22, 48);
+
+    doc.setFontSize(9.5);
+    doc.setFont('helvetica', 'normal');
+    doc.text(`Proposed System Type: ${q.systemType || 'On-Grid Solar PV System'}`, 22, 56);
+    doc.text(`Estimated Annual Generation: ${((q.capacityKW || 5) * 1400).toLocaleString('en-IN')} Units / Year`, 22, 63);
+
+    // Technical Specs Table Box
+    doc.setFillColor(241, 245, 249);
+    doc.rect(15, 80, 180, 8, 'F');
+    doc.setTextColor(slateDark[0], slateDark[1], slateDark[2]);
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(9.5);
+    doc.text('KEY TECHNICAL COMPONENTS', 20, 85.5);
+
+    const specRows = [
+      ['Solar Panels / Modules', q.panelBrand || 'Tier-1 Mono PERC / TOPCon Modules'],
+      ['Solar Inverter', q.inverterBrand || 'High Efficiency Grid-Tied Inverter'],
+      ['Mounting Structure', 'HDG (Hot Dip Galvanized) Elevated Roof Structure'],
+      ['AC / DC Cables & Protection', 'UV-Resistant Solar Cables, SPD, MC4 & Earthing Kit'],
+      ['Monitoring System', 'WiFi / Remote Mobile App Solar Monitoring']
+    ];
+
+    let yPos = 88;
+    specRows.forEach(([component, detail], idx) => {
+      doc.setFillColor(idx % 2 === 0 ? 255 : 248, idx % 2 === 0 ? 255 : 250, idx % 2 === 0 ? 255 : 252);
+      doc.rect(15, yPos, 180, 10, 'F');
+      doc.setDrawColor(226, 232, 240);
+      doc.rect(15, yPos, 180, 10, 'D');
+
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(8.5);
+      doc.setTextColor(slateDark[0], slateDark[1], slateDark[2]);
+      doc.text(component, 20, yPos + 6.5);
+
+      doc.setFont('helvetica', 'normal');
+      doc.text(detail, 85, yPos + 6.5);
+      yPos += 10;
+    });
+
+    if (engineerBase64) {
+      try { doc.addImage(engineerBase64, 'JPEG', 15, 145, 180, 130); } catch (_) {}
+    }
+
+    renderPdfDocFooter(doc, 2);
+
+    // PAGE 3: BILL OF MATERIALS (BOM TABLE)
+    doc.addPage();
+    renderPdfDocHeader(doc, 'BILL OF MATERIALS (ITEMIZED BREAKDOWN)', propNo, logoBase64);
+
+    const bitems = (q.bomItems && q.bomItems.length > 0)
+      ? q.bomItems
+      : [
+          { category: 'Solar Panels', name: 'Mono PERC Solar Modules 550W', brand: q.panelBrand || 'Adani/Waaree', spec: '550W DCR/Non-DCR', qty: 10, unit: 'Nos' },
+          { category: 'Solar Inverter', name: 'Grid Tie Solar Inverter', brand: q.inverterBrand || 'Growatt/Sungrow', spec: '5kW 3-Phase', qty: 1, unit: 'Set' },
+          { category: 'Structure', name: 'HDG Solar Mounting Structure', brand: 'GES Standard', spec: 'Hot Dip Galvanized', qty: 1, unit: 'Set' },
+          { category: 'Cables & BOS', name: 'Solar DC Cable 4 sq.mm & AC Cable', brand: 'Polycab/Finolex', spec: 'Copper/Aluminum', qty: 1, unit: 'Lot' },
+          { category: 'Earthing & LA', name: 'Chemical Earthing Electrodes & LA', brand: 'GES Heavy Duty', spec: 'Copper Bonded', qty: 3, unit: 'Sets' }
+        ];
+
+    // BOM Table Header
+    doc.setFillColor(slateDark[0], slateDark[1], slateDark[2]);
+    doc.rect(15, 38, 180, 8, 'F');
+    doc.setTextColor(255, 255, 255);
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(8.5);
+    doc.text('#', 18, 43.5);
+    doc.text('ITEM DESCRIPTION', 26, 43.5);
+    doc.text('MAKE / BRAND', 95, 43.5);
+    doc.text('SPECIFICATIONS', 140, 43.5);
+    doc.text('QTY', 182, 43.5, { align: 'right' });
+
+    let bomY = 46;
+    bitems.forEach((item, idx) => {
+      doc.setFillColor(idx % 2 === 0 ? 255 : 248, idx % 2 === 0 ? 255 : 250, idx % 2 === 0 ? 255 : 252);
+      doc.rect(15, bomY, 180, 9, 'F');
+      doc.setDrawColor(226, 232, 240);
+      doc.rect(15, bomY, 180, 9, 'D');
+
+      doc.setTextColor(slateDark[0], slateDark[1], slateDark[2]);
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(8);
+      doc.text(String(idx + 1), 18, bomY + 6);
+      doc.setFont('helvetica', 'bold');
+      doc.text((item.name || item.category || 'Component').substring(0, 35), 26, bomY + 6);
+      doc.setFont('helvetica', 'normal');
+      doc.text((item.brand || '-').substring(0, 22), 95, bomY + 6);
+      doc.text((item.spec || '-').substring(0, 22), 140, bomY + 6);
+      doc.text(`${item.qty || 1} ${item.unit || 'Nos'}`, 182, bomY + 6, { align: 'right' });
+      bomY += 9;
+    });
+
+    renderPdfDocFooter(doc, 3);
+
+    // PAGE 4: FINANCIAL PROPOSAL & COST BREAKDOWN
+    doc.addPage();
+    renderPdfDocHeader(doc, 'FINANCIAL PROPOSAL & INVESTMENT BREAKDOWN', propNo, logoBase64);
+
+    const totalAmt = q.totalAmount || (q.capacityKW || 5) * 45000;
+    const subsidyAmt = q.subsidyAmount || 0;
+    const netAmt = q.netAmount || (totalAmt - subsidyAmt);
+
+    doc.setFillColor(emerald[0], emerald[1], emerald[2]);
+    doc.roundedRect(15, 38, 180, 50, 4, 4, 'F');
+
+    doc.setTextColor(255, 255, 255);
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(11);
+    doc.text('TOTAL SYSTEM PROPOSAL COST', 22, 48);
+
+    doc.setFontSize(9.5);
+    doc.setFont('helvetica', 'normal');
+    doc.text(`Total Turnkey Project Cost (Inclusive of GST & Freight):`, 22, 57);
+    doc.setFont('helvetica', 'bold');
+    doc.text(`Rs. ${totalAmt.toLocaleString('en-IN')}`, 180, 57, { align: 'right' });
+
+    if (subsidyAmt > 0) {
+      doc.setFont('helvetica', 'normal');
+      doc.text(`Estimated Government Subsidy (Direct Benefit Transfer):`, 22, 65);
+      doc.setFont('helvetica', 'bold');
+      doc.text(`- Rs. ${subsidyAmt.toLocaleString('en-IN')}`, 180, 65, { align: 'right' });
+    }
+
+    doc.setDrawColor(255, 255, 255);
+    doc.line(22, 70, 188, 70);
+
+    doc.setFontSize(12);
+    doc.setFont('helvetica', 'bold');
+    doc.text('NET PAYABLE INVESTMENT AMOUNT:', 22, 79);
+    doc.setFontSize(14);
+    doc.text(`Rs. ${netAmt.toLocaleString('en-IN')}`, 180, 79, { align: 'right' });
+
+    if (page4Base64) {
+      try { doc.addImage(page4Base64, 'PNG', 15, 95, 180, 180); } catch (_) {}
+    }
+
+    renderPdfDocFooter(doc, 4);
+
+    // PAGE 5: COMPANY PROFILE, BANK DETAILS & PAYMENT QR
+    doc.addPage();
+    renderPdfDocHeader(doc, 'BANK PAYMENT DETAILS & STAMP CONFIRMATION', propNo, logoBase64);
+
+    // Bank Details Box
+    doc.setFillColor(slateLight[0], slateLight[1], slateLight[2]);
+    doc.roundedRect(15, 38, 105, 75, 3, 3, 'F');
+    doc.setDrawColor(203, 213, 225);
+    doc.roundedRect(15, 38, 105, 75, 3, 3, 'D');
+
+    doc.setTextColor(slateDark[0], slateDark[1], slateDark[2]);
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(10.5);
+    doc.text('OFFICIAL BANK ACCOUNT DETAILS', 22, 47);
+
+    doc.setFontSize(8.5);
+    doc.setFont('helvetica', 'normal');
+    doc.text('Account Name: GREEN ENERGY SOLUTIONS', 22, 56);
+    doc.text('Bank Name: HDFC Bank / ICICI Bank', 22, 63);
+    doc.text('Account Number: 50200086432109', 22, 70);
+    doc.text('IFSC Code: HDFC0001234', 22, 77);
+    doc.text('Branch: Main Branch', 22, 84);
+    doc.text('Account Type: Current Account', 22, 91);
+    doc.text('GSTIN: 27AAAAA0000A1Z5', 22, 98);
+
+    // UPI QR Box
+    doc.setFillColor(255, 255, 255);
+    doc.roundedRect(125, 38, 70, 75, 3, 3, 'F');
+    doc.setDrawColor(203, 213, 225);
+    doc.roundedRect(125, 38, 70, 75, 3, 3, 'D');
+
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(9.5);
+    doc.setTextColor(slateDark[0], slateDark[1], slateDark[2]);
+    doc.text('SCAN & PAY VIA UPI', 160, 47, { align: 'center' });
+
+    if (qrBase64) {
+      try { doc.addImage(qrBase64, 'PNG', 135, 52, 50, 50); } catch (_) {}
+    }
+
+    // Sign Stamp Box
+    doc.setFillColor(248, 250, 252);
+    doc.roundedRect(15, 125, 180, 140, 3, 3, 'F');
+    doc.setDrawColor(203, 213, 225);
+    doc.roundedRect(15, 125, 180, 140, 3, 3, 'D');
+
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(10.5);
+    doc.text('AUTHORIZED SIGNATORY & COMPANY STAMP', 22, 135);
+
+    if (stampBase64) {
+      try { doc.addImage(stampBase64, 'PNG', 65, 145, 80, 70); } catch (_) {}
+    }
+
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(10);
+    doc.text('For GREEN ENERGY SOLUTIONS', 160, 245, { align: 'right' });
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(9);
+    doc.text(`Authorized Signatory: ${creatorName}`, 160, 252, { align: 'right' });
+
+    renderPdfDocFooter(doc, 5);
+
+    // PAGE 6: TERMS & CONDITIONS
+    doc.addPage();
+    renderPdfDocHeader(doc, 'STANDARD TERMS & WARRANTY CONDITIONS', propNo, logoBase64);
+
+    const termsList = [
+      '1. Proposal Validity: This quotation proposal is valid for 15 days from the date of issuance.',
+      '2. Payment Terms: 10% Advance Booking, 80% on Material Dispatch at Site, 10% post Metering/Commissioning.',
+      '3. Solar Panel Warranty: 25 Years Performance Warranty as per manufacturer norms.',
+      '4. Solar Inverter Warranty: 5 Years Standard Manufacturer Replacement Warranty.',
+      '5. Workmanship & Structure: 5 Years Workmanship & Roof Mounting Structure Guarantee.',
+      '6. Net Metering Approval: Discom / Electricity Board net metering approval subject to Discom guidelines.',
+      '7. Delivery Timeline: Material dispatch within 7-10 working days upon receiving advance confirmation.'
+    ];
+
+    let tY = 45;
+    termsList.forEach(t => {
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(8.5);
+      doc.setTextColor(slateDark[0], slateDark[1], slateDark[2]);
+      doc.text(t, 18, tY);
+      tY += 10;
+    });
+
+    renderPdfDocFooter(doc, 6);
+
+    return doc.output('blob');
   },
 
   async generateConfirmationPDF(

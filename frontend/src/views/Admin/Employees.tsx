@@ -23,7 +23,7 @@ export const Employees: React.FC = () => {
   // Form states
   const [fullName, setFullName] = useState('');
   const [phone, setPhone] = useState('');
-  const [role, setRole] = useState<'admin' | 'field_employee' | 'inventory_manager'>('field_employee');
+  const [role, setRole] = useState<'admin' | 'field_employee' | 'inventory_manager' | 'dealer'>('field_employee');
   const [email, setEmail] = useState('');
   const [aadhaarNumber, setAadhaarNumber] = useState('');
   const [panNumber, setPanNumber] = useState('');
@@ -37,6 +37,13 @@ export const Employees: React.FC = () => {
 
   useEffect(() => {
     loadEmployees();
+    const handleRealtimeUpdate = () => loadEmployees();
+    window.addEventListener('app-realtime-update', handleRealtimeUpdate);
+    window.addEventListener('storage', handleRealtimeUpdate);
+    return () => {
+      window.removeEventListener('app-realtime-update', handleRealtimeUpdate);
+      window.removeEventListener('storage', handleRealtimeUpdate);
+    };
   }, []);
 
   const handleToggleStatus = async (emp: Profile) => {
@@ -131,7 +138,7 @@ export const Employees: React.FC = () => {
           <div key={emp.id} className={`bg-white border rounded-2xl p-5 hover:shadow-md transition-shadow relative ${!emp.isActive ? 'border-red-200 bg-red-50/20' : 'border-slate-200'}`}>
             <div className="flex items-center space-x-3">
               <div className={`w-10 h-10 rounded-full flex items-center justify-center font-extrabold ${
-                !emp.isActive ? 'bg-rose-100 text-rose-700' : emp.role === 'admin' ? 'bg-emerald-100 text-emerald-700' : emp.role === 'inventory_manager' ? 'bg-amber-100 text-amber-700' : 'bg-sky-100 text-sky-700'
+                !emp.isActive ? 'bg-rose-100 text-rose-700' : emp.role === 'admin' ? 'bg-emerald-100 text-emerald-700' : emp.role === 'inventory_manager' ? 'bg-amber-100 text-amber-700' : emp.role === 'dealer' ? 'bg-purple-100 text-purple-700' : 'bg-sky-100 text-sky-700'
               }`}>
                 {emp.fullName ? emp.fullName[0].toUpperCase() : 'U'}
               </div>
@@ -258,6 +265,7 @@ export const Employees: React.FC = () => {
                   className="w-full border border-slate-200 rounded-xl px-3 py-2.5 bg-slate-50 focus:outline-none focus:ring-1 focus:ring-emerald-500 cursor-pointer"
                 >
                   <option value="field_employee">Field Employee</option>
+                  <option value="dealer">Dealer Partner / Franchise</option>
                   <option value="inventory_manager">Inventory Manager (Store & Stock Only)</option>
                   <option value="admin">Administrator</option>
                   {(currentRole === 'super_admin' || originalUser?.role === 'super_admin') && (

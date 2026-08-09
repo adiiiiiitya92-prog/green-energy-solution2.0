@@ -5,7 +5,7 @@ import { saveRecordToFirestore, fetchCollectionFromFirestore } from './firebase'
 export const employeeService = {
   async getEmployees(): Promise<Profile[]> {
     const deletedIds = await getDeletedRecordIdsSet();
-    const localProfiles = await db.profiles.where('role').anyOf(['admin', 'field_employee', 'inventory_manager']).toArray();
+    const localProfiles = await db.profiles.where('role').anyOf(['admin', 'field_employee', 'inventory_manager', 'dealer']).toArray();
     const validLocal = localProfiles.filter(p => !deletedIds.has(p.id));
 
     const syncRemote = async () => {
@@ -30,7 +30,7 @@ export const employeeService = {
 
     await syncRemote();
     const freshDeleted = await getDeletedRecordIdsSet();
-    const refreshed = await db.profiles.where('role').anyOf(['admin', 'field_employee', 'inventory_manager']).toArray();
+    const refreshed = await db.profiles.where('role').anyOf(['admin', 'field_employee', 'inventory_manager', 'dealer']).toArray();
     return refreshed.filter(p => !freshDeleted.has(p.id));
   },
 
@@ -75,6 +75,7 @@ export const employeeService = {
     };
     await db.profiles.add(newProfile);
     saveRecordToFirestore('profiles', id, newProfile);
+    window.dispatchEvent(new CustomEvent('app-realtime-update'));
     return id;
   },
 
@@ -84,6 +85,7 @@ export const employeeService = {
       profile.isActive = !profile.isActive;
       await db.profiles.put(profile);
       saveRecordToFirestore('profiles', id, profile);
+      window.dispatchEvent(new CustomEvent('app-realtime-update'));
     }
   },
 
@@ -96,5 +98,6 @@ export const employeeService = {
     } catch (e) {
       console.warn("Firestore delete profile note:", e);
     }
+    window.dispatchEvent(new CustomEvent('app-realtime-update'));
   }
 };

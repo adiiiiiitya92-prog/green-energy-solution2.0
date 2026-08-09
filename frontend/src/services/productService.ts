@@ -77,6 +77,7 @@ export const productService = {
       body: JSON.stringify(newProduct)
     }).catch(err => console.warn("Express Backend API product sync note:", err));
 
+    window.dispatchEvent(new CustomEvent('app-realtime-update'));
     return id;
   },
 
@@ -94,6 +95,8 @@ export const productService = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(product)
     }).catch(err => console.warn("Express Backend API product update note:", err));
+
+    window.dispatchEvent(new CustomEvent('app-realtime-update'));
   },
 
   async deleteProduct(id: string, skipApprovalCheck = false): Promise<{ success: boolean; requiresApproval?: boolean }> {
@@ -127,6 +130,7 @@ export const productService = {
       method: 'DELETE'
     }).catch(err => console.warn("Express Backend API product delete note:", err));
 
+    window.dispatchEvent(new CustomEvent('app-realtime-update'));
     return { success: true };
   }
 };

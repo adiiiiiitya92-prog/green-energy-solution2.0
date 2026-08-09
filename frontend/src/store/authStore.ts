@@ -3,7 +3,7 @@ import type { Profile } from '../types';
 import { db, seedDemoData, ensureDemoProfilesExist, DEFAULT_DEMO_PROFILES } from '../services/db';
 
 interface AuthState {
-  currentRole: 'super_admin' | 'admin' | 'field_employee' | 'inventory_manager';
+  currentRole: 'super_admin' | 'admin' | 'field_employee' | 'inventory_manager' | 'dealer';
   currentUser: Profile | null;
   isAuthenticated: boolean;
   originalUser: Profile | null;
@@ -12,7 +12,7 @@ interface AuthState {
   verifyPreApprovedEmail: (emailOrPhone: string) => Promise<{ isApproved: boolean; profile?: Profile; isActivated?: boolean }>;
   createAccount: (emailOrPhone: string, password: string) => Promise<{ success: boolean; message: string; profile?: Profile }>;
   logout: () => Promise<void>;
-  setRole: (role: 'super_admin' | 'admin' | 'field_employee' | 'inventory_manager') => Promise<void>;
+  setRole: (role: 'super_admin' | 'admin' | 'field_employee' | 'inventory_manager' | 'dealer') => Promise<void>;
   impersonateUser: (user: Profile) => Promise<void>;
   stopImpersonating: () => Promise<void>;
   initAuth: () => Promise<void>;

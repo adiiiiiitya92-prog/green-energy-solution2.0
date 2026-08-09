@@ -5,6 +5,7 @@ import { shareQuotationViaWhatsapp } from '../../services/quotationShareService'
 import { productService } from '../../services/productService';
 import { packageService } from '../../services/packageService';
 import { pdfService, createNewQuotationProposalHtml, printQuotationHTML } from '../../services/pdfService';
+import { generateQuotationDocumentPDF } from '../../services/pdfOptimizationService';
 import { uploadImageToFirebase, uploadPdfToFirebase } from '../../services/firebase';
 import { getCachedPdfBlob, setCachedPdfBlob, ensurePdfBlobForQuotation } from '../../services/pdfCacheService';
 import { useAuthStore } from '../../store/authStore';
@@ -887,7 +888,8 @@ export const QuotationDocument: React.FC<{
       sentViaWhatsapp: false
     };
 
-    const promise = pdfService.generateQuotationPDF(tempQ, mockLead, preparedBy)
+    const container = contentRef.current || (document.querySelector('.quotation-print-container') as HTMLElement);
+    const promise = (container ? generateQuotationDocumentPDF(container, `Solar_Quotation_${proposalId.replace(/\//g, '_')}.pdf`) : pdfService.generateQuotationPDF(tempQ, mockLead, preparedBy))
       .then(blob => {
         lastPdfBlobRef.current = blob;
         setCachedPdfBlob(proposalId, blob);
@@ -954,7 +956,7 @@ export const QuotationDocument: React.FC<{
     // Check if background pre-cache promise is already running
     if (!pdfBlob && pdfGenPromiseRef.current) {
       setIsGenerating(true);
-      setPdfProgressMsg('Preparing Proposal PDF...');
+      setPdfProgressMsg('Preparing HD Proposal PDF...');
       pdfBlob = (await pdfGenPromiseRef.current) || undefined;
       setIsGenerating(false);
       setPdfProgressMsg(null);
@@ -973,9 +975,14 @@ export const QuotationDocument: React.FC<{
 
     if (!pdfBlob) {
       setIsGenerating(true);
-      setPdfProgressMsg('Preparing Proposal PDF...');
+      setPdfProgressMsg('Preparing HD Proposal PDF...');
       try {
-        pdfBlob = await pdfService.generateQuotationPDF(tempQ, mockLead, preparedBy);
+        const container = contentRef.current || (document.querySelector('.quotation-print-container') as HTMLElement);
+        if (container) {
+          pdfBlob = await generateQuotationDocumentPDF(container, `Solar_Quotation_${proposalId.replace(/\//g, '_')}.pdf`);
+        } else {
+          pdfBlob = await pdfService.generateQuotationPDF(tempQ, mockLead, preparedBy);
+        }
         lastPdfBlobRef.current = pdfBlob;
         if (pdfBlob) setCachedPdfBlob(proposalId, pdfBlob);
       } catch (e) {
@@ -1082,12 +1089,21 @@ export const QuotationDocument: React.FC<{
             createdAt: new Date().toISOString(),
             updatedAt: new Date().toISOString()
           };
-          blob = await pdfService.generateQuotationPDF(
-            fullQuotation,
-            mockLead,
-            preparedBy,
-            (cur, total) => setPdfProgressMsg(`Saving & Generating PDF... (Page ${cur}/${total})`)
-          );
+          const container = contentRef.current || (document.querySelector('.quotation-print-container') as HTMLElement);
+          if (container) {
+            blob = await generateQuotationDocumentPDF(
+              container,
+              `Solar_Quotation_${proposalId.replace(/\//g, '_')}.pdf`,
+              (cur, total) => setPdfProgressMsg(`Saving & Generating HD PDF... (Page ${cur}/${total})`)
+            );
+          } else {
+            blob = await pdfService.generateQuotationPDF(
+              fullQuotation,
+              mockLead,
+              preparedBy,
+              (cur, total) => setPdfProgressMsg(`Saving & Generating PDF... (Page ${cur}/${total})`)
+            );
+          }
         }
       }
 

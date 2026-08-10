@@ -10,7 +10,10 @@ export const filterLeadsForUser = (
   currentRole: string
 ): Lead[] => {
   const isSuperAdmin = currentRole === 'super_admin' || currentUser?.role === 'super_admin';
-  if (isSuperAdmin || !currentUser) {
+  const isAdmin = currentRole === 'admin' || currentUser?.role === 'admin';
+  const isInventoryManager = currentRole === 'inventory_manager' || currentUser?.role === 'inventory_manager';
+
+  if (isSuperAdmin || isAdmin || isInventoryManager || !currentUser) {
     return leads;
   }
   return leads.filter(l => 

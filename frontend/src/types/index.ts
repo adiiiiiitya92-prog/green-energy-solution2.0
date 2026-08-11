@@ -37,6 +37,7 @@ export interface Lead {
   followUpSetAt?: string;
   followUpSetBy?: string;
   followUpCompleted?: boolean;
+  installationRemark?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -144,7 +145,7 @@ export interface OrderConfirmation {
 export interface ClientDocument {
   id: string;
   leadId: string;
-  docType: 'pan_card' | 'aadhar_card' | 'electricity_bill' | 'tax_paper' | 'account_details' | 'dcr_certificate' | 'wcr_report' | 'model_agreement' | 'annexure_proforma';
+  docType: 'pan_card' | 'aadhar_card' | 'electricity_bill' | 'tax_paper' | 'account_details' | 'dcr_certificate' | 'wcr_report' | 'model_agreement' | 'annexure_proforma' | 'cfa_agreement';
   fileBlob: Blob | string;
   uploadedBy: string;
   uploadedAt: string;

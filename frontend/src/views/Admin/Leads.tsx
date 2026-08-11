@@ -17,6 +17,7 @@ import { uploadImageToFirebase, uploadPdfToFirebase } from '../../services/fireb
 import { DcrDocument } from './DcrDocument';
 import { WcrDocument } from './WcrDocument';
 import { ModelAgreementDocument } from './ModelAgreementDocument';
+import { CfaAgreementDocument } from './CfaAgreementDocument';
 import { AnnexureProformaDocument } from './AnnexureProformaDocument';
 import { QuotationDocument } from './QuotationDocument';
 import { getCachedPdfBlob, ensurePdfBlobForQuotation } from '../../services/pdfCacheService';
@@ -82,7 +83,7 @@ export const Leads: React.FC = () => {
   const [activeTab, setActiveTab] = useState<'timeline' | 'quotation' | 'order' | 'installation' | 'registration' | 'documentation'>(
     () => (sessionStorage.getItem('leads_activeTab') as any) || 'timeline'
   );
-  const [docSubTab, setDocSubTab] = useState<'dcr' | 'wcr' | 'model_agreement' | 'annexure_proforma'>('dcr');
+  const [docSubTab, setDocSubTab] = useState<'dcr' | 'wcr' | 'model_agreement' | 'cfa_agreement' | 'annexure_proforma'>('dcr');
 
   // Wrapper to persist active tab to sessionStorage
   const switchTab = (tab: typeof activeTab) => {
@@ -116,6 +117,7 @@ export const Leads: React.FC = () => {
   const [editAssignedAdminId, setEditAssignedAdminId] = useState('');
   const [editFollowUpDate, setEditFollowUpDate] = useState('');
   const [editFollowUpNotes, setEditFollowUpNotes] = useState('');
+  const [editInstallationRemark, setEditInstallationRemark] = useState('');
   const [isSavingEditLead, setIsSavingEditLead] = useState(false);
 
   useEffect(() => {
@@ -131,6 +133,7 @@ export const Leads: React.FC = () => {
       setEditAssignedAdminId(leadToEdit.assignedAdminId || '');
       setEditFollowUpDate(leadToEdit.nextFollowUpDate || '');
       setEditFollowUpNotes(leadToEdit.followUpNotes || '');
+      setEditInstallationRemark(leadToEdit.installationRemark || '');
     }
   }, [leadToEdit]);
 
@@ -228,11 +231,31 @@ export const Leads: React.FC = () => {
   // Client Registration Checklist States
   const [regChecklist, setRegChecklist] = useState<ClientRegistration | null>(null);
 
-  // Installation Quality States
+  // Installation Quality & Remark States
   const [installPhotos, setInstallPhotos] = useState<InstallationPhoto[]>([]);
   const [isCapturingInstall, setIsCapturingInstall] = useState(false);
   const [installPhotoType, setInstallPhotoType] = useState<InstallationPhoto['photoType']>('earthing');
   const [isLocatingInstall, setIsLocatingInstall] = useState(false);
+  const [installRemarkText, setInstallRemarkText] = useState('');
+  const [isSavingInstallRemark, setIsSavingInstallRemark] = useState(false);
+  const [saveRemarkSuccess, setSaveRemarkSuccess] = useState(false);
+
+  const handleSaveInstallRemark = async () => {
+    if (!selectedLead) return;
+    setIsSavingInstallRemark(true);
+    try {
+      const updatedRemark = installRemarkText.trim();
+      await leadService.updateLead(selectedLead.id, { installationRemark: updatedRemark });
+      setSelectedLead((prev) => (prev ? { ...prev, installationRemark: updatedRemark } : null));
+      setSaveRemarkSuccess(true);
+      setTimeout(() => setSaveRemarkSuccess(false), 2500);
+    } catch (err) {
+      console.error('Error saving installation remark:', err);
+      alert('Failed to save installation remark.');
+    } finally {
+      setIsSavingInstallRemark(false);
+    }
+  };
 
   // Release Dept states
   const [releaseNotes, setReleaseNotes] = useState('');
@@ -573,6 +596,7 @@ export const Leads: React.FC = () => {
     if (!lead || !lead.id) return;
     const shouldPreserveTab = preserveTab !== undefined ? preserveTab : (selectedLead?.id === lead.id);
     setSelectedLead(lead);
+    setInstallRemarkText(lead.installationRemark || '');
     // Persist to sessionStorage so refresh restores same lead + tab
     sessionStorage.setItem('leads_selectedLeadId', lead.id);
     if (!shouldPreserveTab) {
@@ -781,7 +805,8 @@ export const Leads: React.FC = () => {
         nextFollowUpDate: formattedEditFollowUpDate,
         followUpNotes: editFollowUpNotes.trim() || undefined,
         followUpSetAt: formattedEditFollowUpDate ? new Date().toISOString() : leadToEdit.followUpSetAt,
-        followUpCompleted: false
+        followUpCompleted: false,
+        installationRemark: editInstallationRemark.trim() || undefined
       };
 
       await leadService.updateLead(leadToEdit.id, updatedPatch);
@@ -1452,6 +1477,11 @@ export const Leads: React.FC = () => {
                 {formatCleanLeadDescription(selectedLead.description) ? (
                   <span className="block mt-1 text-slate-500 font-normal">{formatCleanLeadDescription(selectedLead.description)}</span>
                 ) : null}
+                {selectedLead.installationRemark && (
+                  <span className="block mt-2 text-amber-900 font-semibold bg-amber-50 border border-amber-200/80 px-2.5 py-1 rounded-md text-[11px]">
+                    <strong className="text-amber-700">🛠️ Installation Remark:</strong> {selectedLead.installationRemark}
+                  </span>
+                )}
               </p>
             </div>
 
@@ -2107,9 +2137,46 @@ export const Leads: React.FC = () => {
             {/* Tab 4: Installation Photos & Quality Checks */}
             {activeTab === 'installation' && (
               <div className="space-y-6 text-xs font-semibold">
-                <div className="border-b border-slate-100 pb-3">
-                  <h3 className="text-sm font-bold text-slate-800 uppercase tracking-wider">Quality Assurance Installation Photos</h3>
-                  <p className="text-[10px] text-slate-400 font-medium">Capture coordinates and watermarked metadata stamped visibly on image uploads.</p>
+                <div className="border-b border-slate-100 pb-3 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+                  <div>
+                    <h3 className="text-sm font-bold text-slate-800 uppercase tracking-wider">Installation & Quality Assurance</h3>
+                    <p className="text-[10px] text-slate-400 font-medium">Manage installation remarks and capture geotagged inspection photos.</p>
+                  </div>
+                </div>
+
+                {/* Quick Installation Remark Form */}
+                <div className="bg-amber-50/70 border border-amber-200/90 rounded-2xl p-4 space-y-2.5 max-w-xl shadow-2xs">
+                  <div className="flex items-center justify-between">
+                    <label className="block text-xs font-extrabold text-amber-900 uppercase tracking-wider flex items-center gap-1.5">
+                      <MessageSquare className="w-3.5 h-3.5 text-amber-600" />
+                      <span>Installation Quick Remark / Note</span>
+                      <span className="text-[10px] text-amber-600 font-normal lowercase">(visible on lead card)</span>
+                    </label>
+                    {saveRemarkSuccess && (
+                      <span className="text-[10px] text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded font-bold flex items-center gap-1">
+                        <CheckCircle className="w-3 h-3 text-emerald-600" /> Saved
+                      </span>
+                    )}
+                  </div>
+                  <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
+                    <input
+                      type="text"
+                      maxLength={120}
+                      value={installRemarkText}
+                      onChange={(e) => setInstallRemarkText(e.target.value)}
+                      placeholder="e.g. Structure done, Wiring completed, Meter pending..."
+                      className="flex-1 border border-amber-300 focus:border-amber-500 rounded-xl px-3 py-2 bg-white text-xs font-medium text-slate-800 focus:outline-none shadow-2xs"
+                    />
+                    <button
+                      type="button"
+                      onClick={handleSaveInstallRemark}
+                      disabled={isSavingInstallRemark}
+                      className="px-4 py-2 bg-amber-600 hover:bg-amber-700 disabled:bg-slate-300 text-white rounded-xl text-xs font-bold transition-all shrink-0 flex items-center justify-center gap-1.5 cursor-pointer shadow-2xs"
+                    >
+                      <Sparkles className="w-3.5 h-3.5" />
+                      <span>{isSavingInstallRemark ? 'Saving...' : 'Save Remark'}</span>
+                    </button>
+                  </div>
                 </div>
 
                 {/* Capture photo input form */}
@@ -2249,6 +2316,14 @@ export const Leads: React.FC = () => {
                         Model Agreement
                       </button>
                       <button
+                        onClick={() => { setDocSubTab('cfa_agreement'); setEditingDocData(null); }}
+                        className={`px-3 py-1 text-xs font-bold rounded-md transition-all cursor-pointer ${
+                          docSubTab === 'cfa_agreement' ? 'bg-emerald-600 text-white shadow-xs' : 'text-slate-650 hover:bg-slate-200'
+                        }`}
+                      >
+                        CFA Agreement
+                      </button>
+                      <button
                         onClick={() => { setDocSubTab('annexure_proforma'); setEditingDocData(null); }}
                         className={`px-3 py-1 text-xs font-bold rounded-md transition-all cursor-pointer ${
                           docSubTab === 'annexure_proforma' ? 'bg-emerald-600 text-white shadow-xs' : 'text-slate-650 hover:bg-slate-200'
@@ -2266,22 +2341,23 @@ export const Leads: React.FC = () => {
                 </div>
 
                 {/* Saved Generated Documentation Files Section */}
-                {kycDocs.filter(d => ['dcr_certificate', 'wcr_report', 'model_agreement', 'annexure_proforma'].includes(d.docType)).length > 0 && (
+                {kycDocs.filter(d => ['dcr_certificate', 'wcr_report', 'model_agreement', 'cfa_agreement', 'annexure_proforma'].includes(d.docType)).length > 0 && (
                   <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 space-y-3 shadow-2xs">
                     <div className="flex items-center justify-between border-b border-slate-200/80 pb-2">
                       <h4 className="text-xs font-black text-slate-800 uppercase tracking-wider flex items-center gap-1.5">
                         <FileText className="w-4 h-4 text-emerald-600" />
-                        <span>Saved Documentation Files ({kycDocs.filter(d => ['dcr_certificate', 'wcr_report', 'model_agreement', 'annexure_proforma'].includes(d.docType)).length})</span>
+                        <span>Saved Documentation Files ({kycDocs.filter(d => ['dcr_certificate', 'wcr_report', 'model_agreement', 'cfa_agreement', 'annexure_proforma'].includes(d.docType)).length})</span>
                       </h4>
                       <span className="text-[10px] text-slate-400 font-bold">Saved for {selectedLead.name}</span>
                     </div>
 
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                      {kycDocs.filter(d => ['dcr_certificate', 'wcr_report', 'model_agreement', 'annexure_proforma'].includes(d.docType)).map((doc) => {
+                      {kycDocs.filter(d => ['dcr_certificate', 'wcr_report', 'model_agreement', 'cfa_agreement', 'annexure_proforma'].includes(d.docType)).map((doc) => {
                         const getDocTitle = (type: string) => {
                           if (type === 'dcr_certificate') return 'DCR Certificate';
                           if (type === 'wcr_report') return 'WCR Work Completion Report';
                           if (type === 'model_agreement') return 'Model Agreement';
+                          if (type === 'cfa_agreement') return 'CFA Agreement';
                           if (type === 'annexure_proforma') return 'Annexure Proforma';
                           return type.replace('_', ' ').toUpperCase();
                         };
@@ -2290,6 +2366,7 @@ export const Leads: React.FC = () => {
                           if (type === 'dcr_certificate') return 'dcr';
                           if (type === 'wcr_report') return 'wcr';
                           if (type === 'model_agreement') return 'model_agreement';
+                          if (type === 'cfa_agreement') return 'cfa_agreement';
                           return 'annexure_proforma';
                         };
 
@@ -2376,6 +2453,8 @@ export const Leads: React.FC = () => {
                     <WcrDocument defaultLeadId={selectedLead?.id} isEmbedded={true} initialData={editingDocData} onSaveSuccess={() => handleSelectLead(selectedLead)} />
                   ) : docSubTab === 'model_agreement' ? (
                     <ModelAgreementDocument defaultLeadId={selectedLead?.id} isEmbedded={true} initialData={editingDocData} onSaveSuccess={() => handleSelectLead(selectedLead)} />
+                  ) : docSubTab === 'cfa_agreement' ? (
+                    <CfaAgreementDocument defaultLeadId={selectedLead?.id} isEmbedded={true} initialData={editingDocData} onSaveSuccess={() => handleSelectLead(selectedLead)} />
                   ) : (
                     <AnnexureProformaDocument defaultLeadId={selectedLead?.id} isEmbedded={true} initialData={editingDocData} onSaveSuccess={() => handleSelectLead(selectedLead)} />
                   )}
@@ -3568,6 +3647,18 @@ export const Leads: React.FC = () => {
                             <p className="text-xs text-slate-400 mt-2 line-clamp-2">{formatCleanLeadDescription(lead.description)}</p>
                           ) : null}
 
+                          {/* Compact Installation Remark tag inside Lead Card */}
+                          {lead.installationRemark ? (
+                            <div className="mt-2 px-2.5 py-1 bg-amber-50/90 border border-amber-200/80 rounded-lg text-[11px] font-medium text-amber-950 flex items-center gap-1.5 min-w-0 shadow-2xs">
+                              <span className="font-extrabold text-amber-700 shrink-0 text-[10px] uppercase tracking-wider flex items-center gap-1">
+                                🛠️ Remark:
+                              </span>
+                              <span className="truncate text-slate-700 font-semibold" title={lead.installationRemark}>
+                                {lead.installationRemark}
+                              </span>
+                            </div>
+                          ) : null}
+
                           {/* Prominent Financial & Remaining Pending Balance Box inside Card */}
                           {fin && (fin.totalValue > 0 || fin.paidAmount > 0) ? (
                             <div className="mt-3 p-3 bg-slate-900 text-white rounded-xl border border-slate-800 space-y-1.5 shadow-2xs">
@@ -3995,6 +4086,21 @@ export const Leads: React.FC = () => {
                     />
                   </div>
                 </div>
+              </div>
+
+              {/* Installation Remark Field in Edit Modal */}
+              <div className="bg-amber-50/60 border border-amber-200/90 rounded-xl p-3.5 space-y-1.5">
+                <label className="block text-[11px] font-bold text-amber-900 uppercase tracking-wider flex items-center gap-1">
+                  🛠️ Quick Installation Remark / Note
+                </label>
+                <input
+                  type="text"
+                  maxLength={120}
+                  value={editInstallationRemark}
+                  onChange={(e) => setEditInstallationRemark(e.target.value)}
+                  placeholder="e.g. Structure complete, Inverter mounted..."
+                  className="w-full border border-amber-300 rounded-xl px-3 py-2 bg-white text-slate-800 text-xs font-medium focus:outline-none focus:border-amber-600 shadow-2xs"
+                />
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">

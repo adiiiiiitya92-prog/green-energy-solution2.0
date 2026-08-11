@@ -16,6 +16,7 @@ import { ShadowAnalysisContainer } from './components/ShadowAnalysis';
 import { DcrDocument } from './views/Admin/DcrDocument';
 import { WcrDocument } from './views/Admin/WcrDocument';
 import { ModelAgreementDocument } from './views/Admin/ModelAgreementDocument';
+import { CfaAgreementDocument } from './views/Admin/CfaAgreementDocument';
 import { QuotationDocument } from './views/Admin/QuotationDocument';
 import { Complaints } from './views/Admin/Complaints';
 
@@ -104,6 +105,7 @@ export const App: React.FC = () => {
               <Route path="/dcr-document" element={<DcrDocument />} />
               <Route path="/wcr-document" element={<WcrDocument />} />
               <Route path="/model-agreement" element={<ModelAgreementDocument />} />
+              <Route path="/cfa-agreement" element={<CfaAgreementDocument />} />
               <Route path="/quotation-document" element={<QuotationDocument />} />
               
               {currentRole === 'super_admin' ? (

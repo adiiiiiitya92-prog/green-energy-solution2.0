@@ -71,14 +71,15 @@ export async function generateOptimizedPDF(
   // Find target pages in element or DOM
   let targets: HTMLElement[] = [];
   if (element) {
-    const pagesInEl = Array.from(element.querySelectorAll('.dcr-page, .wcr-page, .annexure-proforma-page, .model-agreement-page')) as HTMLElement[];
+    const pagesInEl = Array.from(element.querySelectorAll('.dcr-page, .wcr-page, .annexure-proforma-page, .model-agreement-page, .cfa-agreement-page')) as HTMLElement[];
     if (pagesInEl.length > 0) {
       targets = pagesInEl;
     } else if (
       element.classList.contains('dcr-page') ||
       element.classList.contains('wcr-page') ||
       element.classList.contains('annexure-proforma-page') ||
-      element.classList.contains('model-agreement-page')
+      element.classList.contains('model-agreement-page') ||
+      element.classList.contains('cfa-agreement-page')
     ) {
       targets = [element];
     }
@@ -86,7 +87,7 @@ export async function generateOptimizedPDF(
 
   // Fallback if targets still empty: query document.body
   if (targets.length === 0) {
-    const globalPages = Array.from(document.querySelectorAll('.dcr-page, .wcr-page, .annexure-proforma-page, .model-agreement-page')) as HTMLElement[];
+    const globalPages = Array.from(document.querySelectorAll('.dcr-page, .wcr-page, .annexure-proforma-page, .model-agreement-page, .cfa-agreement-page')) as HTMLElement[];
     if (globalPages.length > 0) {
       targets = globalPages;
     } else if (element) {
@@ -126,7 +127,7 @@ export async function generateOptimizedPDF(
           sanitizeClonedDocumentForHtml2Canvas(clonedDoc);
 
           // Ensure target page containers are 100% flex & visible in clone
-          const pages = clonedDoc.querySelectorAll('.dcr-page, .wcr-page, .annexure-proforma-page, .model-agreement-page');
+          const pages = clonedDoc.querySelectorAll('.dcr-page, .wcr-page, .annexure-proforma-page, .model-agreement-page, .cfa-agreement-page');
           pages.forEach((p) => {
             const pageEl = p as HTMLElement;
             pageEl.style.display = 'flex';

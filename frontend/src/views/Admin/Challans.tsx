@@ -65,6 +65,7 @@ export const Challans: React.FC = () => {
   // Row selection states
   const [currentProductId, setCurrentProductId] = useState('');
   const [currentQty, setCurrentQty] = useState(1);
+  const [currentUnit, setCurrentUnit] = useState('Nos');
   const [selectedSerials, setSelectedSerials] = useState<string[]>([]);
 
   // Edit Form States
@@ -76,6 +77,7 @@ export const Challans: React.FC = () => {
   const [editNotes, setEditNotes] = useState('');
   const [currentEditProductId, setCurrentEditProductId] = useState('');
   const [currentEditQty, setCurrentEditQty] = useState(1);
+  const [currentEditUnit, setCurrentEditUnit] = useState('Nos');
   const [selectedEditSerials, setSelectedEditSerials] = useState<string[]>([]);
 
   // Date & Type Filters & Collapsible card State
@@ -155,8 +157,29 @@ export const Challans: React.FC = () => {
     setNotes('');
     setCurrentProductId('');
     setCurrentQty(1);
+    setCurrentUnit('Nos');
     setSelectedSerials([]);
     setShowAddModal(true);
+  };
+
+  const handleProductSelect = (prodId: string) => {
+    setCurrentProductId(prodId);
+    const p = products.find(prod => prod.id === prodId);
+    if (p && p.unit) {
+      setCurrentUnit(p.unit);
+    } else {
+      setCurrentUnit('Nos');
+    }
+  };
+
+  const handleEditProductSelect = (prodId: string) => {
+    setCurrentEditProductId(prodId);
+    const p = products.find(prod => prod.id === prodId);
+    if (p && p.unit) {
+      setCurrentEditUnit(p.unit);
+    } else {
+      setCurrentEditUnit('Nos');
+    }
   };
 
   // Autocomplete Business Search
@@ -285,7 +308,7 @@ export const Challans: React.FC = () => {
       productId: currentProductId,
       productName: targetProduct.name,
       qty: currentQty,
-      unit: targetProduct.unit || 'Nos',
+      unit: currentUnit.trim() || targetProduct.unit || 'Nos',
       rate: targetProduct.rate || 0,
       serialNumbers: selectedSerials
     };
@@ -293,6 +316,7 @@ export const Challans: React.FC = () => {
     setChallanItems([...challanItems, newItem]);
     setCurrentProductId('');
     setCurrentQty(1);
+    setCurrentUnit('Nos');
     setSelectedSerials([]);
   };
 
@@ -471,6 +495,7 @@ export const Challans: React.FC = () => {
     setEditNotes(ch.notes || '');
     setCurrentEditProductId('');
     setCurrentEditQty(1);
+    setCurrentEditUnit('Nos');
   };
 
   const handleDeleteChallan = async (ch: Challan) => {
@@ -523,7 +548,7 @@ export const Challans: React.FC = () => {
       productId: currentEditProductId,
       productName: targetProduct.name,
       qty: currentEditQty,
-      unit: targetProduct.unit || 'Nos',
+      unit: currentEditUnit.trim() || targetProduct.unit || 'Nos',
       rate: targetProduct.rate || 0,
       serialNumbers: selectedEditSerials
     };
@@ -531,6 +556,7 @@ export const Challans: React.FC = () => {
     setEditChallanItems([...editChallanItems, newItem]);
     setCurrentEditProductId('');
     setCurrentEditQty(1);
+    setCurrentEditUnit('Nos');
     setSelectedEditSerials([]);
   };
 
@@ -1133,12 +1159,12 @@ export const Challans: React.FC = () => {
                 <p className="text-[10px] uppercase font-bold text-slate-400 tracking-wider">Dispatched Line Items</p>
 
                 {/* Item Form Inputs */}
-                <div className="flex gap-2 items-end">
-                  <div className="flex-1">
+                <div className="grid grid-cols-1 sm:grid-cols-12 gap-2 items-end">
+                  <div className="sm:col-span-5">
                     <label className="block text-slate-500 mb-1">Select Product</label>
                     <select
                       value={currentProductId}
-                      onChange={(e) => setCurrentProductId(e.target.value)}
+                      onChange={(e) => handleProductSelect(e.target.value)}
                       className="w-full border border-slate-200 rounded-xl px-2.5 py-2 bg-white cursor-pointer"
                     >
                       <option value="">-- Select Component --</option>
@@ -1148,7 +1174,7 @@ export const Challans: React.FC = () => {
                     </select>
                   </div>
 
-                  <div className="w-24">
+                  <div className="sm:col-span-2">
                     <label className="block text-slate-500 mb-1">Quantity</label>
                     <input
                       type="number"
@@ -1159,13 +1185,40 @@ export const Challans: React.FC = () => {
                     />
                   </div>
 
-                  <button
-                    type="button"
-                    onClick={handleAddItem}
-                    className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-white font-bold rounded-xl h-[34px] cursor-pointer"
-                  >
-                    Add
-                  </button>
+                  <div className="sm:col-span-3">
+                    <label className="block text-slate-500 mb-1">Unit (UOM)</label>
+                    <input
+                      type="text"
+                      list="uom-challan-suggestions"
+                      value={currentUnit}
+                      onChange={(e) => setCurrentUnit(e.target.value)}
+                      placeholder="e.g. Nos, Pcs"
+                      className="w-full border border-slate-200 rounded-xl px-2.5 py-1.5 bg-white focus:outline-none text-slate-900 font-semibold"
+                    />
+                    <datalist id="uom-challan-suggestions">
+                      <option value="Nos" />
+                      <option value="Pcs" />
+                      <option value="Sets" />
+                      <option value="Watt" />
+                      <option value="kW" />
+                      <option value="Meters" />
+                      <option value="Kg" />
+                      <option value="Feet" />
+                      <option value="Box" />
+                      <option value="Lot" />
+                      <option value="Sq.Ft." />
+                    </datalist>
+                  </div>
+
+                  <div className="sm:col-span-2">
+                    <button
+                      type="button"
+                      onClick={handleAddItem}
+                      className="w-full py-2 bg-slate-800 hover:bg-slate-700 text-white font-bold rounded-xl h-[34px] cursor-pointer"
+                    >
+                      Add
+                    </button>
+                  </div>
                 </div>
 
                 {/* Serial Numbers Picker UI */}
@@ -1212,6 +1265,7 @@ export const Challans: React.FC = () => {
                       <thead>
                         <tr className="bg-slate-50 text-slate-400 border-b border-slate-100">
                           <th className="px-3 py-2 font-bold">Item</th>
+                          <th className="px-3 py-2 text-center font-bold">UOM</th>
                           <th className="px-3 py-2 text-right font-bold">Qty</th>
                           <th className="px-3 py-2 text-center font-bold">Remove</th>
                         </tr>
@@ -1231,7 +1285,8 @@ export const Challans: React.FC = () => {
                                 </div>
                               )}
                             </td>
-                            <td className="px-3 py-2.5 text-slate-900 text-right align-top">{item.qty} {item.unit || 'units'}</td>
+                            <td className="px-3 py-2.5 text-slate-600 text-center font-bold">{item.unit || 'Nos'}</td>
+                            <td className="px-3 py-2.5 text-slate-900 text-right align-top">{item.qty}</td>
                             <td className="px-3 py-2.5 text-center">
                               <button
                                 type="button"
@@ -1352,22 +1407,22 @@ export const Challans: React.FC = () => {
                 <p className="text-[10px] uppercase font-bold text-slate-400 tracking-wider">Dispatched Line Items</p>
 
                 {/* Item Form Inputs */}
-                <div className="flex gap-2 items-end">
-                  <div className="flex-1">
+                <div className="grid grid-cols-1 sm:grid-cols-12 gap-2 items-end">
+                  <div className="sm:col-span-5">
                     <label className="block text-slate-500 mb-1">Select Product</label>
                     <select
                       value={currentEditProductId}
-                      onChange={(e) => setCurrentEditProductId(e.target.value)}
+                      onChange={(e) => handleEditProductSelect(e.target.value)}
                       className="w-full border border-slate-200 rounded-xl px-2.5 py-2 bg-white cursor-pointer"
                     >
                       <option value="">-- Select Component --</option>
                       {products.map(p => (
-                        <option key={p.id} value={p.id}>{p.name} (Stock: {p.stockQuantity})</option>
+                        <option key={p.id} value={p.id}>{p.name} (Stock: {p.stockQuantity} {p.unit || 'Nos'})</option>
                       ))}
                     </select>
                   </div>
 
-                  <div className="w-24">
+                  <div className="sm:col-span-2">
                     <label className="block text-slate-500 mb-1">Quantity</label>
                     <input
                       type="number"
@@ -1378,13 +1433,27 @@ export const Challans: React.FC = () => {
                     />
                   </div>
 
-                  <button
-                    type="button"
-                    onClick={handleEditAddItem}
-                    className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-white font-bold rounded-xl h-[34px] cursor-pointer"
-                  >
-                    Add
-                  </button>
+                  <div className="sm:col-span-3">
+                    <label className="block text-slate-500 mb-1">Unit (UOM)</label>
+                    <input
+                      type="text"
+                      list="uom-challan-suggestions"
+                      value={currentEditUnit}
+                      onChange={(e) => setCurrentEditUnit(e.target.value)}
+                      placeholder="e.g. Nos, Pcs"
+                      className="w-full border border-slate-200 rounded-xl px-2.5 py-1.5 bg-white focus:outline-none text-slate-900 font-semibold"
+                    />
+                  </div>
+
+                  <div className="sm:col-span-2">
+                    <button
+                      type="button"
+                      onClick={handleEditAddItem}
+                      className="w-full py-2 bg-slate-800 hover:bg-slate-700 text-white font-bold rounded-xl h-[34px] cursor-pointer"
+                    >
+                      Add
+                    </button>
+                  </div>
                 </div>
 
                 {/* Serial Numbers Picker UI */}
@@ -1431,6 +1500,7 @@ export const Challans: React.FC = () => {
                       <thead>
                         <tr className="bg-slate-50 text-slate-400 border-b border-slate-100">
                           <th className="px-3 py-2 font-bold">Item</th>
+                          <th className="px-3 py-2 text-center font-bold">UOM</th>
                           <th className="px-3 py-2 text-right font-bold">Qty</th>
                           <th className="px-3 py-2 text-center font-bold">Remove</th>
                         </tr>
@@ -1450,7 +1520,8 @@ export const Challans: React.FC = () => {
                                 </div>
                               )}
                             </td>
-                            <td className="px-3 py-2.5 text-slate-900 text-right align-top">{item.qty} units</td>
+                            <td className="px-3 py-2.5 text-slate-600 text-center font-bold">{item.unit || 'Nos'}</td>
+                            <td className="px-3 py-2.5 text-slate-900 text-right align-top">{item.qty}</td>
                             <td className="px-3 py-2.5 text-center">
                               <button
                                 type="button"

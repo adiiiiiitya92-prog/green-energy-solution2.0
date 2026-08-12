@@ -1806,7 +1806,8 @@ export const pdfService = {
 
       doc.setTextColor(slateDark[0], slateDark[1], slateDark[2]);
       doc.setFont('helvetica', 'bold');
-      doc.text(`${item.qty} UNITS`, 192, currentY, { align: 'right' });
+      const unitLabel = (item.unit || 'UNITS').toUpperCase();
+      doc.text(`${item.qty} ${unitLabel}`, 192, currentY, { align: 'right' });
       doc.setFont('helvetica', 'normal');
 
       doc.setDrawColor(241, 245, 249);

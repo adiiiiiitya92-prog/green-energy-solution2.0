@@ -64,8 +64,8 @@ export async function generateOptimizedPDF(
   element: HTMLElement,
   options: PDFGeneratorOptions = {}
 ): Promise<{ pdfBlob: Blob; pdfUrl?: string; fileSizeKB: number }> {
-  const quality = options.quality || 0.92;
-  const scale = options.scale || 2.0;
+  const quality = options.quality || 0.75;
+  const scale = options.scale || 1.45;
   const fileName = options.fileName || `document_${Date.now()}.pdf`;
 
   // Find target pages in element or DOM
@@ -139,7 +139,7 @@ export async function generateOptimizedPDF(
 
       const imgData = canvas.toDataURL('image/jpeg', quality);
       if (i > 0) pdf.addPage();
-      pdf.addImage(imgData, 'JPEG', 0, 0, 210, 297, undefined, 'SLOW');
+      pdf.addImage(imgData, 'JPEG', 0, 0, 210, 297, undefined, 'FAST');
     } finally {
       targetEl.style.display = originalDisplay;
       targetEl.style.visibility = originalVisibility;
@@ -162,13 +162,14 @@ export async function generateOptimizedPDF(
 }
 
 /**
- * Generates an exact High-Definition 8-Page PDF from the live .quotation-print-container element.
- * Uses 2.0x scale and 0.95 quality rendering to deliver crystal-clear, HD text & images matching exact preview & print quality.
+ * Generates an optimized Proposal PDF (~800 KB - 1.1 MB max) from the live .quotation-print-container element.
+ * Uses 1.45x scale and 0.75 quality rendering to deliver crystal-clear text & crisp graphics with ultra-fast mobile sharing speed.
  */
 export async function generateQuotationDocumentPDF(
   container: HTMLElement,
   fileName: string = 'Solar_Quotation.pdf',
-  onProgress?: (current: number, total: number) => void
+  onProgress?: (current: number, total: number) => void,
+  options?: { scale?: number; quality?: number }
 ): Promise<Blob> {
   const pageElements = Array.from(container.querySelectorAll('.quotation-document-page')) as HTMLElement[];
   const targets = pageElements.length > 0 ? pageElements : [container];
@@ -178,9 +179,9 @@ export async function generateQuotationDocumentPDF(
     try { await document.fonts.ready; } catch (_) {}
   }
 
-  // HD Retina Quality Scale 2.0x & Quality 0.98 for crystal-clear 1 MB max proposal PDF
-  const scale = 2.0;
-  const quality = 0.98;
+  // Optimized Scale 1.45x & Quality 0.75 for crisp readability under ~900 KB - 1.1 MB max for instant mobile sharing
+  const scale = options?.scale || 1.45;
+  const quality = options?.quality || 0.75;
 
   const pdf = new jsPDF({
     orientation: 'portrait',
@@ -245,12 +246,12 @@ export async function generateQuotationDocumentPDF(
 
     const imgData = canvas.toDataURL('image/jpeg', quality);
     if (i > 0) pdf.addPage();
-    pdf.addImage(imgData, 'JPEG', 0, 0, 210, 297, undefined, 'SLOW');
+    pdf.addImage(imgData, 'JPEG', 0, 0, 210, 297, undefined, 'FAST');
   }
 
   const pdfBlob = pdf.output('blob');
   const sizeKB = Math.round(pdfBlob.size / 1024);
-  console.log(`📄 High-Definition Proposal PDF Generated: ${fileName} (${sizeKB} KB)`);
+  console.log(`📄 Fast Mobile-Optimized Proposal PDF Generated: ${fileName} (${sizeKB} KB)`);
   return pdfBlob;
 }
 

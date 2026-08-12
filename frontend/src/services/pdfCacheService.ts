@@ -1,7 +1,7 @@
 import type { Quotation, Lead } from '../types';
 import { pdfService } from './pdfService';
 
-const CACHE_NAME = 'ges-quotation-pdf-v3';
+const CACHE_NAME = 'ges-quotation-pdf-v4';
 const memoryPdfCache = new Map<string, Blob>();
 
 /**

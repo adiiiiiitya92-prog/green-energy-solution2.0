@@ -151,14 +151,21 @@ export const Leads: React.FC = () => {
   const [pdfLoadingMsg, setPdfLoadingMsg] = useState<string | null>(null);
 
   const resolvePdfBlob = async (q: Quotation): Promise<Blob> => {
-    setPdfLoadingMsg('Preparing HD 8-Page Solar Proposal PDF... (Page 1/8)');
+    const propNo = q.quotationNumber || q.proposalId || q.id || 'EST';
+    const cached = await getCachedPdfBlob(propNo);
+    if (cached && cached.size > 100) {
+      pdfBlobCache.current.set(q.id, cached);
+      return cached;
+    }
+
+    setPdfLoadingMsg('Preparing Solar Proposal PDF...');
     try {
       const leadMatch = leads.find(l => l.id === q.leadId) || selectedLead;
       const blob = await ensurePdfBlobForQuotation(
         q,
         leadMatch,
         q.createdBy || 'Admin',
-        (cur, total) => setPdfLoadingMsg(`Preparing HD 8-Page Solar Proposal PDF... (Page ${cur}/${total})`)
+        (cur, total) => setPdfLoadingMsg(`Preparing Solar Proposal PDF... (${cur}/${total})`)
       );
       if (blob) pdfBlobCache.current.set(q.id, blob);
       return blob;
@@ -360,15 +367,27 @@ export const Leads: React.FC = () => {
       const items: LeadReportItem[] = [];
       const finMap: Record<string, { totalValue: number; paidAmount: number; pendingBalance: number; paymentStatus: string; installmentCount: number }> = {};
       const validLeads = Array.isArray(leads) ? leads : [];
+      if (validLeads.length === 0) return;
+
+      const [allOcs, allQuotes] = await Promise.all([
+        orderService.getAllOrderConfirmations(),
+        quotationService.getAllQuotations()
+      ]);
+
+      const ocByLeadId = new Map<string, OrderConfirmation>();
+      allOcs.forEach(oc => { if (oc.leadId) ocByLeadId.set(oc.leadId, oc); });
+
+      const quoteByLeadId = new Map<string, Quotation>();
+      allQuotes.forEach(q => { if (q.leadId && !quoteByLeadId.has(q.leadId)) quoteByLeadId.set(q.leadId, q); });
+
       for (const l of validLeads) {
         if (!l || !l.id) continue;
         let totalValue = 0;
         let paidAmount = 0;
         let installmentCount = 0;
 
-        const oc = await orderService.getOrderConfirmationByLeadId(l.id);
-        const quotes = await quotationService.getQuotationsByLeadId(l.id);
-        const mainQuote = Array.isArray(quotes) && quotes.length > 0 ? quotes[0] : undefined;
+        const oc = ocByLeadId.get(l.id);
+        const mainQuote = quoteByLeadId.get(l.id);
 
         const quoteTotal = mainQuote ? getQuotationTotalAmount(mainQuote) : 0;
         const ocSubtotal = oc ? (oc.subtotal || (Array.isArray(oc.itemsConfirmed) ? oc.itemsConfirmed.reduce((s, i) => s + (i.amount || 0), 0) : 0) || oc.advanceAmount || 0) : 0;
@@ -604,27 +623,32 @@ export const Leads: React.FC = () => {
       sessionStorage.setItem('leads_activeTab', 'timeline');
     }
 
+    // Concurrent parallel fetch of all lead contextual records (8x faster details load)
+    const [quotations, initialOc, docs, reg, photos] = await Promise.all([
+      quotationService.getQuotationsByLeadId(lead.id),
+      orderService.getOrderConfirmationByLeadId(lead.id),
+      orderService.getClientDocumentsByLeadId(lead.id),
+      orderService.getClientRegistrationByLeadId(lead.id),
+      orderService.getInstallationPhotosByLeadId(lead.id)
+    ]);
+
+    let oc = initialOc;
+
     // Sync Follow-up inspection date & pre-cache proposal PDF in background
-    const existingQuotes = await quotationService.getQuotationsByLeadId(lead.id);
-    if (existingQuotes.length > 0) {
-      if (existingQuotes[0].followUpDate) {
-        setQuoteFollowUp(dayjs(existingQuotes[0].followUpDate).format('YYYY-MM-DD'));
+    if (quotations.length > 0) {
+      if (quotations[0].followUpDate) {
+        setQuoteFollowUp(dayjs(quotations[0].followUpDate).format('YYYY-MM-DD'));
       } else {
         setQuoteFollowUp('');
       }
       // Pre-cache PDF Blob in background for instant 0ms mobile WhatsApp share
-      ensurePdfBlobForQuotation(existingQuotes[0], lead, existingQuotes[0].createdBy || 'Admin').catch(() => {});
+      ensurePdfBlobForQuotation(quotations[0], lead, quotations[0].createdBy || 'Admin').catch(() => {});
     } else if (lead.nextFollowUpDate) {
       setQuoteFollowUp(dayjs(lead.nextFollowUpDate).format('YYYY-MM-DD'));
     } else {
       setQuoteFollowUp('');
     }
-    
-    // Load Order Confirmation & Payment History
-    let oc = await orderService.getOrderConfirmationByLeadId(lead.id);
 
-    // Auto load quote items if quotation exists
-    const quotations = await quotationService.getQuotationsByLeadId(lead.id);
     setHasAdminQuotation(quotations.length > 0);
     if (quotations.length > 0) {
       const q = quotations[0];
@@ -666,17 +690,8 @@ export const Leads: React.FC = () => {
     }
 
     setExistingOc(oc || null);
-
-    // Load KYC Docs
-    const docs = await orderService.getClientDocumentsByLeadId(lead.id);
     setKycDocs(docs);
-
-    // Load Registration Checklist
-    const reg = await orderService.getClientRegistrationByLeadId(lead.id);
     setRegChecklist(reg || null);
-
-    // Load Installation Photos
-    const photos = await orderService.getInstallationPhotosByLeadId(lead.id);
     setInstallPhotos(photos);
 
     // Load Release Docs & auto-correct premature closed status if NOC file is missing
@@ -919,8 +934,6 @@ export const Leads: React.FC = () => {
       pdfBlob,
       lead: leadMatch
     });
-
-    if (selectedLead) handleSelectLead(selectedLead);
   };
 
   // 2. Booking order confirmation

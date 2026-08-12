@@ -54,7 +54,8 @@ export async function shareQuotationViaWhatsapp(params: ShareQuotationParams): P
     return { success: false, method: 'native' };
   }
 
-  const pdfFile = new File([pdfBlob], pdfFileName, { type: 'application/pdf' });
+  const uniquePdfFileName = `Solar_Quotation_${sanitizedPropNo}_${Date.now().toString().slice(-4)}.pdf`;
+  const pdfFile = new File([pdfBlob], uniquePdfFileName, { type: 'application/pdf' });
 
   // Check if browser supports Web Share API with files
   const canShareFiles = typeof navigator !== 'undefined' && 

@@ -41,6 +41,12 @@ export const orderService = {
     return oc;
   },
 
+  async getAllOrderConfirmations(): Promise<OrderConfirmation[]> {
+    const deletedIds = await getDeletedRecordIdsSet();
+    const all = await db.orderConfirmations.toArray();
+    return all.filter(o => !deletedIds.has(o.id) && !deletedIds.has(o.leadId));
+  },
+
   async createOrderConfirmation(ocData: Omit<OrderConfirmation, 'id' | 'createdAt'>): Promise<string> {
     const id = 'oc_' + Math.random().toString(36).substring(2, 11);
     const newOc: OrderConfirmation = {

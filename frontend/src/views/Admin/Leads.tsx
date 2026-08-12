@@ -604,16 +604,20 @@ export const Leads: React.FC = () => {
       sessionStorage.setItem('leads_activeTab', 'timeline');
     }
 
-    // Sync Follow-up inspection date state
-    if (lead.nextFollowUpDate) {
-      setQuoteFollowUp(dayjs(lead.nextFollowUpDate).format('YYYY-MM-DD'));
-    } else {
-      const existingQuotes = await quotationService.getQuotationsByLeadId(lead.id);
-      if (existingQuotes.length > 0 && existingQuotes[0].followUpDate) {
+    // Sync Follow-up inspection date & pre-cache proposal PDF in background
+    const existingQuotes = await quotationService.getQuotationsByLeadId(lead.id);
+    if (existingQuotes.length > 0) {
+      if (existingQuotes[0].followUpDate) {
         setQuoteFollowUp(dayjs(existingQuotes[0].followUpDate).format('YYYY-MM-DD'));
       } else {
         setQuoteFollowUp('');
       }
+      // Pre-cache PDF Blob in background for instant 0ms mobile WhatsApp share
+      ensurePdfBlobForQuotation(existingQuotes[0], lead, existingQuotes[0].createdBy || 'Admin').catch(() => {});
+    } else if (lead.nextFollowUpDate) {
+      setQuoteFollowUp(dayjs(lead.nextFollowUpDate).format('YYYY-MM-DD'));
+    } else {
+      setQuoteFollowUp('');
     }
     
     // Load Order Confirmation & Payment History

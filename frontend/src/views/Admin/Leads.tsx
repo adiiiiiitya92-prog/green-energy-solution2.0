@@ -2782,7 +2782,7 @@ export const Leads: React.FC = () => {
                 )}
               </div>
 
-              {['super_admin', 'admin', 'field_employee'].includes(currentRole) && (
+              {['super_admin', 'admin', 'field_employee', 'dealer'].includes(currentRole) && (
                 <button
                   onClick={() => setShowCreateModal(true)}
                   className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white font-bold text-xs rounded-xl shadow-md flex items-center gap-2 cursor-pointer transition-all"
@@ -3730,8 +3730,20 @@ export const Leads: React.FC = () => {
                   })}
 
                   {filteredLeads.length === 0 && (
-                    <div className="col-span-1 md:col-span-2 py-16 text-center text-slate-400 italic bg-white rounded-2xl border border-slate-200">
-                      No lead records found matching the current search, stage, and remaining balance filters.
+                    <div className="col-span-1 md:col-span-2 py-16 text-center text-slate-400 bg-white rounded-2xl border border-slate-200 space-y-3">
+                      <p className="italic">No lead records found matching the current search, stage, and remaining balance filters.</p>
+                      {['super_admin', 'admin', 'field_employee', 'dealer'].includes(currentRole) && (
+                        <div>
+                          <button
+                            type="button"
+                            onClick={() => setShowCreateModal(true)}
+                            className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs rounded-xl shadow-xs inline-flex items-center gap-2 cursor-pointer transition-all"
+                          >
+                            <Plus className="w-4 h-4" />
+                            <span>Create New Lead</span>
+                          </button>
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>

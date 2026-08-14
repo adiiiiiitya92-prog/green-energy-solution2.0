@@ -3755,20 +3755,30 @@ export const Leads: React.FC = () => {
 
       {/* New Lead Modal popup */}
       {showCreateModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 backdrop-blur-xs">
-          <div className="bg-white rounded-2xl border border-slate-200 shadow-xl w-full max-w-md p-6 m-4 animate-scale-in">
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="text-lg font-black text-slate-900">Create Lead Entry</h3>
-              {hasLeadDraftRestored && (
-                <span className="px-2.5 py-1 rounded-lg bg-amber-50 text-amber-800 border border-amber-200 text-[10px] font-extrabold flex items-center gap-1 shadow-2xs">
-                  <Sparkles className="w-3 h-3 text-amber-600" />
-                  <span>Draft Auto-Restored</span>
-                </span>
-              )}
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 backdrop-blur-xs p-3 sm:p-4 overflow-y-auto">
+          <div className="bg-white rounded-2xl border border-slate-200 shadow-xl w-full max-w-md p-5 sm:p-6 my-auto max-h-[90vh] overflow-y-auto animate-scale-in">
+            <div className="flex items-center justify-between mb-4 border-b border-slate-100 pb-3">
+              <div className="flex items-center gap-2">
+                <h3 className="text-lg font-black text-slate-900">Create Lead Entry</h3>
+                {hasLeadDraftRestored && (
+                  <span className="px-2.5 py-1 rounded-lg bg-amber-50 text-amber-800 border border-amber-200 text-[10px] font-extrabold flex items-center gap-1 shadow-2xs">
+                    <Sparkles className="w-3 h-3 text-amber-600" />
+                    <span>Draft Auto-Restored</span>
+                  </span>
+                )}
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowCreateModal(false)}
+                className="p-1.5 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-lg transition-colors cursor-pointer"
+                title="Close"
+              >
+                <X className="w-5 h-5" />
+              </button>
             </div>
             <form onSubmit={handleCreateLead} className="space-y-4 text-xs font-semibold">
               <div>
-                <label className="block text-slate-500 mb-1">Lead Name</label>
+                <label className="block text-slate-500 mb-1">Lead Name *</label>
                 <input
                   type="text"
                   required
@@ -3779,7 +3789,7 @@ export const Leads: React.FC = () => {
                 />
               </div>
 
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <label className="block text-slate-500 mb-1">Phone Number</label>
                   <input

@@ -1546,8 +1546,8 @@ export const Leads: React.FC = () => {
               Timeline Stepper
             </button>
             
-            {/* Quotations builder available for Admin & Super Admin */}
-            {['super_admin', 'admin'].includes(currentRole) && (
+            {/* Quotations builder available for all assigned employee roles */}
+            {!!currentRole && (
               <button
                 onClick={() => switchTab('quotation')}
                 className={`py-3 px-4 border-b-2 cursor-pointer transition-all whitespace-nowrap ${
@@ -1735,22 +1735,17 @@ export const Leads: React.FC = () => {
                       )}
                     </div>
 
-                    {/* LOCK PAYMENT COLLECTION IF QUOTATION NOT CREATED BY ADMIN YET */}
+                    {/* LOCK PAYMENT COLLECTION IF QUOTATION NOT CREATED YET */}
                     {!isQuotationCreated ? (
                       <div className="bg-amber-50/80 border-2 border-amber-300 rounded-2xl p-6 text-center space-y-3 shadow-xs">
                         <div className="w-12 h-12 rounded-full bg-amber-100 border border-amber-300 text-amber-700 flex items-center justify-center font-bold mx-auto text-xl">
                           ⚠️
                         </div>
-                        <h3 className="text-sm font-black text-amber-900 uppercase tracking-wider">Quotation Pending From Admin</h3>
+                        <h3 className="text-sm font-black text-amber-900 uppercase tracking-wider">Quotation Pending</h3>
                         <p className="text-xs text-amber-800 font-semibold max-w-md mx-auto leading-relaxed">
-                          Payment collection for this lead is currently <strong>LOCKED</strong> because Admin has not created a quotation yet.
-                          Once Admin prepares and saves the official quotation for this lead, payment collection will automatically unlock.
+                          Payment collection for this lead is currently <strong>LOCKED</strong> because a quotation has not been generated yet.
+                          You can generate and save the official quotation under the <strong>Create Quotation</strong> tab above to automatically unlock payment collection.
                         </p>
-                        {currentRole === 'dealer' && (
-                          <p className="text-[11px] text-purple-800 font-bold bg-purple-100 border border-purple-200 px-3 py-1.5 rounded-lg inline-block mt-2">
-                            🏪 Dealer Note: Please request Admin to prepare the quotation so you can collect payments.
-                          </p>
-                        )}
                       </div>
                     ) : hasPaymentsRecorded ? (
                       <div className="space-y-6">

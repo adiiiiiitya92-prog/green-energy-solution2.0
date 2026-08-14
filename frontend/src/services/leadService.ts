@@ -9,23 +9,50 @@ export const filterLeadsForUser = (
   currentUser: Profile | null | undefined,
   currentRole: string
 ): Lead[] => {
-  const isSuperAdmin = currentRole === 'super_admin' || currentUser?.role === 'super_admin';
-  const isAdmin = currentRole === 'admin' || currentUser?.role === 'admin';
-  const isInventoryManager = currentRole === 'inventory_manager' || currentUser?.role === 'inventory_manager';
+  if (!currentUser || !Array.isArray(leads)) {
+    return leads || [];
+  }
 
-  if (isSuperAdmin || isAdmin || isInventoryManager || !currentUser) {
+  const roleStr = (currentRole || currentUser.role || '').toLowerCase();
+  const desigStr = (currentUser.designation || '').toLowerCase();
+
+  const isSuperAdmin = roleStr === 'super_admin';
+  const isOperationsAdmin = roleStr === 'operations_admin' || desigStr.includes('operations admin') || desigStr.includes('ops admin');
+
+  // 1. Operations Admin: Must have unrestricted access to see all leads across the system
+  if (isSuperAdmin || isOperationsAdmin) {
     return leads;
   }
-  return leads.filter(l => 
-    l.assignedSalesPersonId === currentUser.id || 
-    l.assignedAdminId === currentUser.id || 
-    l.assignedEmployeeId === currentUser.id ||
-    l.createdBy === currentUser.id ||
-    l.createdBy === currentUser.fullName ||
-    (currentUser.email && l.createdBy === currentUser.email) ||
-    l.dealerId === currentUser.id ||
-    (l.createdByDealer && (l.createdBy === currentUser.fullName || l.createdBy === currentUser.id))
-  );
+
+  const isAdmin = roleStr === 'admin' || desigStr === 'admin';
+
+  // 2. Admin: Must be able to see all "Raw Leads" AND any leads specifically assigned to them
+  if (isAdmin) {
+    return leads.filter(l => {
+      if (!l) return false;
+      const isRaw = l.status === 'new' || l.status === 'quotation_sent';
+      const isAssignedToAdmin = 
+        l.assignedAdminId === currentUser.id ||
+        l.assignedSalesPersonId === currentUser.id ||
+        l.assignedEmployeeId === currentUser.id ||
+        l.createdBy === currentUser.id;
+      return isRaw || isAssignedToAdmin;
+    });
+  }
+
+  // 3. All Other Employees (Dealers, Field Executives, Sales Executives, Sales Head, Sales Officer, Inventory Manager, etc.):
+  // Must ONLY see leads directly assigned to them
+  return leads.filter(l => {
+    if (!l) return false;
+    const isAssignedToUser = 
+      l.assignedSalesPersonId === currentUser.id || 
+      l.assignedAdminId === currentUser.id || 
+      l.assignedEmployeeId === currentUser.id ||
+      l.dealerId === currentUser.id ||
+      l.createdBy === currentUser.id ||
+      (l.createdByDealer && (l.createdBy === currentUser.fullName || l.createdBy === currentUser.id || l.dealerId === currentUser.id));
+    return isAssignedToUser;
+  });
 };
 
 export const leadService = {

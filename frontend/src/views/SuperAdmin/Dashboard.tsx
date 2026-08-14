@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { db } from '../../services/db';
 import { leadService, filterLeadsForUser } from '../../services/leadService';
 import { quotationService, getQuotationTotalAmount } from '../../services/quotationService';
@@ -9,7 +10,7 @@ import { productService } from '../../services/productService';
 import { useAuthStore } from '../../store/authStore';
 import { FollowUpReminders } from '../../components/Common/FollowUpReminders';
 import type { Lead, Quotation, OrderConfirmation, Profile, Product, PaymentInstallment, DeletionRequest } from '../../types';
-import { TrendingUp, DollarSign, Award, ClipboardList, PackageCheck, ShieldAlert, Boxes, Check, X } from 'lucide-react';
+import { TrendingUp, DollarSign, Award, ClipboardList, PackageCheck, ShieldAlert, Boxes, Check, X, AlertCircle, ChevronRight, Wallet } from 'lucide-react';
 
 export const Dashboard: React.FC = () => {
   const { currentRole, currentUser } = useAuthStore();
@@ -136,6 +137,60 @@ export const Dashboard: React.FC = () => {
       conversionRate: rate.toFixed(0) + '%'
     };
   });
+
+  // 5. Process Done (Payment Due) financial totals sum calculation
+  const processDoneStats = (() => {
+    let count = 0;
+    let totalContract = 0;
+    let totalPaid = 0;
+    let totalRemaining = 0;
+
+    const ocByLeadId = new Map<string, OrderConfirmation>();
+    confirmations.forEach(c => {
+      if (c.leadId) ocByLeadId.set(c.leadId, c);
+    });
+
+    const quoteByLeadId = new Map<string, Quotation>();
+    quotations.forEach(q => {
+      if (q.leadId && !quoteByLeadId.has(q.leadId)) quoteByLeadId.set(q.leadId, q);
+    });
+
+    leads.forEach(l => {
+      if (!l || !l.id) return;
+      const isProcessDone = (l.status === 'closed' || l.status === 'installed');
+      if (!isProcessDone) return;
+
+      const mainQuote = quoteByLeadId.get(l.id);
+      const oc = ocByLeadId.get(l.id);
+
+      const quoteTotal = mainQuote ? getQuotationTotalAmount(mainQuote) : 0;
+      const ocSubtotal = oc ? (oc.subtotal || (Array.isArray(oc.itemsConfirmed) ? oc.itemsConfirmed.reduce((s, i) => s + (i.amount || 0), 0) : 0) || oc.advanceAmount || 0) : 0;
+      let contractVal = quoteTotal > 0 ? quoteTotal : ocSubtotal;
+
+      const pList = oc ? getPaymentsList(oc) : [];
+      const paidVal = pList.reduce((sum, p) => sum + (p?.amount || 0), 0);
+
+      if (contractVal <= 0 && paidVal > 0) {
+        contractVal = paidVal;
+      }
+
+      const pendingVal = Math.max(0, contractVal - paidVal);
+
+      if (pendingVal > 0) {
+        count += 1;
+        totalContract += contractVal;
+        totalPaid += paidVal;
+        totalRemaining += pendingVal;
+      }
+    });
+
+    return {
+      count,
+      totalContract,
+      totalPaid,
+      totalRemaining
+    };
+  })();
 
   return (
     <div className="space-y-8 animate-fade-in">
@@ -276,6 +331,74 @@ export const Dashboard: React.FC = () => {
             </div>
           </div>
         )}
+      </div>
+
+      {/* Process Done (Payment Due) Financial Summary Card */}
+      <div className="bg-gradient-to-br from-slate-900 via-purple-950 to-slate-900 text-white p-6 rounded-2xl border border-purple-500/30 shadow-xl space-y-4 relative overflow-hidden">
+        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
+          <div className="flex items-center space-x-3">
+            <div className="p-3 rounded-2xl bg-purple-500/20 border border-purple-500/30 text-purple-300 shrink-0">
+              <AlertCircle className="w-6 h-6 text-purple-300" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <span className="text-[10px] font-black text-purple-300 uppercase tracking-widest bg-purple-500/20 px-2.5 py-0.5 rounded-full border border-purple-400/30">
+                  ⚠️ PROCESS DONE (PAYMENT DUE) SUMMARY
+                </span>
+                <span className="text-[10px] font-bold text-purple-200">
+                  ({processDoneStats.count} Lead{processDoneStats.count === 1 ? '' : 's'})
+                </span>
+              </div>
+              <h2 className="text-lg font-black text-white mt-1">Completed Installations Pending Payment Dues</h2>
+            </div>
+          </div>
+
+          <Link
+            to="/leads"
+            onClick={() => sessionStorage.setItem('leads_rawFilter', 'process_done_payment_pending')}
+            className="px-4 py-2 bg-purple-600 hover:bg-purple-500 text-white font-extrabold text-xs rounded-xl shadow-md transition-all cursor-pointer flex items-center gap-1.5 shrink-0"
+          >
+            <span>View All ({processDoneStats.count}) Leads</span>
+            <ChevronRight className="w-4 h-4" />
+          </Link>
+        </div>
+
+        {/* 3 Main Financial Totals Summed Together */}
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 pt-2">
+          {/* 1. Total Combined Contract Value */}
+          <div className="bg-white/5 backdrop-blur-md p-4 rounded-xl border border-white/10 space-y-1">
+            <span className="text-[11px] font-bold text-slate-300 uppercase tracking-wider block">
+              Total Contract Value
+            </span>
+            <h3 className="text-2xl font-black text-white">
+              ₹{processDoneStats.totalContract.toLocaleString('en-IN')}
+            </h3>
+            <p className="text-[10px] text-slate-400">Sum of contract value for all process done leads</p>
+          </div>
+
+          {/* 2. Total Combined Amount Paid */}
+          <div className="bg-emerald-500/10 backdrop-blur-md p-4 rounded-xl border border-emerald-500/20 space-y-1">
+            <span className="text-[11px] font-bold text-emerald-400 uppercase tracking-wider block">
+              Total Amount Paid
+            </span>
+            <h3 className="text-2xl font-black text-emerald-400">
+              ₹{processDoneStats.totalPaid.toLocaleString('en-IN')}
+            </h3>
+            <p className="text-[10px] text-emerald-400/80">Sum of payments collected</p>
+          </div>
+
+          {/* 3. Total Combined Remaining Pending Dues */}
+          <div className="bg-amber-500/10 backdrop-blur-md p-4 rounded-xl border border-amber-500/20 space-y-1">
+            <span className="text-[11px] font-bold text-amber-400 uppercase tracking-wider block flex items-center gap-1">
+              <Wallet className="w-3.5 h-3.5 text-amber-400" />
+              <span>Total Remaining Pending Dues</span>
+            </span>
+            <h3 className="text-2xl font-black text-amber-400">
+              ₹{processDoneStats.totalRemaining.toLocaleString('en-IN')}
+            </h3>
+            <p className="text-[10px] text-amber-400/80">Net collectable pending balance</p>
+          </div>
+        </div>
       </div>
 
       {/* Main Grid: Pipeline Funnel + Performance */}

@@ -42,8 +42,14 @@ export const Dashboard: React.FC = () => {
       }
 
       const activeLeadIds = new Set(lList.map(l => l.id));
-      qList = qList.filter(q => !q.leadId || activeLeadIds.has(q.leadId));
-      if (lList.length === 0) {
+      const roleStr = (currentRole || currentUser?.role || '').toLowerCase();
+      const desigStr = (currentUser?.designation || '').toLowerCase();
+      const hasFullAccess = roleStr === 'super_admin' || roleStr === 'operations_admin' || desigStr.includes('operations admin');
+
+      if (!hasFullAccess) {
+        qList = qList.filter(q => !!q.leadId && activeLeadIds.has(q.leadId));
+      }
+      if (lList.length === 0 && !hasFullAccess) {
         qList = [];
       }
       setQuotations(qList);

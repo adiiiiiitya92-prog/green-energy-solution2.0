@@ -3257,9 +3257,18 @@ export const Leads: React.FC = () => {
               return fin && fin.pendingBalance > 0;
             }).length;
 
-            const rawLeadsCount = leads.filter(l => 
-              (l.status === 'new' || l.status === 'quotation_sent') && !dispatchedLeadIds.has(l.id)
-            ).length;
+            const rawLeadsCount = leads.filter(l => {
+              const fin = leadFinancialMap[l.id];
+              const hasNoPayment = !fin || (fin.paidAmount || 0) === 0;
+              return (l.status === 'new' || l.status === 'quotation_sent') && hasNoPayment && !dispatchedLeadIds.has(l.id);
+            }).length;
+
+            const hotLeadsCount = leads.filter(l => {
+              const fin = leadFinancialMap[l.id];
+              const hasPayment = !!fin && (fin.paidAmount || 0) > 0;
+              const isConfirmedOrPaid = ['confirmed', 'registered', 'installed', 'closed'].includes(l.status) || hasPayment;
+              return (l.isHot || (l.clientRating && l.clientRating >= 4)) && !isConfirmedOrPaid;
+            }).length;
 
             const processDonePaymentDueCount = leads.filter(l => {
               const isProcessDone = (l.status === 'closed' || l.status === 'installed');
@@ -3270,6 +3279,8 @@ export const Leads: React.FC = () => {
             const filteredLeads = leads.filter(lead => {
               const searchStr = (searchTerm || '').toLowerCase().trim();
               const fin = leadFinancialMap[lead.id];
+              const hasPayment = !!fin && (fin.paidAmount || 0) > 0;
+
               const matchesSearch = !searchStr || 
                 lead.name.toLowerCase().includes(searchStr) || 
                 lead.phoneNumber.includes(searchStr) ||
@@ -3287,7 +3298,8 @@ export const Leads: React.FC = () => {
                 lead.assignedAdminId === employeeFilter ||
                 lead.assignedEmployeeId === employeeFilter;
 
-              const isHot = lead.isHot || (lead.clientRating && lead.clientRating >= 4);
+              const isConfirmedOrPaid = ['confirmed', 'registered', 'installed', 'closed'].includes(lead.status) || hasPayment;
+              const isHot = (lead.isHot || (lead.clientRating && lead.clientRating >= 4)) && !isConfirmedOrPaid;
               const matchesHot = hotFilter === 'all' || 
                 (hotFilter === 'hot' && isHot) || 
                 (hotFilter === 'normal' && !isHot);
@@ -3300,7 +3312,7 @@ export const Leads: React.FC = () => {
                 matchesDispatch = !isDispatched;
               }
 
-              const isRaw = (lead.status === 'new' || lead.status === 'quotation_sent') && !isDispatched;
+              const isRaw = (lead.status === 'new' || lead.status === 'quotation_sent') && !hasPayment && !isDispatched;
               const isProcessDone = (lead.status === 'closed' || lead.status === 'installed');
               const isProcessDonePaymentPending = isProcessDone && !!fin && fin.pendingBalance > 0;
 

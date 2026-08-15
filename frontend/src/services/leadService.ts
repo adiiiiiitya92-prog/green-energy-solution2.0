@@ -128,7 +128,57 @@ export const leadService = {
     return db.leads.get(id);
   },
 
+  /**
+   * Check if a lead with the given name or email already exists.
+   * Compares names and emails case-insensitively with trimming.
+   * Excludes tombstones (deleted records) and optionally excludes a given lead ID (useful for updates).
+   */
+  async checkDuplicateLead(
+    name?: string,
+    email?: string,
+    excludeLeadId?: string
+  ): Promise<{ isDuplicate: boolean; field?: 'name' | 'email'; message?: string; existingLead?: Lead }> {
+    const deletedIds = await getDeletedRecordIdsSet();
+    const allLeads = await db.leads.toArray();
+    const activeLeads = allLeads.filter(l => l.id && !deletedIds.has(l.id) && l.id !== excludeLeadId);
+
+    const cleanName = (name || '').trim().toLowerCase();
+    const cleanEmail = (email || '').trim().toLowerCase();
+
+    if (cleanName) {
+      const nameMatch = activeLeads.find(l => (l.name || '').trim().toLowerCase() === cleanName);
+      if (nameMatch) {
+        return {
+          isDuplicate: true,
+          field: 'name',
+          message: `A lead with the name "${nameMatch.name}" already exists! Duplicate lead names are not allowed.`,
+          existingLead: nameMatch
+        };
+      }
+    }
+
+    if (cleanEmail) {
+      const emailMatch = activeLeads.find(l => (l.email || '').trim().toLowerCase() === cleanEmail);
+      if (emailMatch) {
+        return {
+          isDuplicate: true,
+          field: 'email',
+          message: `A lead with the email "${emailMatch.email}" already exists (Lead: "${emailMatch.name}")! Duplicate email IDs are not allowed.`,
+          existingLead: emailMatch
+        };
+      }
+    }
+
+    return { isDuplicate: false };
+  },
+
   async createLead(leadData: Omit<Lead, 'id' | 'createdAt' | 'updatedAt'>): Promise<string> {
+    // Validate uniqueness of Name and Email
+    const dupCheck = await this.checkDuplicateLead(leadData.name, leadData.email);
+    if (dupCheck.isDuplicate) {
+      throw new Error(dupCheck.message || 'A lead with the same name or email already exists.');
+    }
+
     const id = 'lead_' + Math.random().toString(36).substring(2, 11);
     const now = new Date().toISOString();
     const newLead: Lead = {
@@ -158,6 +208,15 @@ export const leadService = {
     if (!leadToUpdate || !leadToUpdate.id) return;
     const deletedIds = await getDeletedRecordIdsSet();
     if (deletedIds.has(leadToUpdate.id)) return;
+
+    // Validate uniqueness of Name and Email when updated
+    if (patch?.name !== undefined || patch?.email !== undefined || typeof leadOrId !== 'string') {
+      const dupCheck = await this.checkDuplicateLead(leadToUpdate.name, leadToUpdate.email, leadToUpdate.id);
+      if (dupCheck.isDuplicate) {
+        throw new Error(dupCheck.message || 'Another lead with the same name or email already exists.');
+      }
+    }
+
     await db.leads.put(leadToUpdate);
     saveRecordToFirestore('leads', leadToUpdate.id, leadToUpdate);
     window.dispatchEvent(new CustomEvent('app-realtime-update'));

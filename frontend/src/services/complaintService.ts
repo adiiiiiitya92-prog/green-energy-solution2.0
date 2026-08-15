@@ -165,18 +165,23 @@ export const complaintService = {
     // Handle New Customer / Lead flow
     if (data.customerType === 'new_lead' && !associatedLeadId) {
       try {
-        const cleanTitle = (data.title || '').replace(/^New Complaint Lead:\s*/i, '').trim();
-        const cleanDesc = data.address ? `Address: ${data.address}` : (data.description || '');
-        const newLeadId = await leadService.createLead({
-          name: data.customerName.trim(),
-          phoneNumber: data.mobileNumber.trim(),
-          email: data.email?.trim() || '',
-          requirement: cleanTitle || 'Service Request',
-          description: cleanDesc,
-          status: 'new',
-          createdBy: currentUser.id
-        });
-        associatedLeadId = newLeadId;
+        const existingCustomer = await this.checkDuplicateCustomer(data.mobileNumber, data.email, data.customerName);
+        if (existingCustomer && existingCustomer.id) {
+          associatedLeadId = existingCustomer.id;
+        } else {
+          const cleanTitle = (data.title || '').replace(/^New Complaint Lead:\s*/i, '').trim();
+          const cleanDesc = data.address ? `Address: ${data.address}` : (data.description || '');
+          const newLeadId = await leadService.createLead({
+            name: data.customerName.trim(),
+            phoneNumber: data.mobileNumber.trim(),
+            email: data.email?.trim() || '',
+            requirement: cleanTitle || 'Service Request',
+            description: cleanDesc,
+            status: 'new',
+            createdBy: currentUser.id
+          });
+          associatedLeadId = newLeadId;
+        }
       } catch (e) {
         console.warn("New lead auto-creation note:", e);
       }

@@ -103,6 +103,8 @@ export const Leads: React.FC = () => {
   const [leadIsHot, setLeadIsHot] = useState(false);
   const [leadFollowUpDate, setLeadFollowUpDate] = useState('');
   const [leadFollowUpNotes, setLeadFollowUpNotes] = useState('');
+  const [createNameWarning, setCreateNameWarning] = useState<string | null>(null);
+  const [createEmailWarning, setCreateEmailWarning] = useState<string | null>(null);
 
   // Form: Edit Lead
   const [leadToEdit, setLeadToEdit] = useState<Lead | null>(null);
@@ -119,6 +121,8 @@ export const Leads: React.FC = () => {
   const [editFollowUpNotes, setEditFollowUpNotes] = useState('');
   const [editInstallationRemark, setEditInstallationRemark] = useState('');
   const [isSavingEditLead, setIsSavingEditLead] = useState(false);
+  const [editNameWarning, setEditNameWarning] = useState<string | null>(null);
+  const [editEmailWarning, setEditEmailWarning] = useState<string | null>(null);
 
   useEffect(() => {
     if (leadToEdit) {
@@ -134,8 +138,79 @@ export const Leads: React.FC = () => {
       setEditFollowUpDate(leadToEdit.nextFollowUpDate || '');
       setEditFollowUpNotes(leadToEdit.followUpNotes || '');
       setEditInstallationRemark(leadToEdit.installationRemark || '');
+      setEditNameWarning(null);
+      setEditEmailWarning(null);
+    } else {
+      setEditNameWarning(null);
+      setEditEmailWarning(null);
     }
   }, [leadToEdit]);
+
+  // Real-time duplicate check for Create Lead Form
+  useEffect(() => {
+    if (!leadName.trim()) {
+      setCreateNameWarning(null);
+      return;
+    }
+    const timer = setTimeout(async () => {
+      const check = await leadService.checkDuplicateLead(leadName, undefined);
+      if (check.isDuplicate && check.field === 'name') {
+        setCreateNameWarning(check.message || 'A lead with this name already exists.');
+      } else {
+        setCreateNameWarning(null);
+      }
+    }, 250);
+    return () => clearTimeout(timer);
+  }, [leadName]);
+
+  useEffect(() => {
+    if (!leadEmail.trim()) {
+      setCreateEmailWarning(null);
+      return;
+    }
+    const timer = setTimeout(async () => {
+      const check = await leadService.checkDuplicateLead(undefined, leadEmail);
+      if (check.isDuplicate && check.field === 'email') {
+        setCreateEmailWarning(check.message || 'A lead with this email already exists.');
+      } else {
+        setCreateEmailWarning(null);
+      }
+    }, 250);
+    return () => clearTimeout(timer);
+  }, [leadEmail]);
+
+  // Real-time duplicate check for Edit Lead Form
+  useEffect(() => {
+    if (!leadToEdit || !editName.trim()) {
+      setEditNameWarning(null);
+      return;
+    }
+    const timer = setTimeout(async () => {
+      const check = await leadService.checkDuplicateLead(editName, undefined, leadToEdit.id);
+      if (check.isDuplicate && check.field === 'name') {
+        setEditNameWarning(check.message || 'Another lead with this name already exists.');
+      } else {
+        setEditNameWarning(null);
+      }
+    }, 250);
+    return () => clearTimeout(timer);
+  }, [editName, leadToEdit]);
+
+  useEffect(() => {
+    if (!leadToEdit || !editEmail.trim()) {
+      setEditEmailWarning(null);
+      return;
+    }
+    const timer = setTimeout(async () => {
+      const check = await leadService.checkDuplicateLead(undefined, editEmail, leadToEdit.id);
+      if (check.isDuplicate && check.field === 'email') {
+        setEditEmailWarning(check.message || 'Another lead with this email already exists.');
+      } else {
+        setEditEmailWarning(null);
+      }
+    }, 250);
+    return () => clearTimeout(timer);
+  }, [editEmail, leadToEdit]);
 
   // Quotation Creator States
   const [quoteFollowUp, setQuoteFollowUp] = useState('');
@@ -747,8 +822,15 @@ export const Leads: React.FC = () => {
 
   const handleCreateLead = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!leadName || !leadPhone || !leadRequirement) {
+    if (!leadName.trim() || !leadPhone.trim() || !leadRequirement.trim()) {
       alert('Please fill out Name, Phone and Requirement.');
+      return;
+    }
+
+    // Duplicate check across all panels & leads
+    const dupCheck = await leadService.checkDuplicateLead(leadName, leadEmail);
+    if (dupCheck.isDuplicate) {
+      alert(`❌ Duplicate Lead Error:\n${dupCheck.message}`);
       return;
     }
 
@@ -758,44 +840,51 @@ export const Leads: React.FC = () => {
     const nowIso = new Date().toISOString();
     const formattedFollowUpDate = leadFollowUpDate ? dayjs(leadFollowUpDate).format('YYYY-MM-DD') : undefined;
 
-    await leadService.createLead({
-      name: leadName,
-      phoneNumber: leadPhone,
-      email: leadEmail || undefined,
-      requirement: leadRequirement,
-      description: leadDescription,
-      assignedSalesPersonId: salesId,
-      assignedAdminId: adminId,
-      assignedEmployeeId: salesId || adminId,
-      createdBy: currentUser?.fullName || currentUser?.id || 'Admin',
-      createdByDealer: isDealer || undefined,
-      dealerId: isDealer ? currentUser?.id : undefined,
-      dealerName: isDealer ? (currentUser?.fullName || 'Authorized Dealer') : undefined,
-      status: 'new',
-      isHot: leadIsHot,
-      clientRating: leadIsHot ? 5 : 3,
-      nextFollowUpDate: formattedFollowUpDate,
-      followUpNotes: leadFollowUpNotes.trim() || undefined,
-      followUpSetAt: formattedFollowUpDate ? nowIso : undefined,
-      followUpSetBy: formattedFollowUpDate ? (currentUser?.fullName || 'Admin') : undefined,
-      followUpCompleted: false
-    });
+    try {
+      await leadService.createLead({
+        name: leadName.trim(),
+        phoneNumber: leadPhone.trim(),
+        email: leadEmail.trim() || undefined,
+        requirement: leadRequirement.trim(),
+        description: leadDescription.trim(),
+        assignedSalesPersonId: salesId,
+        assignedAdminId: adminId,
+        assignedEmployeeId: salesId || adminId,
+        createdBy: currentUser?.fullName || currentUser?.id || 'Admin',
+        createdByDealer: isDealer || undefined,
+        dealerId: isDealer ? currentUser?.id : undefined,
+        dealerName: isDealer ? (currentUser?.fullName || 'Authorized Dealer') : undefined,
+        status: 'new',
+        isHot: leadIsHot,
+        clientRating: leadIsHot ? 5 : 3,
+        nextFollowUpDate: formattedFollowUpDate,
+        followUpNotes: leadFollowUpNotes.trim() || undefined,
+        followUpSetAt: formattedFollowUpDate ? nowIso : undefined,
+        followUpSetBy: formattedFollowUpDate ? (currentUser?.fullName || 'Admin') : undefined,
+        followUpCompleted: false
+      });
 
-    // Reset
-    localStorage.removeItem('draft_lead_form');
-    setLeadName('');
-    setLeadPhone('');
-    setLeadEmail('');
-    setLeadRequirement('');
-    setLeadDescription('');
-    setLeadAssignedSalesPersonId('');
-    setLeadAssignedAdminId('');
-    setLeadIsHot(false);
-    setLeadFollowUpDate('');
-    setLeadFollowUpNotes('');
-    setShowCreateModal(false);
-    loadData();
-    window.dispatchEvent(new CustomEvent('app-realtime-update'));
+      // Reset
+      localStorage.removeItem('draft_lead_form');
+      setLeadName('');
+      setLeadPhone('');
+      setLeadEmail('');
+      setLeadRequirement('');
+      setLeadDescription('');
+      setLeadAssignedSalesPersonId('');
+      setLeadAssignedAdminId('');
+      setLeadIsHot(false);
+      setLeadFollowUpDate('');
+      setLeadFollowUpNotes('');
+      setCreateNameWarning(null);
+      setCreateEmailWarning(null);
+      setShowCreateModal(false);
+      loadData();
+      window.dispatchEvent(new CustomEvent('app-realtime-update'));
+    } catch (err: any) {
+      console.error('Error creating lead:', err);
+      alert(`❌ Failed to create lead: ${err?.message || 'Unknown error'}`);
+    }
   };
 
   const handleSaveEditLead = async (e: React.FormEvent) => {
@@ -803,6 +892,13 @@ export const Leads: React.FC = () => {
     if (!leadToEdit || !leadToEdit.id) return;
     if (!editName.trim() || !editPhone.trim() || !editRequirement.trim()) {
       alert('Please fill out Name, Phone Number, and Requirement.');
+      return;
+    }
+
+    // Duplicate check for edit across other leads
+    const dupCheck = await leadService.checkDuplicateLead(editName, editEmail, leadToEdit.id);
+    if (dupCheck.isDuplicate) {
+      alert(`❌ Duplicate Lead Error:\n${dupCheck.message}`);
       return;
     }
 
@@ -839,6 +935,8 @@ export const Leads: React.FC = () => {
         }
       }
 
+      setEditNameWarning(null);
+      setEditEmailWarning(null);
       setLeadToEdit(null);
       alert('✅ Lead details updated successfully!');
       loadData();
@@ -3792,8 +3890,15 @@ export const Leads: React.FC = () => {
                   value={leadName}
                   onChange={(e) => setLeadName(e.target.value)}
                   placeholder="e.g. Ramesh Chenoy"
-                  className="w-full border border-slate-200 rounded-xl px-3 py-2.5 bg-slate-50 focus:outline-none"
+                  className={`w-full border rounded-xl px-3 py-2.5 bg-slate-50 focus:outline-none transition-colors ${
+                    createNameWarning ? 'border-rose-400 focus:border-rose-500 bg-rose-50/40 text-rose-900' : 'border-slate-200 focus:border-emerald-500'
+                  }`}
                 />
+                {createNameWarning && (
+                  <p className="text-[11px] text-rose-600 font-bold mt-1 flex items-center gap-1">
+                    <span>⚠️</span> {createNameWarning}
+                  </p>
+                )}
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -3815,8 +3920,15 @@ export const Leads: React.FC = () => {
                     value={leadEmail}
                     onChange={(e) => setLeadEmail(e.target.value)}
                     placeholder="e.g. name@example.com"
-                    className="w-full border border-slate-200 rounded-xl px-3 py-2.5 bg-slate-50 focus:outline-none"
+                    className={`w-full border rounded-xl px-3 py-2.5 bg-slate-50 focus:outline-none transition-colors ${
+                      createEmailWarning ? 'border-rose-400 focus:border-rose-500 bg-rose-50/40 text-rose-900' : 'border-slate-200 focus:border-emerald-500'
+                    }`}
                   />
+                  {createEmailWarning && (
+                    <p className="text-[11px] text-rose-600 font-bold mt-1 flex items-center gap-1">
+                      <span>⚠️</span> {createEmailWarning}
+                    </p>
+                  )}
                 </div>
               </div>
 
@@ -4004,8 +4116,15 @@ export const Leads: React.FC = () => {
                   value={editName}
                   onChange={(e) => setEditName(e.target.value)}
                   placeholder="Client Full Name"
-                  className="w-full border border-slate-200 rounded-xl px-3 py-2.5 bg-slate-50 focus:outline-none focus:border-blue-500 font-bold text-slate-800"
+                  className={`w-full border rounded-xl px-3 py-2.5 bg-slate-50 focus:outline-none font-bold transition-colors ${
+                    editNameWarning ? 'border-rose-400 focus:border-rose-500 bg-rose-50/40 text-rose-900' : 'border-slate-200 focus:border-blue-500 text-slate-800'
+                  }`}
                 />
+                {editNameWarning && (
+                  <p className="text-[11px] text-rose-600 font-bold mt-1 flex items-center gap-1">
+                    <span>⚠️</span> {editNameWarning}
+                  </p>
+                )}
               </div>
 
               <div className="grid grid-cols-2 gap-4">
@@ -4027,8 +4146,15 @@ export const Leads: React.FC = () => {
                     value={editEmail}
                     onChange={(e) => setEditEmail(e.target.value)}
                     placeholder="name@example.com"
-                    className="w-full border border-slate-200 rounded-xl px-3 py-2.5 bg-slate-50 focus:outline-none focus:border-blue-500 font-medium text-slate-800"
+                    className={`w-full border rounded-xl px-3 py-2.5 bg-slate-50 focus:outline-none font-medium transition-colors ${
+                      editEmailWarning ? 'border-rose-400 focus:border-rose-500 bg-rose-50/40 text-rose-900' : 'border-slate-200 focus:border-blue-500 text-slate-800'
+                    }`}
                   />
+                  {editEmailWarning && (
+                    <p className="text-[11px] text-rose-600 font-bold mt-1 flex items-center gap-1">
+                      <span>⚠️</span> {editEmailWarning}
+                    </p>
+                  )}
                 </div>
               </div>
 

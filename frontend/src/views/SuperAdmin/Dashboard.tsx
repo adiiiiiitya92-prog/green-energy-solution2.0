@@ -28,24 +28,30 @@ export const Dashboard: React.FC = () => {
     return [{ id: 'p1', installmentNo: 1, label: '1st Advance', amount: c.advanceAmount || 0, paymentMode: c.paymentMode || 'utr', paidAt: c.createdAt }];
   };
 
+  const [isLoading, setIsLoading] = useState<boolean>(true);
+
   const loadData = async () => {
     try {
-      const rawLeads = await leadService.getLeads();
+      const [leadsRes, quotesRes, ocsRes, empsRes, visitsRes, prodsRes, deleteReqsRes] = await Promise.allSettled([
+        leadService.getLeads(),
+        quotationService.getAllQuotations(),
+        orderService.getAllOrderConfirmations(),
+        employeeService.getEmployees(),
+        visitService.getVisitReports(),
+        productService.getProducts(),
+        import('../../services/deletionRequestService').then(m => m.deletionRequestService.getPendingRequests()).catch(() => [])
+      ]);
+
+      const rawLeads = leadsRes.status === 'fulfilled' ? (leadsRes.value || []) : [];
       const lList = filterLeadsForUser(rawLeads, currentUser, currentRole);
       setLeads(lList);
-
-      let qList: Quotation[] = [];
-      try {
-        qList = await quotationService.getAllQuotations();
-      } catch (qErr) {
-        console.warn("Quotations load in Dashboard warning:", qErr);
-      }
 
       const activeLeadIds = new Set(lList.map(l => l.id));
       const roleStr = (currentRole || currentUser?.role || '').toLowerCase();
       const desigStr = (currentUser?.designation || '').toLowerCase();
       const hasFullAccess = roleStr === 'super_admin' || roleStr === 'operations_admin' || desigStr.includes('operations admin');
 
+      let qList: Quotation[] = quotesRes.status === 'fulfilled' ? (quotesRes.value || []) : [];
       if (!hasFullAccess) {
         qList = qList.filter(q => !!q.leadId && activeLeadIds.has(q.leadId));
       }
@@ -54,41 +60,23 @@ export const Dashboard: React.FC = () => {
       }
       setQuotations(qList);
 
-      const allOc: OrderConfirmation[] = [];
-      for (const lead of lList) {
-        try {
-          const oc = await orderService.getOrderConfirmationByLeadId(lead.id);
-          if (oc) {
-            allOc.push(oc);
-          }
-        } catch (_) {}
-      }
-      setConfirmations(lList.length === 0 ? [] : allOc);
+      const allOcs = ocsRes.status === 'fulfilled' ? (ocsRes.value || []) : [];
+      const matchedOcs = hasFullAccess ? allOcs : allOcs.filter(oc => activeLeadIds.has(oc.leadId));
+      setConfirmations(matchedOcs);
 
-      try {
-        const empList = await employeeService.getEmployees();
-        setEmployees(empList);
-      } catch (_) {}
-
-      try {
-        const vReports = await visitService.getVisitReports();
-        setVisitsCount(vReports ? vReports.length : 0);
-      } catch (_) {}
-
-      try {
-        const pList = await productService.getProducts();
-        setProducts(pList || []);
-        const lowStock = (pList || []).filter(p => p.stockQuantity <= p.minStockThreshold);
+      if (empsRes.status === 'fulfilled') setEmployees(empsRes.value || []);
+      if (visitsRes.status === 'fulfilled') setVisitsCount((visitsRes.value || []).length);
+      if (prodsRes.status === 'fulfilled') {
+        const pList = prodsRes.value || [];
+        setProducts(pList);
+        const lowStock = pList.filter(p => p.stockQuantity <= p.minStockThreshold);
         setLowStockProducts(lowStock);
-      } catch (_) {}
-
-      try {
-        const { deletionRequestService } = await import('../../services/deletionRequestService');
-        const pending = await deletionRequestService.getPendingRequests();
-        setPendingDeleteRequests(pending);
-      } catch (_) {}
+      }
+      if (deleteReqsRes.status === 'fulfilled') setPendingDeleteRequests(deleteReqsRes.value || []);
     } catch (err) {
       console.error("Error loading Dashboard metrics:", err);
+    } finally {
+      setIsLoading(false);
     }
   };
 

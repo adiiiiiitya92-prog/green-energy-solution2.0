@@ -44,7 +44,32 @@ export const orderService = {
   async getAllOrderConfirmations(): Promise<OrderConfirmation[]> {
     const deletedIds = await getDeletedRecordIdsSet();
     const all = await db.orderConfirmations.toArray();
-    return all.filter(o => !deletedIds.has(o.id) && !deletedIds.has(o.leadId));
+    const validLocal = all.filter(o => !deletedIds.has(o.id) && !deletedIds.has(o.leadId));
+
+    const syncRemote = async () => {
+      try {
+        const remoteOcs = await fetchCollectionFromFirestore<OrderConfirmation>('orderConfirmations');
+        if (Array.isArray(remoteOcs) && remoteOcs.length > 0) {
+          const freshDeleted = await getDeletedRecordIdsSet();
+          const validRemote = remoteOcs.filter(o => !freshDeleted.has(o.id) && !freshDeleted.has(o.leadId));
+          if (validRemote.length > 0) {
+            await db.orderConfirmations.bulkPut(validRemote);
+          }
+        }
+      } catch (err) {
+        console.warn("Background orderConfirmations sync note:", err);
+      }
+    };
+
+    if (validLocal.length > 0) {
+      syncRemote();
+      return validLocal;
+    }
+
+    await syncRemote();
+    const refreshed = await db.orderConfirmations.toArray();
+    const freshDeleted = await getDeletedRecordIdsSet();
+    return refreshed.filter(o => !freshDeleted.has(o.id) && !freshDeleted.has(o.leadId));
   },
 
   async createOrderConfirmation(ocData: Omit<OrderConfirmation, 'id' | 'createdAt'>): Promise<string> {

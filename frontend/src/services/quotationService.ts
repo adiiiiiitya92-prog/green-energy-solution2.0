@@ -146,6 +146,10 @@ export function sanitizeQuotationRecord(q: Quotation): Quotation {
 
 export const quotationService = {
   async getAllQuotations(): Promise<Quotation[]> {
+    const deletedIds = await getDeletedRecordIdsSet();
+    const localQuotes = await db.quotations.orderBy('createdAt').reverse().toArray();
+    const validLocal = localQuotes.filter(q => !deletedIds.has(q.id) && q.items && q.items.length > 0 && getQuotationTotalAmount(q) > 0).map(sanitizeQuotationRecord);
+
     const syncRemote = async () => {
       try {
         const remoteQuotes = await fetchCollectionFromFirestore<Quotation>('quotations');
@@ -170,6 +174,11 @@ export const quotationService = {
         console.warn("Background quotation sync note:", err);
       }
     };
+
+    if (validLocal.length > 0) {
+      syncRemote();
+      return validLocal;
+    }
 
     await syncRemote();
     const refreshed = await db.quotations.orderBy('createdAt').reverse().toArray();

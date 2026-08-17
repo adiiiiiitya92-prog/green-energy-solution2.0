@@ -360,8 +360,11 @@ export const Dashboard: React.FC = () => {
           </div>
 
           <Link
-            to="/leads"
-            onClick={() => sessionStorage.setItem('leads_rawFilter', 'process_done_payment_pending')}
+            to="/leads?filter=process_done_payment_pending"
+            onClick={() => {
+              sessionStorage.removeItem('leads_selectedLeadId');
+              sessionStorage.setItem('leads_rawFilter', 'process_done_payment_pending');
+            }}
             className="px-4 py-2 bg-purple-600 hover:bg-purple-500 text-white font-extrabold text-xs rounded-xl shadow-md transition-all cursor-pointer flex items-center gap-1.5 shrink-0"
           >
             <span>View All ({processDoneStats.count}) Leads</span>

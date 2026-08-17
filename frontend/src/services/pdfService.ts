@@ -388,7 +388,7 @@ export function createNewQuotationProposalHtml(q: any, lead: any, creatorName: s
       </div>
 
       <!-- Dark Blue Customer Info Bar Overlay (Middle Right - Perfectly Inside Dark Blue Bar with Generous Spacing) -->
-      <div style="position: absolute; top: 560px; right: 0px; width: 55%; height: 138px; display: flex; align-items: center; padding-left: 20px; padding-right: 14px; box-sizing: border-box; overflow: hidden;">
+      <div style="position: absolute; top: 574px; right: 0px; width: 56%; height: 136px; background: #0d2847; border-radius: 28px 0 0 28px; border-left: 3px solid #EAA20A; display: flex; align-items: center; padding-left: 18px; padding-right: 14px; box-sizing: border-box; box-shadow: 0 4px 14px rgba(0,0,0,0.25);">
         <!-- Yellow User Icon Circle -->
         <div style="width: 44px; height: 44px; border-radius: 50%; background: #EAA20A; display: flex; align-items: center; justify-content: center; margin-right: 12px; flex-shrink: 0; box-shadow: 0 4px 12px rgba(0,0,0,0.3);">
           <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#ffffff" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
@@ -397,23 +397,23 @@ export function createNewQuotationProposalHtml(q: any, lead: any, creatorName: s
           </svg>
         </div>
         <!-- Customer Details (Generous Spacing, Clean Line Height, Zero Overlap) -->
-        <div style="color: #ffffff; text-align: left; display: flex; flex-direction: column; justify-content: center; width: calc(100% - 56px); max-height: 128px; overflow: hidden;">
-          <h2 style="font-size: ${nameFontSize}; font-weight: 900; margin: 0 0 3px 0; text-transform: uppercase; color: #ffffff; letter-spacing: 0.5px; line-height: 1.25; word-break: break-word; max-height: 48px; overflow: hidden;">
+        <div style="color: #ffffff; text-align: left; display: flex; flex-direction: column; justify-content: center; width: calc(100% - 56px);">
+          <h2 style="font-size: ${nameFontSize}; font-weight: 900; margin: 0 0 4px 0; text-transform: uppercase; color: #ffffff; letter-spacing: 0.5px; line-height: 1.35; word-break: break-word;">
             ${cName}
           </h2>
-          <div style="font-size: ${addrFontSize}; font-weight: 600; color: #ffffff; margin-bottom: 2px; display: flex; align-items: flex-start; gap: 6px; line-height: 1.25;">
+          <div style="font-size: ${addrFontSize}; font-weight: 600; color: #ffffff; margin-bottom: 3px; display: flex; align-items: flex-start; gap: 6px; line-height: 1.35;">
             <svg width="13" height="13" viewBox="0 0 24 24" fill="#EAA20A" stroke="#EAA20A" stroke-width="1" style="flex-shrink: 0; margin-top: 2px;">
               <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"></path>
               <circle cx="12" cy="10" r="3" fill="#0d2847"></circle>
             </svg>
-            <span style="line-height: 1.25; font-weight: 700; word-break: break-word; max-height: 42px; overflow: hidden;">${fullAddrStr}</span>
+            <span style="line-height: 1.35; font-weight: 700; word-break: break-word;">${fullAddrStr}</span>
           </div>
           ${cMobile ? `
-            <div style="font-size: 11.5px; font-weight: 600; color: #ffffff; margin-top: 1px; display: flex; align-items: center; gap: 6px;">
+            <div style="font-size: 11.5px; font-weight: 600; color: #ffffff; margin-top: 2px; display: flex; align-items: center; gap: 6px;">
               <svg width="13" height="13" viewBox="0 0 24 24" fill="#EAA20A" stroke="#EAA20A" style="flex-shrink: 0;">
                 <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"></path>
               </svg>
-              <span style="line-height: 1.2; font-weight: 700;">${cMobile}</span>
+              <span style="line-height: 1.35; font-weight: 700;">${cMobile}</span>
             </div>
           ` : ''}
         </div>
@@ -871,14 +871,18 @@ export function createNewQuotationProposalHtml(q: any, lead: any, creatorName: s
         <!-- Section 7: Document Required for Load Expansion, Net Metering -->
         <div style="background: #f8fafc; border: 1px solid #cbd5e1; border-radius: 4px; padding: 5px 10px; margin-top: 2px;">
           <h4 style="font-size: 9.5px; font-weight: 900; text-align: center; color: #0f172a; margin: 0 0 3px 0; text-transform: uppercase;">Document Required for Load Expansion, Net Metering</h4>
-          <ul style="margin: 0; padding-left: 16px; font-size: 8.3px; line-height: 1.35; display: grid; grid-template-columns: 1fr 1fr; gap: 2px 10px;">
-            <li>Latest Electricity bill</li>
-            <li>Photo copy of PAN Card – self attested</li>
-            <li>Photo copy of Aadhar Card – self attested</li>
-            <li>Photo copy of tax Receipt</li>
-            <li>Photocopy of ownership document</li>
-            <li>Mobile number & Email id</li>
-          </ul>
+          <div style="display: flex; justify-content: space-between; font-size: 8.5px; line-height: 1.4;">
+            <ul style="margin: 0; padding-left: 16px; width: 48%;">
+              <li>Latest Electricity bill</li>
+              <li>Photo copy of PAN Card – self attested</li>
+              <li>Photo copy of Aadhar Card – self attested</li>
+            </ul>
+            <ul style="margin: 0; padding-left: 16px; width: 48%;">
+              <li>Photo copy of tax Receipt</li>
+              <li>Photocopy of ownership document</li>
+              <li>Mobile number & Email id</li>
+            </ul>
+          </div>
         </div>
       </div>
       ${renderPageFooter(7)}
@@ -1115,43 +1119,11 @@ export const pdfService = {
     onProgress?: (current: number, total: number) => void
   ): Promise<Blob> {
     const propNo = q.quotationNumber || q.proposalId || 'EST-001';
-    const sanitizedPropNo = propNo.replace(/\//g, '_');
+    const sanitizedPropNo = propNo.replace(/[\/\s]/g, '_');
     const fileName = `Solar_Quotation_${sanitizedPropNo}.pdf`;
 
-    // 1. Check if an active quotation print container is already in DOM
-    if (typeof document !== 'undefined') {
-      const liveContainer = document.querySelector('.quotation-print-container') as HTMLElement;
-      if (liveContainer) {
-        return await generateQuotationDocumentPDF(liveContainer, fileName, onProgress);
-      }
-    }
-
-    // 2. Render the exact 8-Page Proposal HTML template into a temporary DOM container
-    if (typeof document !== 'undefined') {
-      const htmlContent = createNewQuotationProposalHtml(q, lead, creatorName);
-      const tempDiv = document.createElement('div');
-      tempDiv.className = 'quotation-print-container temp-pdf-render-container';
-      tempDiv.style.position = 'fixed';
-      tempDiv.style.left = '-9999px';
-      tempDiv.style.top = '0';
-      tempDiv.style.width = '794px';
-      tempDiv.style.zIndex = '-9999';
-      tempDiv.style.opacity = '1';
-      tempDiv.style.visibility = 'visible';
-      tempDiv.innerHTML = htmlContent;
-      document.body.appendChild(tempDiv);
-
-      try {
-        const blob = await generateQuotationDocumentPDF(tempDiv, fileName, onProgress);
-        return blob;
-      } finally {
-        if (document.body.contains(tempDiv)) {
-          document.body.removeChild(tempDiv);
-        }
-      }
-    }
-
-    return new Blob([], { type: 'application/pdf' });
+    const htmlContent = createNewQuotationProposalHtml(q, lead, creatorName);
+    return await generateQuotationDocumentPDF(htmlContent, fileName, onProgress);
   },
 
   async generateQuotationPDF_Old(

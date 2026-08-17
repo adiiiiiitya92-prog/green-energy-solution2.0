@@ -1,4 +1,5 @@
 import React, { useEffect, useState, useRef } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { useAuthStore } from '../../store/authStore';
 import { leadService, filterLeadsForUser } from '../../services/leadService';
 import { challanService } from '../../services/challanService';
@@ -60,6 +61,7 @@ export const formatCleanLeadDescription = (desc?: string): string => {
 
 export const Leads: React.FC = () => {
   const { currentRole, currentUser } = useAuthStore();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [leads, setLeads] = useState<Lead[]>([]);
   const [employees, setEmployees] = useState<Profile[]>([]);
   const [employeeNames, setEmployeeNames] = useState<Record<string, string>>({});
@@ -74,8 +76,31 @@ export const Leads: React.FC = () => {
   const [employeeFilter, setEmployeeFilter] = useState('');
   const [hotFilter, setHotFilter] = useState<'all' | 'hot' | 'normal'>('all');
   const [dispatchFilter, setDispatchFilter] = useState<'all' | 'dispatched' | 'not_dispatched'>('all');
-  const [rawFilter, setRawFilter] = useState<'all' | 'raw' | 'process_done_payment_pending' | 'advanced'>('all');
+  const [rawFilter, setRawFilter] = useState<'all' | 'raw' | 'process_done_payment_pending' | 'advanced'>(() => {
+    const fromUrl = new URLSearchParams(window.location.search).get('filter') || new URLSearchParams(window.location.search).get('rawFilter');
+    if (fromUrl === 'process_done_payment_pending' || fromUrl === 'raw' || fromUrl === 'advanced') {
+      return fromUrl;
+    }
+    const fromStorage = sessionStorage.getItem('leads_rawFilter');
+    if (fromStorage === 'process_done_payment_pending' || fromStorage === 'raw' || fromStorage === 'advanced') {
+      return fromStorage;
+    }
+    return 'all';
+  });
   const [dispatchedLeadIds, setDispatchedLeadIds] = useState<Set<string>>(new Set());
+
+  const handleSetRawFilter = (filter: 'all' | 'raw' | 'process_done_payment_pending' | 'advanced') => {
+    setRawFilter(filter);
+    sessionStorage.setItem('leads_rawFilter', filter);
+    const nextParams = new URLSearchParams(searchParams);
+    if (filter === 'all') {
+      nextParams.delete('filter');
+      nextParams.delete('rawFilter');
+    } else {
+      nextParams.set('filter', filter);
+    }
+    setSearchParams(nextParams, { replace: true });
+  };
 
   // Selected Lead (Details View) — restore from sessionStorage on refresh
   const [selectedLead, setSelectedLead] = useState<Lead | null>(null);
@@ -437,11 +462,11 @@ export const Leads: React.FC = () => {
     }
   };
 
-  const compileReportItems = async () => {
+  const compileReportItems = async (targetLeads?: Lead[], customEmpNames?: Record<string, string>) => {
     try {
       const items: LeadReportItem[] = [];
       const finMap: Record<string, { totalValue: number; paidAmount: number; pendingBalance: number; paymentStatus: string; installmentCount: number }> = {};
-      const validLeads = Array.isArray(leads) ? leads : [];
+      const validLeads = Array.isArray(targetLeads) ? targetLeads : (Array.isArray(leads) ? leads : []);
       if (validLeads.length === 0) return;
 
       const [allOcs, allQuotes] = await Promise.all([
@@ -491,7 +516,7 @@ export const Leads: React.FC = () => {
           else paymentStatus = 'Pending';
         }
 
-        const empNames = employeeNames || {};
+        const empNames = customEmpNames || employeeNames || {};
         const itemData = {
           leadId: l.id,
           name: l.name || 'Unnamed Client',
@@ -628,14 +653,37 @@ export const Leads: React.FC = () => {
     });
     setEmployeeNames(names);
 
+    compileReportItems(filteredList, names);
+
     productService.getProducts().then(setCatalogProducts).catch(e => console.warn("Load products error:", e));
   };
 
+  // Sync searchParams & sessionStorage filter state
+  useEffect(() => {
+    const filterFromUrl = searchParams.get('filter') || searchParams.get('rawFilter');
+    const filterFromStorage = sessionStorage.getItem('leads_rawFilter');
+    const active = filterFromUrl || filterFromStorage;
+
+    if (active === 'process_done_payment_pending' || active === 'raw' || active === 'advanced') {
+      setRawFilter(active as any);
+      sessionStorage.setItem('leads_rawFilter', active);
+      setSelectedLead(null);
+      sessionStorage.removeItem('leads_selectedLeadId');
+      setStatusFilter('');
+      setMainTab('pipeline');
+    } else if (filterFromUrl === 'all') {
+      setRawFilter('all');
+      sessionStorage.setItem('leads_rawFilter', 'all');
+    }
+  }, [searchParams]);
+
   useEffect(() => {
     loadData().then(async () => {
-      // Restore selected lead from sessionStorage on refresh
+      // Restore selected lead from sessionStorage on refresh only if not viewing a filtered list
       const savedLeadId = sessionStorage.getItem('leads_selectedLeadId');
-      if (savedLeadId && !selectedLead) {
+      const urlFilter = searchParams.get('filter') || searchParams.get('rawFilter');
+      const rawFilterSaved = sessionStorage.getItem('leads_rawFilter');
+      if (savedLeadId && !selectedLead && !urlFilter && rawFilterSaved !== 'process_done_payment_pending') {
         try {
           const lead = await leadService.getLeadById(savedLeadId);
           if (lead) {
@@ -709,15 +757,13 @@ export const Leads: React.FC = () => {
 
     let oc = initialOc;
 
-    // Sync Follow-up inspection date & pre-cache proposal PDF in background
+    // Sync Follow-up inspection date
     if (quotations.length > 0) {
       if (quotations[0].followUpDate) {
         setQuoteFollowUp(dayjs(quotations[0].followUpDate).format('YYYY-MM-DD'));
       } else {
         setQuoteFollowUp('');
       }
-      // Pre-cache PDF Blob in background for instant 0ms mobile WhatsApp share
-      ensurePdfBlobForQuotation(quotations[0], lead, quotations[0].createdBy || 'Admin').catch(() => {});
     } else if (lead.nextFollowUpDate) {
       setQuoteFollowUp(dayjs(lead.nextFollowUpDate).format('YYYY-MM-DD'));
     } else {
@@ -3456,7 +3502,7 @@ export const Leads: React.FC = () => {
                     {/* Quick Raw Lead Filter Toggle Pill */}
                     <button
                       type="button"
-                      onClick={() => setRawFilter(prev => prev === 'raw' ? 'all' : 'raw')}
+                      onClick={() => handleSetRawFilter(rawFilter === 'raw' ? 'all' : 'raw')}
                       className={`px-3 py-2 rounded-lg border flex items-center gap-1.5 transition-all cursor-pointer ${
                         rawFilter === 'raw'
                           ? 'bg-blue-600 text-white border-blue-700 shadow-xs font-black'
@@ -3476,7 +3522,7 @@ export const Leads: React.FC = () => {
                     {/* Quick Process Done & Payment Due Filter Toggle Pill */}
                     <button
                       type="button"
-                      onClick={() => setRawFilter(prev => prev === 'process_done_payment_pending' ? 'all' : 'process_done_payment_pending')}
+                      onClick={() => handleSetRawFilter(rawFilter === 'process_done_payment_pending' ? 'all' : 'process_done_payment_pending')}
                       className={`px-3 py-2 rounded-lg border flex items-center gap-1.5 transition-all cursor-pointer ${
                         rawFilter === 'process_done_payment_pending'
                           ? 'bg-purple-700 text-white border-purple-800 shadow-xs font-black'
@@ -3556,7 +3602,7 @@ export const Leads: React.FC = () => {
                     {/* Raw Lead Filter Select */}
                     <select
                       value={rawFilter}
-                      onChange={(e) => setRawFilter(e.target.value as any)}
+                      onChange={(e) => handleSetRawFilter(e.target.value as any)}
                       className="border border-slate-200 rounded-lg p-2.5 bg-slate-50 focus:outline-none cursor-pointer text-slate-700 font-bold"
                     >
                       <option value="all">All Lead Pipeline Types</option>
@@ -3618,6 +3664,37 @@ export const Leads: React.FC = () => {
                     )}
                   </div>
                 </div>
+
+                {/* Active Filter Banner for Process Done & Payment Pending */}
+                {rawFilter === 'process_done_payment_pending' && (
+                  <div className="bg-gradient-to-r from-purple-950 via-slate-900 to-purple-950 border border-purple-500/40 text-white p-4 rounded-2xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-lg animate-fade-in">
+                    <div className="flex items-center gap-3">
+                      <div className="p-2.5 rounded-xl bg-purple-500/20 border border-purple-500/30 text-purple-300 shrink-0">
+                        <AlertCircle className="w-5 h-5 text-purple-300" />
+                      </div>
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <span className="text-[10px] font-black text-purple-300 uppercase tracking-widest bg-purple-500/20 px-2.5 py-0.5 rounded-full border border-purple-400/30">
+                            FILTER ACTIVE
+                          </span>
+                          <span className="text-xs font-black text-white">
+                            Completed Installations Pending Payment ({filteredLeads.length} Lead{filteredLeads.length === 1 ? '' : 's'})
+                          </span>
+                        </div>
+                        <p className="text-[11px] text-purple-200/80 font-medium mt-0.5">
+                          Showing only closed/installed customer leads with remaining collectable balances.
+                        </p>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => handleSetRawFilter('all')}
+                      className="px-3.5 py-2 bg-purple-600 hover:bg-purple-500 text-white rounded-xl text-xs font-bold transition-all cursor-pointer shrink-0 shadow-xs"
+                    >
+                      Show All Leads
+                    </button>
+                  </div>
+                )}
 
                 {/* Leads Cards Grid */}
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -4756,10 +4833,6 @@ const LeadQuotationsTimeline: React.FC<{
   const loadQuotes = () => {
     quotationService.getQuotationsByLeadId(leadId).then(qList => {
       setQuotes(qList);
-      // Pre-cache PDF Blobs in background for instant 0ms sharing
-      qList.forEach(q => {
-        ensurePdfBlobForQuotation(q, undefined, q.createdBy || 'Admin').catch(() => {});
-      });
     });
   };
 
@@ -4825,8 +4898,6 @@ const LeadQuotationsTimeline: React.FC<{
             <button
               type="button"
               onClick={() => onShare(q)}
-              onMouseEnter={() => ensurePdfBlobForQuotation(q, undefined, q.createdBy || 'Admin')}
-              onTouchStart={() => ensurePdfBlobForQuotation(q, undefined, q.createdBy || 'Admin')}
               className="px-3 py-1.5 bg-slate-100 hover:bg-emerald-50 text-slate-700 hover:text-emerald-700 border border-slate-200 hover:border-emerald-200 rounded-lg text-[10px] font-bold flex items-center gap-1 cursor-pointer transition-colors"
             >
               <Send className="w-3 h-3" />

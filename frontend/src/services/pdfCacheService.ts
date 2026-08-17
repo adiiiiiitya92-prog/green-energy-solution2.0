@@ -1,7 +1,7 @@
 import type { Quotation, Lead } from '../types';
 import { pdfService } from './pdfService';
 
-const CACHE_NAME = 'ges-quotation-pdf-v4';
+const CACHE_NAME = 'ges-quotation-pdf-v5';
 const memoryPdfCache = new Map<string, Blob>();
 
 /**
@@ -63,6 +63,8 @@ export async function setCachedPdfBlob(key: string, blob: Blob): Promise<void> {
   }
 }
 
+const inFlightPromises = new Map<string, Promise<Blob>>();
+
 /**
  * Ensure PDF Blob is immediately available.
  * Checks Memory/CacheStorage -> Cloud URL -> pdfBlob field -> Generates on demand.
@@ -75,12 +77,18 @@ export async function ensurePdfBlobForQuotation(
 ): Promise<Blob> {
   if (!quotation) return new Blob([], { type: 'application/pdf' });
   const propNo = quotation.quotationNumber || quotation.proposalId || quotation.id || 'EST';
+  const cleanKey = getCleanKey(propNo);
 
-  // 1. Try cache (v3 HD exact match)
-  const cached = await getCachedPdfBlob(propNo);
+  // 1. Try cache (0ms lookup)
+  const cached = await getCachedPdfBlob(cleanKey);
   if (cached && cached.size > 100) return cached;
 
-  // 2. Generate exact 8-Page HD Proposal PDF on-the-fly
+  // 2. If already being generated in-flight, return the existing Promise
+  if (inFlightPromises.has(cleanKey)) {
+    return inFlightPromises.get(cleanKey)!;
+  }
+
+  // 3. Generate exact 8-Page Proposal PDF on-the-fly
   const mockLead: Lead = lead || {
     id: quotation.leadId || '',
     name: quotation.consumerName || 'Valued Customer',
@@ -94,10 +102,19 @@ export async function ensurePdfBlobForQuotation(
     updatedAt: new Date().toISOString()
   };
 
-  const generatedBlob = await pdfService.generateQuotationPDF(quotation, mockLead, creatorName, onProgress);
-  if (generatedBlob) {
-    await setCachedPdfBlob(propNo, generatedBlob);
-    if (quotation.id) await setCachedPdfBlob(quotation.id, generatedBlob);
-  }
-  return generatedBlob;
+  const genPromise = (async () => {
+    try {
+      const generatedBlob = await pdfService.generateQuotationPDF(quotation, mockLead, creatorName, onProgress);
+      if (generatedBlob && generatedBlob.size > 100) {
+        await setCachedPdfBlob(cleanKey, generatedBlob);
+        if (quotation.id) await setCachedPdfBlob(quotation.id, generatedBlob);
+      }
+      return generatedBlob;
+    } finally {
+      inFlightPromises.delete(cleanKey);
+    }
+  })();
+
+  inFlightPromises.set(cleanKey, genPromise);
+  return genPromise;
 }

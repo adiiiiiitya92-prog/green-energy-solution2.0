@@ -888,8 +888,7 @@ export const QuotationDocument: React.FC<{
       sentViaWhatsapp: false
     };
 
-    const container = contentRef.current || (document.querySelector('.quotation-print-container') as HTMLElement);
-    const promise = (container ? generateQuotationDocumentPDF(container, `Solar_Quotation_${proposalId.replace(/\//g, '_')}.pdf`) : pdfService.generateQuotationPDF(tempQ, mockLead, preparedBy))
+    const promise = pdfService.generateQuotationPDF(tempQ, mockLead, preparedBy)
       .then(blob => {
         lastPdfBlobRef.current = blob;
         setCachedPdfBlob(proposalId, blob);
@@ -904,15 +903,10 @@ export const QuotationDocument: React.FC<{
     pdfGenPromiseRef.current = promise;
   };
 
-  // Auto pre-cache PDF blob in background after 100ms idle so WhatsApp Share / Download opens instantly
+  // Reset cached blob when quotation parameters change
   useEffect(() => {
-    if (!items || items.length === 0 || grandTotal <= 0) return;
     lastPdfBlobRef.current = null;
     pdfGenPromiseRef.current = null;
-    const timer = setTimeout(() => {
-      preloadPdfIfNeeded();
-    }, 100);
-    return () => clearTimeout(timer);
   }, [proposalId, items, grandTotal, systemCapacity, consumerName]);
 
   // Share Quotation PDF via WhatsApp using Dual Strategy (Instant Mobile Native Share)
@@ -956,7 +950,7 @@ export const QuotationDocument: React.FC<{
     // Check if background pre-cache promise is already running
     if (!pdfBlob && pdfGenPromiseRef.current) {
       setIsGenerating(true);
-      setPdfProgressMsg('Preparing HD Proposal PDF...');
+      setPdfProgressMsg('Preparing Proposal PDF...');
       pdfBlob = (await pdfGenPromiseRef.current) || undefined;
       setIsGenerating(false);
       setPdfProgressMsg(null);
@@ -975,14 +969,14 @@ export const QuotationDocument: React.FC<{
 
     if (!pdfBlob) {
       setIsGenerating(true);
-      setPdfProgressMsg('Preparing HD Proposal PDF...');
+      setPdfProgressMsg('Preparing Proposal PDF... (1/8)');
       try {
-        const container = contentRef.current || (document.querySelector('.quotation-print-container') as HTMLElement);
-        if (container) {
-          pdfBlob = await generateQuotationDocumentPDF(container, `Solar_Quotation_${proposalId.replace(/\//g, '_')}.pdf`);
-        } else {
-          pdfBlob = await pdfService.generateQuotationPDF(tempQ, mockLead, preparedBy);
-        }
+        pdfBlob = await pdfService.generateQuotationPDF(
+          tempQ,
+          mockLead,
+          preparedBy,
+          (cur, total) => setPdfProgressMsg(`Preparing Proposal PDF... (${cur}/${total})`)
+        );
         lastPdfBlobRef.current = pdfBlob;
         if (pdfBlob) setCachedPdfBlob(proposalId, pdfBlob);
       } catch (e) {
@@ -1047,7 +1041,7 @@ export const QuotationDocument: React.FC<{
         await quotationService.markQuotationAsSent(qId);
         const pdfBlob = lastPdfBlobRef.current;
         if (pdfBlob) {
-          const sanitizedProposalId = proposalId.replace(/\//g, '_');
+          const sanitizedProposalId = proposalId.replace(/[\/\s]/g, '_');
           const storagePath = `quotations/pdf_${sanitizedProposalId}.pdf`;
           const b2Url = await uploadPdfToFirebase(pdfBlob, storagePath);
           if (b2Url && (b2Url.startsWith('http://') || b2Url.startsWith('https://'))) {
@@ -1061,7 +1055,7 @@ export const QuotationDocument: React.FC<{
     }
   };
 
-  // Download PDF Document (Instant download using optimized single-pass PDF generation)
+  // Download PDF Document (Instant download using isolated fast generator)
   const handleSaveAndGeneratePDF = async () => {
     if (!items || items.length === 0 || grandTotal <= 0) {
       alert('⚠️ Quotation download nahi ho sakta: Kripya pehle kam se kam 1 commercial product item add karein.');
@@ -1073,37 +1067,47 @@ export const QuotationDocument: React.FC<{
       const qId = await handleSaveQuotation();
       if (!qId) return;
 
+      const targetLeadId = selectedLeadId || readOnlyQuotation?.leadId;
+      const fullQuotation = await quotationService.getQuotationById(qId);
+      const tempQ: Quotation = fullQuotation || {
+        id: qId,
+        leadId: targetLeadId || '',
+        quotationNumber: proposalId,
+        items, bomItems, subtotal, grandTotal,
+        consumerName: consumerName || selectedLead?.name || 'Valued Customer',
+        consumerMobile: consumerMobile || selectedLead?.phoneNumber || '',
+        consumerEmail: consumerEmail || selectedLead?.email || '',
+        consumerNo, sanctionLoad, city, statePin, proposalId, proposalDate, preparedBy,
+        systemCapacity: `${systemCapacity} kW`, subsidyAmount, gstRate,
+        pvModuleMake, inverterMake, structureType,
+        createdBy: preparedBy, createdAt: new Date().toISOString(),
+        sentViaWhatsapp: false
+      };
+
+      const mockLead: Lead = selectedLead || {
+        id: targetLeadId || tempQ.leadId,
+        name: consumerName || 'Valued Customer',
+        phoneNumber: consumerMobile,
+        email: consumerEmail,
+        requirement: `${systemCapacity} kW Solar Rooftop`,
+        description: city,
+        createdBy: preparedBy,
+        status: 'quotation_sent',
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      };
+
       let blob = lastPdfBlobRef.current;
       if (!blob) {
-        const fullQuotation = await quotationService.getQuotationById(qId);
-        if (fullQuotation) {
-          const mockLead: Lead = selectedLead || {
-            id: selectedLeadId || fullQuotation.leadId,
-            name: consumerName || 'Valued Customer',
-            phoneNumber: consumerMobile,
-            email: consumerEmail,
-            requirement: `${systemCapacity} kW Solar Rooftop`,
-            description: city,
-            createdBy: preparedBy,
-            status: 'quotation_sent',
-            createdAt: new Date().toISOString(),
-            updatedAt: new Date().toISOString()
-          };
-          const container = contentRef.current || (document.querySelector('.quotation-print-container') as HTMLElement);
-          if (container) {
-            blob = await generateQuotationDocumentPDF(
-              container,
-              `Solar_Quotation_${proposalId.replace(/\//g, '_')}.pdf`,
-              (cur, total) => setPdfProgressMsg(`Saving & Generating HD PDF... (Page ${cur}/${total})`)
-            );
-          } else {
-            blob = await pdfService.generateQuotationPDF(
-              fullQuotation,
-              mockLead,
-              preparedBy,
-              (cur, total) => setPdfProgressMsg(`Saving & Generating PDF... (Page ${cur}/${total})`)
-            );
-          }
+        blob = await pdfService.generateQuotationPDF(
+          tempQ,
+          mockLead,
+          preparedBy,
+          (cur, total) => setPdfProgressMsg(`Saving & Generating PDF... (Page ${cur}/${total})`)
+        );
+        if (blob) {
+          lastPdfBlobRef.current = blob;
+          setCachedPdfBlob(proposalId, blob);
         }
       }
 
@@ -1111,7 +1115,7 @@ export const QuotationDocument: React.FC<{
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
-        a.download = `Solar_Quotation_${proposalId.replace(/\//g, '_')}.pdf`;
+        a.download = `Solar_Quotation_${proposalId.replace(/[\/\s]/g, '_')}.pdf`;
         a.click();
         URL.revokeObjectURL(url);
         setSaveSuccessMsg('8-Page Proposal saved & PDF downloaded!');

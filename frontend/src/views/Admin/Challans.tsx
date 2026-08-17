@@ -97,7 +97,8 @@ export const Challans: React.FC = () => {
     setChallans(cList);
 
     const rawLeads = await leadService.getLeads();
-    const sortedLeads = [...rawLeads].sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+    const userLeads = filterLeadsForUser(rawLeads, currentUser, currentRole);
+    const sortedLeads = [...userLeads].sort((a, b) => (a.name || '').localeCompare(b.name || ''));
     setLeads(sortedLeads);
 
     const eList = await employeeService.getEmployees();

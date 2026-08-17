@@ -28,15 +28,29 @@ function b2DevServerPlugin() {
               const bucketId = process.env.VITE_B2_BUCKET_ID || '7fffc2f1470ba0d39dfb0518';
               const bucketName = process.env.VITE_B2_BUCKET_NAME || 'Green-Energy-Solution';
 
-              const credentials = Buffer.from(`${keyId}:${appKey}`).toString('base64');
-              const authRes = await fetch('https://api.backblazeb2.com/b2api/v2/b2_authorize_account', {
-                headers: { Authorization: `Basic ${credentials}` }
-              });
-              if (!authRes.ok) {
-                const errTxt = await authRes.text().catch(() => '');
-                throw new Error(`B2 authorize failed (${authRes.status}): ${errTxt}`);
+              let devCachedAuth: any = null;
+              let devLastAuthTime = 0;
+              async function getDevB2Auth() {
+                const now = Date.now();
+                if (devCachedAuth && (now - devLastAuthTime < 12 * 3600 * 1000)) {
+                  return devCachedAuth;
+                }
+                const keyId = process.env.VITE_B2_KEY_ID || '005ff217b03db580000000001';
+                const appKey = process.env.VITE_B2_APPLICATION_KEY || 'K005gOTKgViCFANig1DqeD7fLVoNU80';
+                const credentials = Buffer.from(`${keyId}:${appKey}`).toString('base64');
+                const authRes = await fetch('https://api.backblazeb2.com/b2api/v2/b2_authorize_account', {
+                  headers: { Authorization: `Basic ${credentials}` }
+                });
+                if (!authRes.ok) {
+                  const errTxt = await authRes.text().catch(() => '');
+                  throw new Error(`B2 authorize failed (${authRes.status}): ${errTxt}`);
+                }
+                devCachedAuth = await authRes.json();
+                devLastAuthTime = now;
+                return devCachedAuth;
               }
-              const auth: any = await authRes.json();
+
+              const auth: any = await getDevB2Auth();
 
               const uploadUrlRes = await fetch(`${auth.apiUrl}/b2api/v2/b2_get_upload_url`, {
                 method: 'POST',
@@ -63,7 +77,7 @@ function b2DevServerPlugin() {
                 headers: { Authorization: auth.authorizationToken },
                 body: JSON.stringify({
                   bucketId,
-                  fileNamePrefix: cleanPath,
+                  fileNamePrefix: '',
                   validDurationInSeconds: 604800
                 })
               });
@@ -111,19 +125,62 @@ function b2DevServerPlugin() {
             if (!uploadUrlRes.ok) throw new Error('B2 get upload url failed');
             const uploadInfo: any = await uploadUrlRes.json();
 
+            const dnldAuthRes = await fetch(`${auth.apiUrl}/b2api/v2/b2_get_download_authorization`, {
+              method: 'POST',
+              headers: { Authorization: auth.authorizationToken },
+              body: JSON.stringify({
+                bucketId,
+                fileNamePrefix: '',
+                validDurationInSeconds: 604800
+              })
+            });
+
+            let downloadAuthToken = '';
+            if (dnldAuthRes.ok) {
+              const dnldData: any = await dnldAuthRes.json();
+              downloadAuthToken = dnldData.authorizationToken || '';
+            }
+
             res.setHeader('Content-Type', 'application/json');
             res.statusCode = 200;
             res.end(JSON.stringify({
               uploadUrl: uploadInfo.uploadUrl,
               authorizationToken: uploadInfo.authorizationToken,
               downloadUrl: auth.downloadUrl,
-              bucketName
+              bucketName,
+              downloadAuthToken
             }));
           } catch (err: any) {
             res.statusCode = 500;
             res.end(JSON.stringify({ error: err.message || 'Failed to get upload URL' }));
           }
           return;
+        }
+
+        if (req.url && req.url.startsWith('/api/b2-proxy')) {
+          try {
+            const parsedUrl = new URL(req.url, 'http://localhost:5173');
+            const targetUrl = parsedUrl.searchParams.get('url');
+            if (!targetUrl) {
+              res.statusCode = 400;
+              return res.end('Missing url parameter');
+            }
+            const imgRes = await fetch(targetUrl);
+            if (!imgRes.ok) {
+              res.statusCode = imgRes.status;
+              return res.end(`Failed to fetch image: ${imgRes.statusText}`);
+            }
+            const contentType = imgRes.headers.get('content-type') || 'image/webp';
+            const arrayBuffer = await imgRes.arrayBuffer();
+            res.setHeader('Content-Type', contentType);
+            res.setHeader('Access-Control-Allow-Origin', '*');
+            res.setHeader('Cache-Control', 'public, max-age=86400');
+            res.statusCode = 200;
+            return res.end(Buffer.from(arrayBuffer));
+          } catch (err: any) {
+            res.statusCode = 500;
+            return res.end(err.message || 'Proxy error');
+          }
         }
 
         if (req.url && req.url.startsWith('/api/firestore')) {

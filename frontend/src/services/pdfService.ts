@@ -9,6 +9,7 @@ import stampImg from '../assets/stamp.png';
 import paymentQrImg from '../assets/payment_qr.png';
 import { generateQuotationDocumentPDF } from './pdfOptimizationService';
 import { sortAndFormatBomItems, getBomCategoryIndex, getStandardCategoryName } from './quotationService';
+import { getFreshB2SignedUrl } from './firebase';
 
 let cachedLogoDataUrl: string | null = null;
 let cachedEngineerDataUrl: string | null = null;
@@ -100,7 +101,8 @@ async function convertImageToBase64(srcUrlOrBlob: any): Promise<string | null> {
   // Fetch conversion for HTTP / HTTPS / Blob URLs to avoid CORS canvas taints
   if (typeof srcUrlOrBlob === 'string' && (srcUrlOrBlob.startsWith('http') || srcUrlOrBlob.startsWith('blob:'))) {
     try {
-      const res = await fetch(srcUrlOrBlob);
+      const resolvedUrl = await getFreshB2SignedUrl(srcUrlOrBlob);
+      const res = await fetch(resolvedUrl);
       if (res.ok) {
         const blob = await res.blob();
         return await new Promise<string | null>((resolve) => {

@@ -418,6 +418,10 @@ export const quotationService = {
       await db.quotations.put(quotation);
       saveRecordToFirestore('quotations', id, quotation);
     }
+  },
+
+  async getQuotations(): Promise<Quotation[]> {
+    return this.getAllQuotations();
   }
 };
 

@@ -10,7 +10,7 @@ import { LeafletMap } from '../../components/Map/LeafletMap';
 import { pdfService } from '../../services/pdfService';
 import { Plus, MapPin, User, Compass, Upload, Search, ChevronDown, ChevronUp, Trash2, Download, RotateCcw, Clock, Sparkles } from 'lucide-react';
 import { compressImage } from '../../services/imageCompressionService';
-import { uploadImageToFirebase } from '../../services/firebase';
+import { uploadImageToFirebase, getQuickB2Url, getFreshB2SignedUrl } from '../../services/firebase';
 import dayjs from 'dayjs';
 
 export const Visits: React.FC = () => {
@@ -187,7 +187,7 @@ export const Visits: React.FC = () => {
 
   const renderBlobImage = (fileOrBlobOrUrl: any): string => {
     if (!fileOrBlobOrUrl) return '';
-    if (typeof fileOrBlobOrUrl === 'string') return fileOrBlobOrUrl.trim();
+    if (typeof fileOrBlobOrUrl === 'string') return getQuickB2Url(fileOrBlobOrUrl.trim());
     if (fileOrBlobOrUrl instanceof Blob || fileOrBlobOrUrl instanceof File) {
       try {
         return URL.createObjectURL(fileOrBlobOrUrl);

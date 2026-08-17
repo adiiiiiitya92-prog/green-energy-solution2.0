@@ -16,20 +16,20 @@ export async function compressImage(
   config: ImageCompressionConfig = {}
 ): Promise<File> {
   const isDoc = config.isDocument || false;
-  const targetSizeKB = config.maxSizeKB || (isDoc ? 85 : 55);
-  const targetDimension = config.maxWidthOrHeight || (isDoc ? 1600 : 1280);
-  const quality = isDoc ? 0.68 : 0.52;
+  const targetSizeKB = config.maxSizeKB || (isDoc ? 75 : 50);
+  const targetDimension = config.maxWidthOrHeight || (isDoc ? 1400 : 1200);
+  const quality = isDoc ? 0.65 : 0.52;
 
   // Convert Blob to File if needed
   let inputfile: File;
   if (fileOrBlob instanceof File) {
     inputfile = fileOrBlob;
   } else {
-    inputfile = new File([fileOrBlob], `upload_${Date.now()}.jpg`, { type: fileOrBlob.type || 'image/jpeg' });
+    inputfile = new File([fileOrBlob], `upload_${Date.now()}.webp`, { type: fileOrBlob.type || 'image/webp' });
   }
 
-  // Instant bypass if file is already small (< 100 KB)
-  if (inputfile.size <= 100 * 1024) {
+  // If already a tiny WebP (< 50 KB), keep as is
+  if (inputfile.size <= 50 * 1024 && (inputfile.type === 'image/webp' || inputfile.name.endsWith('.webp'))) {
     return inputfile;
   }
 
@@ -38,20 +38,20 @@ export async function compressImage(
       maxSizeMB: targetSizeKB / 1024, // Convert KB to MB
       maxWidthOrHeight: targetDimension,
       useWebWorker: false, // Fast main thread single pass
-      fileType: config.useWebP !== false ? 'image/webp' : 'image/jpeg',
+      fileType: 'image/webp',
       initialQuality: quality
     };
 
     const compressedBlob = await imageCompression(inputfile, options);
 
-    const fileName = inputfile.name.replace(/\.[^/.]+$/, "") + (options.fileType === 'image/webp' ? '.webp' : '.jpg');
+    const fileName = inputfile.name.replace(/\.[^/.]+$/, "") + '.webp';
     const compressedFile = new File([compressedBlob], fileName, {
-      type: options.fileType,
+      type: 'image/webp',
       lastModified: Date.now()
     });
 
     console.log(
-      `⚡ Fast Image compressed: ${(inputfile.size / 1024).toFixed(1)} KB ➔ ${(compressedFile.size / 1024).toFixed(1)} KB`
+      `⚡ Fast WebP Compressed: ${(inputfile.size / 1024).toFixed(1)} KB ➔ ${(compressedFile.size / 1024).toFixed(1)} KB`
     );
 
     return compressedFile;
@@ -71,12 +71,12 @@ export async function compressDataUrl(
 ): Promise<File> {
   const res = await fetch(dataUrl);
   const blob = await res.blob();
-  const file = new File([blob], fileName, { type: blob.type || 'image/jpeg' });
+  const file = new File([blob], fileName, { type: blob.type || 'image/webp' });
   return compressImage(file, config);
 }
 
 /**
- * Canvas-based fallback compression engine
+ * Canvas-based fallback compression engine (produces crisp WebP)
  */
 async function compressImageCanvasFallback(
   file: File,
@@ -115,8 +115,8 @@ async function compressImageCanvasFallback(
         canvas.toBlob(
           (blob) => {
             if (blob) {
-              const compFile = new File([blob], file.name.replace(/\.[^/.]+$/, ".jpg"), {
-                type: 'image/jpeg',
+              const compFile = new File([blob], file.name.replace(/\.[^/.]+$/, ".webp"), {
+                type: 'image/webp',
                 lastModified: Date.now()
               });
               resolve(compFile);
@@ -124,7 +124,7 @@ async function compressImageCanvasFallback(
               resolve(file);
             }
           },
-          'image/jpeg',
+          'image/webp',
           quality
         );
       } else {

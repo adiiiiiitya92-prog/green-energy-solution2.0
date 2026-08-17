@@ -15,6 +15,7 @@ import {
   Save
 } from 'lucide-react';
 import { generateOptimizedPDF } from '../../services/pdfOptimizationService';
+import { resolveLeadDocumentInfo } from '../../services/leadDataHelper';
 
 export const CfaAgreementDocument: React.FC<{
   defaultLeadId?: string;
@@ -78,21 +79,32 @@ export const CfaAgreementDocument: React.FC<{
     fetchLeads();
   }, []);
 
+  const applyLeadInfo = async (lead: Lead) => {
+    try {
+      const info = await resolveLeadDocumentInfo(lead);
+      setConsumerName(info.consumerName.toUpperCase());
+      setConsumerNumber(info.consumerMobile || info.consumerNo);
+      setConsumerAddress(info.address);
+
+      const capKw = parseFloat(info.capacityKw);
+      if (!isNaN(capKw) && capKw > 0) {
+        setSystemCapacity(String(capKw));
+        setInverterCapacity(String(capKw));
+      }
+      if (info.pvModuleMake) setModuleMake(info.pvModuleMake);
+      if (info.inverterMake) setInverterMake(info.inverterMake);
+    } catch (err) {
+      console.warn("Failed to auto-resolve lead details for CFA Agreement:", err);
+    }
+  };
+
   // Sync defaultLeadId when leads load
   useEffect(() => {
     if (leads.length > 0 && defaultLeadId) {
       setSelectedLeadId(defaultLeadId);
       const lead = leads.find((l) => l.id === defaultLeadId);
       if (lead) {
-        setConsumerName(lead.name.toUpperCase());
-        if (lead.phoneNumber) setConsumerNumber(lead.phoneNumber);
-        if (lead.description) setConsumerAddress(lead.description);
-        
-        const capMatch = lead.requirement.match(/(\d+(\.\d+)?)\s*(kw|kwp)/i);
-        if (capMatch) {
-          setSystemCapacity(capMatch[1]);
-          setInverterCapacity(capMatch[1]);
-        }
+        applyLeadInfo(lead);
       }
     }
   }, [leads, defaultLeadId]);
@@ -196,15 +208,7 @@ export const CfaAgreementDocument: React.FC<{
 
     const lead = leads.find((l) => l.id === leadId);
     if (lead) {
-      setConsumerName(lead.name.toUpperCase());
-      if (lead.phoneNumber) setConsumerNumber(lead.phoneNumber);
-      if (lead.description) setConsumerAddress(lead.description);
-      
-      const capMatch = lead.requirement.match(/(\d+(\.\d+)?)\s*(kw|kwp)/i);
-      if (capMatch) {
-        setSystemCapacity(capMatch[1]);
-        setInverterCapacity(capMatch[1]);
-      }
+      applyLeadInfo(lead);
     }
   };
 

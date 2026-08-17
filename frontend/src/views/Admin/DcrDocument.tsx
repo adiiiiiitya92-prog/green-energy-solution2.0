@@ -21,6 +21,7 @@ import {
 } from 'lucide-react';
 import dayjs from 'dayjs';
 import { generateOptimizedPDF } from '../../services/pdfOptimizationService';
+import { resolveLeadDocumentInfo } from '../../services/leadDataHelper';
 
 export const DcrDocument: React.FC<{
   defaultLeadId?: string;
@@ -50,7 +51,7 @@ export const DcrDocument: React.FC<{
   const [cellGstInvoice, setCellGstInvoice] = useState('GST/WR/2026/9981');
 
   // Rep details
-  const [repName, setRepName] = useState('Rajesh Sharma');
+  const [repName, setRepName] = useState('Snehal Thakre');
   const [repDesignation, setRepDesignation] = useState('Project Manager');
   const [repPhone, setRepPhone] = useState('9876543210');
   const [repEmail, setRepEmail] = useState('projects@greenenergysolution.com');
@@ -81,26 +82,34 @@ export const DcrDocument: React.FC<{
     fetchLeads();
   }, []);
 
+  const applyLeadInfo = async (lead: Lead) => {
+    try {
+      const info = await resolveLeadDocumentInfo(lead);
+      setConsumerName(info.consumerName);
+      setAddress(info.address);
+      setCapacity(info.capacityKw);
+
+      const capKw = parseFloat(info.capacityKw);
+      if (!isNaN(capKw) && capKw > 0) {
+        const defaultCount = Math.ceil((capKw * 1000) / 540);
+        setPvCount(String(defaultCount));
+        setPvSerialNumbers(`ASC/${dayjs().format('YYYY')}/001 to ASC/${dayjs().format('YYYY')}/${String(defaultCount).padStart(3, '0')}`);
+      }
+      if (info.pvModuleMake) setPvMake(info.pvModuleMake);
+      setAppNumber('APP-' + lead.id.replace('lead_', '').toUpperCase());
+      setAppDate(dayjs(lead.createdAt).format('YYYY-MM-DD'));
+    } catch (err) {
+      console.warn("Failed to auto-resolve lead details for DCR:", err);
+    }
+  };
+
   // Sync defaultLeadId when leads load
   useEffect(() => {
     if (leads.length > 0 && defaultLeadId) {
       setSelectedLeadId(defaultLeadId);
       const lead = leads.find((l) => l.id === defaultLeadId);
       if (lead) {
-        setConsumerName(lead.name);
-        const capMatch = lead.requirement.match(/(\d+(\.\d+)?)\s*(kw|kwp)/i);
-        if (capMatch) {
-          setCapacity(capMatch[1]);
-          const capKw = parseFloat(capMatch[1]);
-          if (!isNaN(capKw)) {
-            const defaultCount = Math.ceil((capKw * 1000) / 540);
-            setPvCount(String(defaultCount));
-            setPvSerialNumbers(`ASC/${dayjs().format('YYYY')}/001 to ASC/${dayjs().format('YYYY')}/${String(defaultCount).padStart(3, '0')}`);
-          }
-        }
-        setAddress(lead.description || 'Site address as per registration records');
-        setAppNumber('APP-' + lead.id.replace('lead_', '').toUpperCase());
-        setAppDate(dayjs(lead.createdAt).format('YYYY-MM-DD'));
+        applyLeadInfo(lead);
       }
     }
   }, [leads, defaultLeadId]);
@@ -199,25 +208,7 @@ export const DcrDocument: React.FC<{
 
     const lead = leads.find((l) => l.id === leadId);
     if (lead) {
-      setConsumerName(lead.name);
-      
-      // Auto-extract capacity from lead requirement if possible
-      const capMatch = lead.requirement.match(/(\d+(\.\d+)?)\s*(kw|kwp)/i);
-      if (capMatch) {
-        setCapacity(capMatch[1]);
-        // Also calculate a default PV module count based on 540Wp modules
-        const capKw = parseFloat(capMatch[1]);
-        if (!isNaN(capKw)) {
-          const defaultCount = Math.ceil((capKw * 1000) / 540);
-          setPvCount(String(defaultCount));
-          setPvSerialNumbers(`ASC/${dayjs().format('YYYY')}/001 to ASC/${dayjs().format('YYYY')}/${String(defaultCount).padStart(3, '0')}`);
-        }
-      }
-      
-      // Try to construct address or clean descriptions
-      setAddress(lead.description || 'Site address as per registration records');
-      setAppNumber('APP-' + lead.id.replace('lead_', '').toUpperCase());
-      setAppDate(dayjs(lead.createdAt).format('YYYY-MM-DD'));
+      applyLeadInfo(lead);
     }
   };
 
@@ -401,7 +392,7 @@ export const DcrDocument: React.FC<{
       setPvMake('Waaree Energies Ltd');
       setCellManufacturer('Waaree Energies Ltd');
       setCellGstInvoice('GST/WR/2026/9981');
-      setRepName('Rajesh Sharma');
+      setRepName('Snehal Thakre');
       setRepDesignation('Project Manager');
       setRepPhone('9876543210');
       setRepEmail('projects@greenenergysolution.com');

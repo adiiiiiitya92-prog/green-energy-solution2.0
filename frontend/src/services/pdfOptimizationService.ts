@@ -106,6 +106,30 @@ export async function generateOptimizedPDF(
     compress: true
   });
 
+async function prepareTargetImagesForCanvas(targetEl: HTMLElement) {
+  const images = Array.from(targetEl.querySelectorAll('img')) as HTMLImageElement[];
+  for (const img of images) {
+    const src = img.src;
+    if (src && (src.startsWith('http://') || src.startsWith('https://')) && !src.startsWith('data:')) {
+      try {
+        const proxyUrl = `/api/b2-proxy?url=${encodeURIComponent(src)}`;
+        const res = await fetch(proxyUrl).catch(() => fetch(src));
+        if (res && res.ok) {
+          const blob = await res.blob();
+          const dataUrl = await new Promise<string>((resolve) => {
+            const reader = new FileReader();
+            reader.onloadend = () => resolve(reader.result as string);
+            reader.readAsDataURL(blob);
+          });
+          if (dataUrl) {
+            img.src = dataUrl;
+          }
+        }
+      } catch (_) {}
+    }
+  }
+}
+
   for (let i = 0; i < targets.length; i++) {
     const targetEl = targets[i];
     
@@ -116,6 +140,8 @@ export async function generateOptimizedPDF(
     targetEl.style.visibility = 'visible';
 
     try {
+      await prepareTargetImagesForCanvas(targetEl);
+
       const canvas = await html2canvas(targetEl, {
         scale,
         useCORS: true,

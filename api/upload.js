@@ -76,7 +76,7 @@ export default async function handler(req, res) {
       headers: { Authorization: auth.authorizationToken },
       body: JSON.stringify({
         bucketId: B2_BUCKET_ID,
-        fileNamePrefix: cleanPath,
+        fileNamePrefix: '',
         validDurationInSeconds: 604800
       })
     });

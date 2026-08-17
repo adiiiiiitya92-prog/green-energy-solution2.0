@@ -4,6 +4,7 @@ import { quotationService } from '../../services/quotationService';
 import { orderService } from '../../services/orderService';
 import { visitService } from '../../services/visitService';
 import { employeeService } from '../../services/employeeService';
+import { getFreshB2SignedUrl, getQuickB2Url } from '../../services/firebase';
 import dayjs from 'dayjs';
 import { Eye, Download, X, Trash2, Compass } from 'lucide-react';
 
@@ -60,11 +61,12 @@ export const Timeline: React.FC<TimelineProps> = ({ lead }) => {
     return dayjs(isoStr).format('DD MMM YYYY, hh:mm A [IST]');
   };
 
-  // Safe helper to convert any Blob, Data URL, or Firebase HTTPS string into a renderable URL
+  // Safe helper to convert any Blob, Data URL, or Backblaze / Firebase HTTPS string into a fast renderable URL
   const renderBlobImage = (fileOrBlobOrUrl: any): string => {
     if (!fileOrBlobOrUrl) return '';
     if (typeof fileOrBlobOrUrl === 'string') {
-      return fileOrBlobOrUrl.trim();
+      const trimmed = fileOrBlobOrUrl.trim();
+      return getQuickB2Url(trimmed);
     }
     if (fileOrBlobOrUrl instanceof Blob || fileOrBlobOrUrl instanceof File) {
       try {
@@ -74,23 +76,24 @@ export const Timeline: React.FC<TimelineProps> = ({ lead }) => {
       }
     }
     if (typeof fileOrBlobOrUrl === 'object') {
-      if (fileOrBlobOrUrl.url && typeof fileOrBlobOrUrl.url === 'string') return fileOrBlobOrUrl.url;
+      if (fileOrBlobOrUrl.url && typeof fileOrBlobOrUrl.url === 'string') return getQuickB2Url(fileOrBlobOrUrl.url.trim());
       if (fileOrBlobOrUrl.data && typeof fileOrBlobOrUrl.data === 'string') return fileOrBlobOrUrl.data;
     }
     return '';
   };
 
-  // Safe helper to trigger browser download for any document format
+  // Safe helper to trigger browser download for any document format with fresh signed URL
   const handleDownloadFile = async (fileOrBlobOrUrl: any, defaultFileName: string) => {
-    const url = renderBlobImage(fileOrBlobOrUrl);
-    if (!url) {
+    const rawUrl = renderBlobImage(fileOrBlobOrUrl);
+    if (!rawUrl) {
       alert('The file URL is missing or not available for this document.');
       return;
     }
 
     try {
-      if (url.startsWith('http')) {
-        const response = await fetch(url);
+      const freshUrl = await getFreshB2SignedUrl(rawUrl);
+      if (freshUrl.startsWith('http')) {
+        const response = await fetch(freshUrl);
         const blob = await response.blob();
         const localUrl = URL.createObjectURL(blob);
         const a = document.createElement('a');
@@ -104,7 +107,7 @@ export const Timeline: React.FC<TimelineProps> = ({ lead }) => {
       }
 
       const a = document.createElement('a');
-      a.href = url;
+      a.href = freshUrl;
       a.download = defaultFileName;
       a.target = '_blank';
       document.body.appendChild(a);
@@ -112,20 +115,22 @@ export const Timeline: React.FC<TimelineProps> = ({ lead }) => {
       document.body.removeChild(a);
     } catch (err) {
       console.warn("Direct download fallback:", err);
-      window.open(url, '_blank');
+      window.open(rawUrl, '_blank');
     }
   };
 
-  const handleViewPreview = (fileOrBlobOrUrl: any, title: string) => {
-    const url = renderBlobImage(fileOrBlobOrUrl);
-    if (!url) {
+  const handleViewPreview = async (fileOrBlobOrUrl: any, title: string) => {
+    const rawUrl = renderBlobImage(fileOrBlobOrUrl);
+    if (!rawUrl) {
       alert(`The document preview for "${title}" is not available.`);
       return;
     }
-    if (url.startsWith('http') || url.startsWith('blob:')) {
-      window.open(url, '_blank');
-    } else {
-      setPreviewItem({ url, title });
+    try {
+      const freshUrl = await getFreshB2SignedUrl(rawUrl);
+      setPreviewItem({ url: freshUrl, title });
+    } catch (err) {
+      console.warn("Preview error:", err);
+      setPreviewItem({ url: rawUrl, title });
     }
   };
 
@@ -426,7 +431,7 @@ export const Timeline: React.FC<TimelineProps> = ({ lead }) => {
               <div className="flex gap-2 mt-3">
                 <button
                   type="button"
-                  onClick={() => setPreviewItem({ url: renderBlobImage(registration.bankDocumentBlob || (registration as any).bankDocumentUrl), title: `Bank Document - ${lead.name}` })}
+                  onClick={() => handleViewPreview(registration.bankDocumentBlob || (registration as any).bankDocumentUrl, `Bank Document - ${lead.name}`)}
                   className="text-xs bg-slate-100 hover:bg-slate-200 text-slate-700 px-2 py-1 rounded-lg font-semibold flex items-center gap-1 transition-colors cursor-pointer"
                 >
                   <Eye className="w-3.5 h-3.5" />

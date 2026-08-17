@@ -4,6 +4,7 @@ import { Link, useLocation, useNavigate } from 'react-router-dom';
 import logoImg from '../../assets/Green-Energy-Solution.png';
 import { PWAInstallPrompt } from './PWAInstallPrompt';
 import { DeletionApprovalsModal } from './DeletionApprovalsModal';
+import { AiSupportBot } from './AiSupportBot';
 import {
   LayoutDashboard,
   Users,
@@ -413,6 +414,9 @@ export const Layout: React.FC<LayoutProps> = ({ children }) => {
           }}
         />
       )}
+
+      {/* AI Solar & CRM Support Assistant Floating Bot */}
+      <AiSupportBot />
     </div>
   );
 };

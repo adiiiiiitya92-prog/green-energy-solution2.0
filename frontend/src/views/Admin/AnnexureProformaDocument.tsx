@@ -18,6 +18,7 @@ import {
 } from 'lucide-react';
 import dayjs from 'dayjs';
 import { generateOptimizedPDF } from '../../services/pdfOptimizationService';
+import { resolveLeadDocumentInfo } from '../../services/leadDataHelper';
 
 export const AnnexureProformaDocument: React.FC<{
   defaultLeadId?: string;
@@ -75,23 +76,33 @@ export const AnnexureProformaDocument: React.FC<{
     fetchLeads();
   }, []);
 
+  const applyLeadInfo = async (lead: Lead) => {
+    try {
+      const info = await resolveLeadDocumentInfo(lead);
+      setConsumerName(info.consumerName);
+      setConsumerNumber(info.consumerNo);
+      setMobileNumber(info.consumerMobile);
+      setEmail(lead.email || 'consumer@example.com');
+      setAddress(info.address);
+
+      const capKw = parseFloat(info.capacityKw);
+      if (!isNaN(capKw) && capKw > 0) {
+        setSanctionedCapacity(String(capKw));
+        setReCapacityRooftop(String(capKw));
+        setInverterCapacity(String(capKw));
+        setSpvCapacityKwp(String(capKw));
+      }
+    } catch (err) {
+      console.warn("Failed to auto-resolve lead details for Annexure Proforma:", err);
+    }
+  };
+
   useEffect(() => {
     if (leads.length > 0 && defaultLeadId) {
       setSelectedLeadId(defaultLeadId);
       const lead = leads.find((l) => l.id === defaultLeadId);
       if (lead) {
-        setConsumerName(lead.name);
-        setMobileNumber(lead.phoneNumber || '9876543210');
-        setEmail(lead.email || 'consumer@example.com');
-        setAddress(lead.description || 'Nagpur, Maharashtra');
-
-        const capMatch = lead.requirement.match(/(\d+(\.\d+)?)\s*(kw|kwp)/i);
-        if (capMatch) {
-          setSanctionedCapacity(capMatch[1]);
-          setReCapacityRooftop(capMatch[1]);
-          setInverterCapacity(capMatch[1]);
-          setSpvCapacityKwp(capMatch[1]);
-        }
+        applyLeadInfo(lead);
       }
     }
   }, [leads, defaultLeadId]);
@@ -197,18 +208,7 @@ export const AnnexureProformaDocument: React.FC<{
 
     const lead = leads.find((l) => l.id === leadId);
     if (lead) {
-      setConsumerName(lead.name);
-      setMobileNumber(lead.phoneNumber || '');
-      setEmail(lead.email || '');
-      setAddress(lead.description || '');
-
-      const capMatch = lead.requirement.match(/(\d+(\.\d+)?)\s*(kw|kwp)/i);
-      if (capMatch) {
-        setSanctionedCapacity(capMatch[1]);
-        setReCapacityRooftop(capMatch[1]);
-        setInverterCapacity(capMatch[1]);
-        setSpvCapacityKwp(capMatch[1]);
-      }
+      applyLeadInfo(lead);
     }
   };
 

@@ -14,7 +14,7 @@ import type { Lead, Quotation, OrderConfirmation, Profile, ClientDocument, Clien
 import { Timeline } from '../../components/Pipeline/Timeline';
 import { SignatureCapture } from '../../components/Signature/SignatureCapture';
 import { compressImage } from '../../services/imageCompressionService';
-import { uploadImageToFirebase, uploadPdfToFirebase } from '../../services/firebase';
+import { uploadImageToFirebase, uploadPdfToFirebase, getFreshB2SignedUrl, getQuickB2Url } from '../../services/firebase';
 import { DcrDocument } from './DcrDocument';
 import { WcrDocument } from './WcrDocument';
 import { ModelAgreementDocument } from './ModelAgreementDocument';
@@ -2224,12 +2224,13 @@ export const Leads: React.FC = () => {
                                     <div className="flex gap-2.5">
                                       <button
                                         type="button"
-                                        onClick={() => {
-                                          const url = typeof doc.fileBlob === 'string' ? doc.fileBlob : URL.createObjectURL(doc.fileBlob);
+                                        onClick={async () => {
+                                          const rawUrl = typeof doc.fileBlob === 'string' ? doc.fileBlob : URL.createObjectURL(doc.fileBlob);
+                                          const freshUrl = await getFreshB2SignedUrl(rawUrl);
                                           setPreviewDoc({
                                             name: doc.docType.replace('_', ' ').toUpperCase(),
-                                            url,
-                                            type: (doc.fileBlob as any)?.type || (url.includes('.pdf') ? 'application/pdf' : 'image/webp')
+                                            url: freshUrl,
+                                            type: (doc.fileBlob as any)?.type || (freshUrl.includes('.pdf') ? 'application/pdf' : 'image/webp')
                                           });
                                         }}
                                         className="text-[10px] text-emerald-600 hover:text-emerald-800 font-black cursor-pointer"
@@ -2238,10 +2239,11 @@ export const Leads: React.FC = () => {
                                       </button>
                                       <button
                                         type="button"
-                                        onClick={() => {
-                                          const url = typeof doc.fileBlob === 'string' ? doc.fileBlob : URL.createObjectURL(doc.fileBlob);
+                                        onClick={async () => {
+                                          const rawUrl = typeof doc.fileBlob === 'string' ? doc.fileBlob : URL.createObjectURL(doc.fileBlob);
+                                          const freshUrl = await getFreshB2SignedUrl(rawUrl);
                                           const a = document.createElement('a');
-                                          a.href = url;
+                                          a.href = freshUrl;
                                           a.target = '_blank';
                                           a.download = `${doc.docType}_${selectedLead.name.replace(/\s+/g, '_')}`;
                                           document.body.appendChild(a);
@@ -2382,7 +2384,8 @@ export const Leads: React.FC = () => {
                 {/* Uploaded Gallery Grid */}
                 <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
                   {installPhotos.map((photo) => {
-                    const objectUrl = typeof photo.photoBlob === 'string' ? photo.photoBlob : URL.createObjectURL(photo.photoBlob);
+                    const rawUrl = typeof photo.photoBlob === 'string' ? photo.photoBlob : URL.createObjectURL(photo.photoBlob);
+                    const objectUrl = getQuickB2Url(rawUrl);
                     return (
                       <div key={photo.id} className="border border-slate-200 rounded-xl p-3 bg-white space-y-3 shadow-xs">
                         <div className="flex justify-between items-start">
@@ -2403,9 +2406,20 @@ export const Leads: React.FC = () => {
                           </button>
                         </div>
 
-                        <a href={objectUrl} target="_blank" rel="noreferrer" className="block overflow-hidden rounded-lg border border-slate-100 bg-slate-50 aspect-video">
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            const freshUrl = await getFreshB2SignedUrl(rawUrl);
+                            setPreviewDoc({
+                              name: `Installation Photo - ${photo.photoType.toUpperCase()}`,
+                              url: freshUrl,
+                              type: 'image/webp'
+                            });
+                          }}
+                          className="block w-full overflow-hidden rounded-lg border border-slate-100 bg-slate-50 aspect-video cursor-pointer text-left"
+                        >
                           <img src={objectUrl} alt="Inspection tag" className="w-full h-full object-cover hover:scale-105 transition-transform" />
-                        </a>
+                        </button>
 
                         <div className="pt-2 border-t border-slate-100 flex items-center justify-between gap-2">
                           <div className="flex items-center gap-1 min-w-0 text-slate-500 text-[10px] font-medium">
@@ -2541,10 +2555,15 @@ export const Leads: React.FC = () => {
                                 {/* View Button */}
                                 <button
                                   type="button"
-                                  onClick={() => {
-                                    const url = typeof doc.fileBlob === 'string' ? doc.fileBlob : (doc.fileBlob instanceof Blob ? URL.createObjectURL(doc.fileBlob) : '');
+                                  onClick={async () => {
+                                    const rawUrl = typeof doc.fileBlob === 'string' ? doc.fileBlob : (doc.fileBlob instanceof Blob ? URL.createObjectURL(doc.fileBlob) : '');
+                                    const url = await getFreshB2SignedUrl(rawUrl);
                                     if (url && (url.startsWith('http') || url.startsWith('blob:'))) {
-                                      window.open(url, '_blank');
+                                      setPreviewDoc({
+                                        name: getDocTitle(doc.docType),
+                                        url: url,
+                                        type: 'application/pdf'
+                                      });
                                     } else if (doc.formData) {
                                       setEditingDocData(doc.formData);
                                       setDocSubTab(getSubTab(doc.docType) as any);
@@ -2674,10 +2693,11 @@ export const Leads: React.FC = () => {
                                 </span>
                                 <button
                                   type="button"
-                                  onClick={() => {
-                                    const url = typeof regChecklist.bankDocumentBlob === 'string' ? regChecklist.bankDocumentBlob : URL.createObjectURL(regChecklist.bankDocumentBlob as Blob);
+                                  onClick={async () => {
+                                    const rawUrl = typeof regChecklist.bankDocumentBlob === 'string' ? regChecklist.bankDocumentBlob : URL.createObjectURL(regChecklist.bankDocumentBlob as Blob);
+                                    const freshUrl = await getFreshB2SignedUrl(rawUrl);
                                     const a = document.createElement('a');
-                                    a.href = url;
+                                    a.href = freshUrl;
                                     a.target = '_blank';
                                     a.download = `Bank_File_${selectedLead.name.replace(/\s+/g, '_')}`;
                                     document.body.appendChild(a);
@@ -2766,13 +2786,14 @@ export const Leads: React.FC = () => {
                         <div className="flex gap-2">
                           <button
                             type="button"
-                            onClick={() => {
+                            onClick={async () => {
                               const rel = releaseDocs[0];
-                              const url = typeof rel.fileBlob === 'string' ? rel.fileBlob : URL.createObjectURL(rel.fileBlob);
+                              const rawUrl = typeof rel.fileBlob === 'string' ? rel.fileBlob : URL.createObjectURL(rel.fileBlob);
+                              const freshUrl = await getFreshB2SignedUrl(rawUrl);
                               setPreviewDoc({
                                 name: 'Release Handover Document',
-                                url,
-                                type: (rel.fileBlob as any)?.type || (url.includes('.pdf') ? 'application/pdf' : 'image/webp')
+                                url: freshUrl,
+                                type: (rel.fileBlob as any)?.type || (freshUrl.includes('.pdf') ? 'application/pdf' : 'image/webp')
                               });
                             }}
                             className="text-xs text-emerald-700 hover:text-emerald-900 font-black cursor-pointer bg-white px-3 py-1.5 rounded-lg border border-emerald-200 shadow-2xs flex items-center gap-1"
@@ -2782,32 +2803,33 @@ export const Leads: React.FC = () => {
                           </button>
                           <button
                             type="button"
-                            onClick={() => {
+                            onClick={async () => {
                               const rel = releaseDocs[0];
-                              const url = typeof rel.fileBlob === 'string' ? rel.fileBlob : URL.createObjectURL(rel.fileBlob);
+                              const rawUrl = typeof rel.fileBlob === 'string' ? rel.fileBlob : URL.createObjectURL(rel.fileBlob);
+                              const freshUrl = await getFreshB2SignedUrl(rawUrl);
                               const a = document.createElement('a');
-                              a.href = url;
+                              a.href = freshUrl;
                               a.target = '_blank';
                               a.download = `Release_NOC_${selectedLead.name.replace(/\s+/g, '_')}`;
                               document.body.appendChild(a);
                               a.click();
                               document.body.removeChild(a);
                             }}
-                            className="text-xs text-indigo-700 hover:text-indigo-900 font-bold bg-indigo-50 px-3 py-1.5 rounded-lg border border-indigo-200 shadow-2xs cursor-pointer flex items-center gap-1"
+                            className="text-xs text-indigo-700 hover:text-indigo-900 font-black cursor-pointer bg-white px-3 py-1.5 rounded-lg border border-indigo-200 shadow-2xs flex items-center gap-1"
                           >
                             <Download className="w-3.5 h-3.5" />
                             <span>Download File</span>
                           </button>
-                          <button
-                            type="button"
-                            onClick={() => handleReleaseDelete(releaseDocs[0].id)}
-                            className="text-xs text-rose-600 hover:text-rose-800 font-bold bg-rose-50 px-2.5 py-1.5 rounded-lg border border-rose-200 shadow-2xs cursor-pointer flex items-center gap-1"
-                            title="Delete File"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                            <span>Delete</span>
-                          </button>
                         </div>
+                        <button
+                          type="button"
+                          onClick={() => handleReleaseDelete(releaseDocs[0].id)}
+                          className="text-xs text-rose-600 hover:text-rose-800 font-bold bg-rose-50 px-2.5 py-1.5 rounded-lg border border-rose-200 shadow-2xs cursor-pointer flex items-center gap-1"
+                          title="Delete File"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                          <span>Delete</span>
+                        </button>
 
                         {/* Re-upload / Replace Single File Button */}
                         <div className="relative overflow-hidden shrink-0">

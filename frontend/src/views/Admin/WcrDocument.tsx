@@ -16,9 +16,19 @@ import {
   FileSignature,
   CheckCircle2,
   Edit3,
-  Save
+  Save,
+  UploadCloud,
+  Trash2,
+  CheckCircle,
+  RefreshCw,
+  Sparkles,
+  Loader2
 } from 'lucide-react';
 import { generateOptimizedPDF } from '../../services/pdfOptimizationService';
+import { compressImage } from '../../services/imageCompressionService';
+import { uploadImageToFirebase, getFreshB2SignedUrl, getQuickB2Url } from '../../services/firebase';
+import { extractAadharNumberWithAI } from '../../services/groqVisionService';
+import { resolveLeadDocumentInfo } from '../../services/leadDataHelper';
 
 export const WcrDocument: React.FC<{
   defaultLeadId?: string;
@@ -68,6 +78,10 @@ export const WcrDocument: React.FC<{
   // Page 2 Aadhar & Guarantee state
   const [aadharNumber, setAadharNumber] = useState('');
   const [aadharXeroxUrl, setAadharXeroxUrl] = useState('');
+  const [isUploadingAadhar, setIsUploadingAadhar] = useState(false);
+  const [isAadharAutoLoaded, setIsAadharAutoLoaded] = useState(false);
+  const [isExtractingWithAI, setIsExtractingWithAI] = useState(false);
+  const [aiExtractedSuccess, setAiExtractedSuccess] = useState(false);
 
   // Canvas refs for both signatures
   const vendorCanvasRef = useRef<HTMLCanvasElement>(null);
@@ -80,6 +94,129 @@ export const WcrDocument: React.FC<{
   const [isEditable, setIsEditable] = useState(false);
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const [mobileTab, setMobileTab] = useState<'form' | 'preview'>('form');
+
+  // Helper to trigger Groq Vision AI to auto-read Aadhar number from image
+  const triggerAIAadharExtraction = async (source: File | Blob | string) => {
+    if (!source) return;
+    setIsExtractingWithAI(true);
+    setAiExtractedSuccess(false);
+    try {
+      console.log('🤖 Starting Groq Vision AI OCR on Aadhar card...');
+      const res = await extractAadharNumberWithAI(source);
+      if (res.success && res.aadharNumber) {
+        setAadharNumber(res.aadharNumber);
+        setAiExtractedSuccess(true);
+        console.log('✨ AI successfully auto-filled Aadhar number:', res.aadharNumber);
+        setTimeout(() => setAiExtractedSuccess(false), 8000);
+      }
+    } catch (err) {
+      console.warn("Groq AI Aadhar extraction failed:", err);
+    } finally {
+      setIsExtractingWithAI(false);
+    }
+  };
+
+  // Helper to load KYC Aadhar Card if available for a given lead
+  const loadLeadAadhar = async (leadId: string) => {
+    if (!leadId) return;
+    try {
+      if (localStorage.getItem(`wcr_aadhar_removed_${leadId}`) === 'true') {
+        return;
+      }
+    } catch (_) {}
+
+    try {
+      const docs = await orderService.getClientDocumentsByLeadId(leadId);
+      const aadharDoc = docs.find((d) => d.docType === 'aadhar_card');
+      if (aadharDoc && aadharDoc.fileBlob) {
+        const rawUrl = typeof aadharDoc.fileBlob === 'string' ? aadharDoc.fileBlob : URL.createObjectURL(aadharDoc.fileBlob);
+        const freshUrl = await getFreshB2SignedUrl(rawUrl);
+        setAadharXeroxUrl(freshUrl);
+        setIsAadharAutoLoaded(true);
+
+        // If Aadhar number is not yet entered, use Groq AI to read it in background
+        if (!aadharNumber) {
+          triggerAIAadharExtraction(freshUrl);
+        }
+      }
+    } catch (err) {
+      console.warn("Failed to load KYC Aadhar Card for WCR:", err);
+    }
+  };
+
+  const handleRemoveAadhar = async () => {
+    const targetLeadId = selectedLeadId || defaultLeadId;
+    setAadharXeroxUrl('');
+    setIsAadharAutoLoaded(false);
+
+    if (targetLeadId) {
+      try {
+        localStorage.setItem(`wcr_aadhar_removed_${targetLeadId}`, 'true');
+        
+        // Also delete the old Aadhar client document from the lead's database records
+        const docs = await orderService.getClientDocumentsByLeadId(targetLeadId);
+        const aadharDocs = docs.filter((d) => d.docType === 'aadhar_card');
+        for (const doc of aadharDocs) {
+          if (doc.id) {
+            await orderService.deleteClientDocument(doc.id);
+          }
+        }
+      } catch (err) {
+        console.warn('Note: Could not delete KYC Aadhar doc from DB:', err);
+      }
+    }
+  };
+
+  const handleAadharUpload = async (file: File) => {
+    if (!file) return;
+    const targetLeadId = selectedLeadId || defaultLeadId || 'draft_lead';
+    const { currentUser } = useAuthStore.getState();
+    setIsUploadingAadhar(true);
+
+    if (targetLeadId) {
+      try {
+        localStorage.removeItem(`wcr_aadhar_removed_${targetLeadId}`);
+      } catch (_) {}
+    }
+
+    // Concurrently trigger Groq Vision AI to read Aadhar number in parallel
+    triggerAIAadharExtraction(file);
+
+    try {
+      // 1. Instantly display image in UI without waiting for network
+      const localPreviewUrl = URL.createObjectURL(file);
+      setAadharXeroxUrl(localPreviewUrl);
+      setIsAadharAutoLoaded(false);
+
+      // 2. Aggressively compress image down to ~50KB - 75KB WebP for minimal B2 storage consumption
+      const compFile = await compressImage(file, { isDocument: true, maxSizeKB: 75, maxWidthOrHeight: 1400 });
+      const storagePath = `wcr/${targetLeadId}/aadhar_${Date.now()}.webp`;
+      
+      // 3. Upload compressed WebP to Backblaze B2
+      const uploadedUrl = await uploadImageToFirebase(compFile, storagePath, { isDocument: true, maxSizeKB: 75 });
+      const freshUrl = await getFreshB2SignedUrl(uploadedUrl);
+      setAadharXeroxUrl(freshUrl || localPreviewUrl);
+
+      // 4. Auto-save to lead's KYC documents collection so it stays synced across the CRM
+      if (targetLeadId && targetLeadId !== 'draft_lead') {
+        try {
+          await orderService.uploadClientDocument({
+            leadId: targetLeadId,
+            docType: 'aadhar_card',
+            fileBlob: uploadedUrl,
+            uploadedBy: currentUser?.fullName || 'Admin'
+          });
+        } catch (docErr) {
+          console.warn('Note: Could not sync Aadhar to KYC docs:', docErr);
+        }
+      }
+    } catch (err: any) {
+      console.error('Error uploading Aadhar Card:', err);
+      alert(`Failed to upload Aadhar Card: ${err.message || err}`);
+    } finally {
+      setIsUploadingAadhar(false);
+    }
+  };
 
   useEffect(() => {
     const fetchLeads = async () => {
@@ -94,31 +231,39 @@ export const WcrDocument: React.FC<{
     fetchLeads();
   }, []);
 
+  const applyLeadInfo = async (lead: Lead) => {
+    try {
+      const info = await resolveLeadDocumentInfo(lead);
+      setConsumerName(info.consumerName);
+      setConsumerNumber(info.consumerNo || '');
+      setAddress(info.address);
+      setSanctionedCapacity(info.capacityKw);
+      setInstalledCapacity(info.capacityKw);
+
+      const capKw = parseFloat(info.capacityKw);
+      if (!isNaN(capKw) && capKw > 0) {
+        setInverterRating(`${capKw} kW`);
+        setInverterCapacity(`${capKw} kW`);
+        const defaultCount = Math.ceil((capKw * 1000) / 540);
+        setModuleCount(String(defaultCount));
+        setModuleCapacityKwp(String(capKw));
+      }
+      if (info.pvModuleMake) setModuleMake(info.pvModuleMake);
+      if (info.inverterMake) setInverterMake(info.inverterMake);
+      setSanctionNumber('SANC-' + lead.id.replace('lead_', '').toUpperCase());
+    } catch (err) {
+      console.warn("Failed to auto-resolve lead details for WCR:", err);
+    }
+  };
+
   // Sync defaultLeadId when leads load
   useEffect(() => {
     if (leads.length > 0 && defaultLeadId) {
       setSelectedLeadId(defaultLeadId);
+      loadLeadAadhar(defaultLeadId);
       const lead = leads.find((l) => l.id === defaultLeadId);
       if (lead) {
-        setConsumerName(lead.name);
-        setConsumerNumber(lead.phoneNumber || 'ASC-' + lead.id.replace('lead_', '').toUpperCase());
-        setAddress(lead.description || 'Site address as per registration records');
-        
-        // Auto-extract capacity from lead requirement
-        const capMatch = lead.requirement.match(/(\d+(\.\d+)?)\s*(kw|kwp)/i);
-        if (capMatch) {
-          setSanctionedCapacity(capMatch[1]);
-          setInstalledCapacity(capMatch[1]);
-          const capKw = parseFloat(capMatch[1]);
-          if (!isNaN(capKw)) {
-            setInverterRating(capMatch[0]);
-            setInverterCapacity(capMatch[0]);
-            const defaultCount = Math.ceil((capKw * 1000) / 540);
-            setModuleCount(String(defaultCount));
-            setModuleCapacityKwp(String(capKw));
-          }
-        }
-        setSanctionNumber('SANC-' + lead.id.replace('lead_', '').toUpperCase());
+        applyLeadInfo(lead);
       }
     }
   }, [leads, defaultLeadId]);
@@ -149,6 +294,12 @@ export const WcrDocument: React.FC<{
       if (initialData.earthCertifiedText) setEarthCertifiedText(initialData.earthCertifiedText);
       if (initialData.lightningArrester) setLightningArrester(initialData.lightningArrester);
       if (initialData.aadharNumber) setAadharNumber(initialData.aadharNumber);
+      if (initialData.aadharXeroxUrl) {
+        setAadharXeroxUrl(initialData.aadharXeroxUrl);
+        setIsAadharAutoLoaded(false);
+      }
+      if (initialData.vendorSignatureUrl) setVendorSignatureUrl(initialData.vendorSignatureUrl);
+      if (initialData.consumerSignatureUrl) setConsumerSignatureUrl(initialData.consumerSignatureUrl);
     }
   }, [initialData]);
 
@@ -189,7 +340,10 @@ export const WcrDocument: React.FC<{
         earthingCount,
         earthCertifiedText,
         lightningArrester,
-        aadharNumber
+        aadharNumber,
+        aadharXeroxUrl,
+        vendorSignatureUrl,
+        consumerSignatureUrl
       };
 
       let pdfUrl = '';
@@ -229,26 +383,11 @@ export const WcrDocument: React.FC<{
     setSelectedLeadId(leadId);
     if (!leadId) return;
 
+    loadLeadAadhar(leadId);
+
     const lead = leads.find((l) => l.id === leadId);
     if (lead) {
-      setConsumerName(lead.name);
-      setConsumerNumber(lead.phoneNumber || 'ASC-' + lead.id.replace('lead_', '').toUpperCase());
-      setAddress(lead.description || 'Site address as per registration records');
-      
-      const capMatch = lead.requirement.match(/(\d+(\.\d+)?)\s*(kw|kwp)/i);
-      if (capMatch) {
-        setSanctionedCapacity(capMatch[1]);
-        setInstalledCapacity(capMatch[1]);
-        const capKw = parseFloat(capMatch[1]);
-        if (!isNaN(capKw)) {
-          setInverterRating(capMatch[0]);
-          setInverterCapacity(capMatch[0]);
-          const defaultCount = Math.ceil((capKw * 1000) / 540);
-          setModuleCount(String(defaultCount));
-          setModuleCapacityKwp(String(capKw));
-        }
-      }
-      setSanctionNumber('SANC-' + lead.id.replace('lead_', '').toUpperCase());
+      applyLeadInfo(lead);
     }
   };
 
@@ -1108,48 +1247,115 @@ export const WcrDocument: React.FC<{
                 <FileText className="w-4 h-4 text-emerald-600" />
                 <span>Page 2 & Aadhar Details</span>
               </div>
-              {expandedSection === 'aadhar' ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+              <div className="flex items-center gap-2">
+                {aadharXeroxUrl && (
+                  <span className="text-[10px] text-emerald-600 font-extrabold bg-emerald-50 px-1.5 py-0.5 rounded flex items-center gap-1">
+                    <CheckCircle2 className="w-3 h-3" /> Attached
+                  </span>
+                )}
+                {expandedSection === 'aadhar' ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+              </div>
             </button>
             {expandedSection === 'aadhar' && (
-              <div className="p-4 bg-white border-t border-slate-100 space-y-3.5">
-                <div className="space-y-1">
-                  <label className="block text-[10px] font-bold text-slate-400 uppercase">Consumer Aadhar Number</label>
-                  <input
-                    type="text"
-                    value={aadharNumber}
-                    onChange={(e) => setAadharNumber(e.target.value)}
-                    placeholder="Enter 12 digit Aadhar number"
-                    className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-xs font-bold text-slate-700 focus:outline-none focus:ring-2 focus:ring-emerald-555"
-                  />
+              <div className="p-4 bg-white border-t border-slate-100 space-y-4">
+                <div className="space-y-1.5">
+                  <div className="flex items-center justify-between">
+                    <label className="block text-[10px] font-bold text-slate-400 uppercase">Consumer Aadhar Number</label>
+                    {isExtractingWithAI && (
+                      <span className="text-[10px] text-indigo-600 font-extrabold flex items-center gap-1 animate-pulse">
+                        <Sparkles className="w-3 h-3 text-indigo-500 animate-spin" /> AI reading Aadhar...
+                      </span>
+                    )}
+                    {aiExtractedSuccess && !isExtractingWithAI && (
+                      <span className="text-[10px] text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded font-extrabold flex items-center gap-1">
+                        <Sparkles className="w-3 h-3 text-emerald-600" /> ✨ AI Auto-Extracted!
+                      </span>
+                    )}
+                  </div>
+                  <div className="relative">
+                    <input
+                      type="text"
+                      value={aadharNumber}
+                      onChange={(e) => setAadharNumber(e.target.value)}
+                      placeholder="Enter or AI will auto-extract 12-digit Aadhar"
+                      className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-xs font-bold text-slate-700 focus:outline-none focus:ring-2 focus:ring-emerald-500 pr-24"
+                    />
+                    {aadharXeroxUrl && (
+                      <button
+                        type="button"
+                        onClick={() => triggerAIAadharExtraction(aadharXeroxUrl)}
+                        disabled={isExtractingWithAI}
+                        className="absolute right-1.5 top-1.5 px-2 py-1 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 rounded-md text-[9px] font-extrabold flex items-center gap-1 cursor-pointer transition-all shadow-2xs disabled:opacity-50"
+                        title="Re-scan Aadhar number from uploaded image using Groq Vision AI"
+                      >
+                        <Sparkles className={`w-3 h-3 text-indigo-600 ${isExtractingWithAI ? 'animate-spin' : ''}`} />
+                        <span>{isExtractingWithAI ? 'Scanning...' : 'Scan AI'}</span>
+                      </button>
+                    )}
+                  </div>
                 </div>
-                <div className="space-y-1">
-                  <label className="block text-[10px] font-bold text-slate-400 uppercase">Upload Aadhar Card Xerox</label>
-                  <input
-                    type="file"
-                    accept="image/*"
-                    onChange={async (e) => {
-                      const file = e.target.files?.[0];
-                      if (file) {
-                        try {
-                          const compFile = await compressImage(file, { isDocument: true, maxSizeKB: 75 });
-                          const storagePath = `wcr/aadhar_${Date.now()}.webp`;
-                          const url = await uploadImageToFirebase(compFile, storagePath);
-                          setAadharXeroxUrl(url);
-                        } catch (err) {
-                          console.error(err);
-                        }
-                      }
-                    }}
-                    className="w-full text-xs text-slate-500 file:mr-3 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-bold file:bg-emerald-50 file:text-emerald-700 hover:file:bg-emerald-100 cursor-pointer"
-                  />
-                  {aadharXeroxUrl && (
-                    <button
-                      type="button"
-                      onClick={() => setAadharXeroxUrl('')}
-                      className="text-[10px] text-rose-500 font-bold hover:underline pt-1 block cursor-pointer"
-                    >
-                      Remove uploaded image
-                    </button>
+
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <label className="block text-[10px] font-bold text-slate-400 uppercase">Aadhar Card Xerox Image</label>
+                    {isAadharAutoLoaded && aadharXeroxUrl && (
+                      <span className="text-[9px] text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded font-extrabold flex items-center gap-1">
+                        <CheckCircle className="w-3 h-3 text-emerald-600" /> Auto-fetched from KYC
+                      </span>
+                    )}
+                  </div>
+
+                  {aadharXeroxUrl ? (
+                    <div className="border border-slate-200 rounded-xl p-3 bg-slate-50 space-y-2.5">
+                      <div className="relative rounded-lg overflow-hidden bg-white border border-slate-200 aspect-video max-h-36 flex items-center justify-center p-1">
+                        <img
+                          src={aadharXeroxUrl}
+                          alt="Aadhar preview"
+                          className="max-h-full max-w-full object-contain"
+                        />
+                      </div>
+                      <div className="flex items-center justify-between gap-2 pt-1 border-t border-slate-200/60">
+                        <label className="flex-1 text-center py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-[10px] font-bold cursor-pointer transition-all shadow-xs flex items-center justify-center gap-1">
+                          <UploadCloud className="w-3.5 h-3.5" />
+                          <span>{isUploadingAadhar ? 'Uploading...' : 'Replace Aadhar'}</span>
+                          <input
+                            type="file"
+                            accept="image/*,application/pdf"
+                            disabled={isUploadingAadhar}
+                            onChange={(e) => e.target.files?.[0] && handleAadharUpload(e.target.files[0])}
+                            className="hidden"
+                          />
+                        </label>
+                        <button
+                          type="button"
+                          onClick={handleRemoveAadhar}
+                          className="p-1.5 bg-rose-50 hover:bg-rose-100 text-rose-600 rounded-lg text-xs font-bold transition-all cursor-pointer border border-rose-200 shadow-2xs"
+                          title="Remove Aadhar image"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="border-2 border-dashed border-slate-300 rounded-xl p-4 text-center bg-slate-50 hover:bg-slate-100/50 transition-colors">
+                      <input
+                        type="file"
+                        accept="image/*,application/pdf"
+                        disabled={isUploadingAadhar}
+                        onChange={(e) => e.target.files?.[0] && handleAadharUpload(e.target.files[0])}
+                        className="hidden"
+                        id="wcr-sidebar-aadhar-input"
+                      />
+                      <label htmlFor="wcr-sidebar-aadhar-input" className="cursor-pointer block space-y-1.5">
+                        <div className="w-8 h-8 rounded-full bg-emerald-50 text-emerald-600 flex items-center justify-center mx-auto shadow-2xs">
+                          <UploadCloud className={`w-4 h-4 ${isUploadingAadhar ? 'animate-bounce' : ''}`} />
+                        </div>
+                        <p className="text-xs font-bold text-slate-700">
+                          {isUploadingAadhar ? 'Compressing & Uploading to B2...' : 'Click to Upload Aadhar Card'}
+                        </p>
+                        <p className="text-[9px] text-slate-400 font-medium">Auto-synced & dynamically sized in WCR Page 2</p>
+                      </label>
+                    </div>
                   )}
                 </div>
               </div>
@@ -1210,128 +1416,128 @@ export const WcrDocument: React.FC<{
                     suppressContentEditableWarning={true}
                     className="pt-0.5"
                   >
-                    <table className="w-full table-fixed border-collapse border border-black text-[8.5px] leading-tight font-serif">
+                    <table className="w-full table-fixed border-collapse border border-black text-[9px] leading-snug font-serif">
                       <thead>
                         <tr className="bg-slate-50 font-bold border-b border-black text-center">
-                          <th className="border-r border-black py-0.5 px-1 w-[8%]">Sr.No</th>
-                          <th className="border-r border-black py-0.5 px-1 w-[42%] text-left">Component</th>
-                          <th className="py-0.5 px-1 w-[50%] text-left">Observation</th>
+                          <th className="border-r border-black py-1 px-1 w-[8%] align-middle text-center">Sr.No</th>
+                          <th className="border-r border-black py-1 px-1.5 w-[42%] align-middle text-left">Component</th>
+                          <th className="py-1 px-1.5 w-[50%] align-middle text-left">Observation</th>
                         </tr>
                       </thead>
                       <tbody>
                         <tr className="border-b border-black">
-                          <td className="border-r border-black py-0.5 px-1 text-center">1</td>
-                          <td className="border-r border-black py-0.5 px-1">Name</td>
-                          <td className="py-0.5 px-1">{renderTableCellValue(consumerName)}</td>
+                          <td className="border-r border-black py-1 px-1 text-center align-middle font-bold">1</td>
+                          <td className="border-r border-black py-1 px-1.5 align-middle">Name</td>
+                          <td className="py-1 px-1.5 align-middle">{renderTableCellValue(consumerName)}</td>
                         </tr>
                         <tr className="border-b border-black">
-                          <td className="border-r border-black py-0.5 px-1 text-center">2</td>
-                          <td className="border-r border-black py-0.5 px-1">Consumer number</td>
-                          <td className="py-0.5 px-1">{renderTableCellValue(consumerNumber)}</td>
+                          <td className="border-r border-black py-1 px-1 text-center align-middle font-bold">2</td>
+                          <td className="border-r border-black py-1 px-1.5 align-middle">Consumer number</td>
+                          <td className="py-1 px-1.5 align-middle">{renderTableCellValue(consumerNumber)}</td>
                         </tr>
                         <tr className="border-b border-black">
-                          <td className="border-r border-black py-0.5 px-1 text-center">3</td>
-                          <td className="border-r border-black py-0.5 px-1">Site/Location With Complete Address</td>
-                          <td className="py-0.5 px-1">{renderTableCellValue(address)}</td>
+                          <td className="border-r border-black py-1 px-1 text-center align-middle font-bold">3</td>
+                          <td className="border-r border-black py-1 px-1.5 align-middle">Site/Location With Complete Address</td>
+                          <td className="py-1 px-1.5 align-middle">{renderTableCellValue(address)}</td>
                         </tr>
                         <tr className="border-b border-black">
-                          <td className="border-r border-black py-0.5 px-1 text-center">4</td>
-                          <td className="border-r border-black py-0.5 px-1">Category:Govt/Private Sector</td>
-                          <td className="py-0.5 px-1">{renderTableCellValue(category)}</td>
+                          <td className="border-r border-black py-1 px-1 text-center align-middle font-bold">4</td>
+                          <td className="border-r border-black py-1 px-1.5 align-middle">Category:Govt/Private Sector</td>
+                          <td className="py-1 px-1.5 align-middle">{renderTableCellValue(category)}</td>
                         </tr>
                         <tr className="border-b border-black">
-                          <td className="border-r border-black py-0.5 px-1 text-center">5</td>
-                          <td className="border-r border-black py-0.5 px-1">Sanction number</td>
-                          <td className="py-0.5 px-1">{renderTableCellValue(sanctionNumber)}</td>
+                          <td className="border-r border-black py-1 px-1 text-center align-middle font-bold">5</td>
+                          <td className="border-r border-black py-1 px-1.5 align-middle">Sanction number</td>
+                          <td className="py-1 px-1.5 align-middle">{renderTableCellValue(sanctionNumber)}</td>
                         </tr>
                         <tr className="border-b border-black">
-                          <td className="border-r border-black py-0.5 px-1 text-center" rowSpan={2}>6</td>
-                          <td className="border-r border-black py-0.5 px-1">Sanctioned Capacity of solar PV system (KW) Installed</td>
-                          <td className="py-0.5 px-1">{renderTableCellValue(sanctionedCapacity)}</td>
+                          <td className="border-r border-black py-1 px-1 text-center align-middle font-bold" rowSpan={2}>6</td>
+                          <td className="border-r border-black py-1 px-1.5 align-middle">Sanctioned Capacity of solar PV system (KW) Installed</td>
+                          <td className="py-1 px-1.5 align-middle">{renderTableCellValue(sanctionedCapacity)}</td>
                         </tr>
                         <tr className="border-b border-black">
-                          <td className="border-r border-black py-0.5 px-1">Capacity of solar PV system (KW)</td>
-                          <td className="py-0.5 px-1">{renderTableCellValue(installedCapacity)}</td>
+                          <td className="border-r border-black py-1 px-1.5 align-middle">Capacity of solar PV system (KW)</td>
+                          <td className="py-1 px-1.5 align-middle">{renderTableCellValue(installedCapacity)}</td>
                         </tr>
                         
                         {/* Subheader: Module Specs */}
                         <tr className="border-b border-black bg-slate-50 font-bold">
-                          <td className="border-r border-black py-0.5 px-1 text-center" rowSpan={7}>7</td>
-                          <td className="py-0.5 px-1 text-center border-r border-black" colSpan={2}>Specification of the Modules</td>
+                          <td className="border-r border-black py-1 px-1 text-center align-middle font-bold" rowSpan={7}>7</td>
+                          <td className="py-1 px-1.5 text-center border-r border-black align-middle" colSpan={2}>Specification of the Modules</td>
                         </tr>
                         <tr className="border-b border-black">
-                          <td className="border-r border-black py-0.5 px-1 pl-2">Make of Module</td>
-                          <td className="py-0.5 px-1">{renderTableCellValue(moduleMake)}</td>
+                          <td className="border-r border-black py-1 px-1.5 pl-2 align-middle">Make of Module</td>
+                          <td className="py-1 px-1.5 align-middle">{renderTableCellValue(moduleMake)}</td>
                         </tr>
                         <tr className="border-b border-black">
-                          <td className="border-r border-black py-0.5 px-1 pl-2">ALMM Model Number</td>
-                          <td className="py-0.5 px-1">{renderTableCellValue(almmModel)}</td>
+                          <td className="border-r border-black py-1 px-1.5 pl-2 align-middle">ALMM Model Number</td>
+                          <td className="py-1 px-1.5 align-middle">{renderTableCellValue(almmModel)}</td>
                         </tr>
                         <tr className="border-b border-black">
-                          <td className="border-r border-black py-0.5 px-1 pl-2">Wattage per module</td>
-                          <td className="py-0.5 px-1">{renderTableCellValue(moduleWattage)}</td>
+                          <td className="border-r border-black py-1 px-1.5 pl-2 align-middle">Wattage per module</td>
+                          <td className="py-1 px-1.5 align-middle">{renderTableCellValue(moduleWattage)}</td>
                         </tr>
                         <tr className="border-b border-black">
-                          <td className="border-r border-black py-0.5 px-1 pl-2">No.of Module</td>
-                          <td className="py-0.5 px-1">{renderTableCellValue(moduleCount)}</td>
+                          <td className="border-r border-black py-1 px-1.5 pl-2 align-middle">No.of Module</td>
+                          <td className="py-1 px-1.5 align-middle">{renderTableCellValue(moduleCount)}</td>
                         </tr>
                         <tr className="border-b border-black">
-                          <td className="border-r border-black py-0.5 px-1 pl-2">Total Capacity (KWP)</td>
-                          <td className="py-0.5 px-1">{renderTableCellValue(moduleCapacityKwp)}</td>
+                          <td className="border-r border-black py-1 px-1.5 pl-2 align-middle">Total Capacity (KWP)</td>
+                          <td className="py-1 px-1.5 align-middle">{renderTableCellValue(moduleCapacityKwp)}</td>
                         </tr>
                         <tr className="border-b border-black">
-                          <td className="border-r border-black py-0.5 px-1 pl-2">Warrantee Details (Product + Performance)</td>
-                          <td className="py-0.5 px-1">{renderTableCellValue(moduleWarrantee)}</td>
+                          <td className="border-r border-black py-1 px-1.5 pl-2 align-middle">Warrantee Details (Product + Performance)</td>
+                          <td className="py-1 px-1.5 align-middle">{renderTableCellValue(moduleWarrantee)}</td>
                         </tr>
 
                         {/* Subheader: PCU */}
                         <tr className="border-b border-black bg-slate-50 font-bold">
-                          <td className="border-r border-black py-0.5 px-1 text-center" rowSpan={7}>8</td>
-                          <td className="py-0.5 px-1 text-center border-r border-black" colSpan={2}>PCU</td>
+                          <td className="border-r border-black py-1 px-1 text-center align-middle font-bold" rowSpan={7}>8</td>
+                          <td className="py-1 px-1.5 text-center border-r border-black align-middle" colSpan={2}>PCU</td>
                         </tr>
                         <tr className="border-b border-black">
-                          <td className="border-r border-black py-0.5 px-1 pl-2">Make & Model number of Inverter</td>
-                          <td className="py-0.5 px-1">{renderTableCellValue(inverterMakeModel)}</td>
+                          <td className="border-r border-black py-1 px-1.5 pl-2 align-middle">Make & Model number of Inverter</td>
+                          <td className="py-1 px-1.5 align-middle">{renderTableCellValue(inverterMakeModel)}</td>
                         </tr>
                         <tr className="border-b border-black">
-                          <td className="border-r border-black py-0.5 px-1 pl-2">Rating</td>
-                          <td className="py-0.5 px-1">{renderTableCellValue(inverterRating)}</td>
+                          <td className="border-r border-black py-1 px-1.5 pl-2 align-middle">Rating</td>
+                          <td className="py-1 px-1.5 align-middle">{renderTableCellValue(inverterRating)}</td>
                         </tr>
                         <tr className="border-b border-black">
-                          <td className="border-r border-black py-0.5 px-1 pl-2">Type of charge controller/ MPPT</td>
-                          <td className="py-0.5 px-1">{renderTableCellValue(controllerType)}</td>
+                          <td className="border-r border-black py-1 px-1.5 pl-2 align-middle">Type of charge controller/ MPPT</td>
+                          <td className="py-1 px-1.5 align-middle">{renderTableCellValue(controllerType)}</td>
                         </tr>
                         <tr className="border-b border-black">
-                          <td className="border-r border-black py-0.5 px-1 pl-2">Capacity of Inverter</td>
-                          <td className="py-0.5 px-1">{renderTableCellValue(inverterCapacity)}</td>
+                          <td className="border-r border-black py-1 px-1.5 pl-2 align-middle">Capacity of Inverter</td>
+                          <td className="py-1 px-1.5 align-middle">{renderTableCellValue(inverterCapacity)}</td>
                         </tr>
                         <tr className="border-b border-black">
-                          <td className="border-r border-black py-0.5 px-1 pl-2">HPD</td>
-                          <td className="py-0.5 px-1">{renderTableCellValue(hpd)}</td>
+                          <td className="border-r border-black py-1 px-1.5 pl-2 align-middle">HPD</td>
+                          <td className="py-1 px-1.5 align-middle">{renderTableCellValue(hpd)}</td>
                         </tr>
                         <tr className="border-b border-black">
-                          <td className="border-r border-black py-0.5 px-1 pl-2">Year of manufacturing</td>
-                          <td className="py-0.5 px-1">{renderTableCellValue(inverterMfgYear)}</td>
+                          <td className="border-r border-black py-1 px-1.5 pl-2 align-middle">Year of manufacturing</td>
+                          <td className="py-1 px-1.5 align-middle">{renderTableCellValue(inverterMfgYear)}</td>
                         </tr>
 
                         {/* Subheader: Earthing */}
                         <tr className="border-b border-black bg-slate-50 font-bold">
-                          <td className="border-r border-black py-0.5 px-1 text-center" rowSpan={4}>9</td>
-                          <td className="py-0.5 px-1 text-center border-r border-black" colSpan={2}>Earthing and Protections</td>
+                          <td className="border-r border-black py-1 px-1 text-center align-middle font-bold" rowSpan={4}>9</td>
+                          <td className="py-1 px-1.5 text-center border-r border-black align-middle" colSpan={2}>Earthing and Protections</td>
                         </tr>
                         <tr className="border-b border-black">
-                          <td className="border-r border-black py-0.5 px-1 pl-2">No of Separate Earthings with earth Resistance</td>
-                          <td className="py-0.5 px-1">{renderTableCellValue(earthingCount)}</td>
+                          <td className="border-r border-black py-1 px-1.5 pl-2 align-middle">No of Separate Earthings with earth Resistance</td>
+                          <td className="py-1 px-1.5 align-middle">{renderTableCellValue(earthingCount)}</td>
                         </tr>
                         <tr className="border-b border-black">
-                          <td className="border-r border-black py-0.5 px-1 pl-2 text-justify leading-tight">
+                          <td className="border-r border-black py-1 px-1.5 pl-2 text-justify leading-tight align-middle">
                             It is certified that the Earth Resistance measure in presence of Licensed Electrical Contractor/Supervisor and found in order i.e. &lt; 5 Ohms as per MNRE OM Dtd.07.06.24 for CFA Component.
                           </td>
-                          <td className="py-0.5 px-1">{renderTableCellValue(earthCertifiedText)}</td>
+                          <td className="py-1 px-1.5 align-middle">{renderTableCellValue(earthCertifiedText)}</td>
                         </tr>
                         <tr>
-                          <td className="border-r border-black py-0.5 px-1 pl-2">Lightening Arrester</td>
-                          <td className="py-0.5 px-1">{renderTableCellValue(lightningArrester)}</td>
+                          <td className="border-r border-black py-1 px-1.5 pl-2 align-middle">Lightening Arrester</td>
+                          <td className="py-1 px-1.5 align-middle">{renderTableCellValue(lightningArrester)}</td>
                         </tr>
                       </tbody>
                     </table>
@@ -1459,20 +1665,61 @@ export const WcrDocument: React.FC<{
                     </div>
                   </div>
 
-                  {/* Box for Aadhar Card Xerox Upload */}
-                  <div className="pt-6 flex justify-center">
-                    <div className="w-[145mm] h-[88mm] border-2 border-black flex flex-col items-center justify-center p-4 text-center font-bold text-xs space-y-2 bg-white relative overflow-hidden">
+                  {/* Box for Aadhar Card Xerox Upload with Dynamic Auto-Sizing */}
+                  <div className="pt-4 flex flex-col items-center justify-center w-full">
+                    <div className={`relative transition-all duration-300 flex flex-col items-center justify-center bg-white ${
+                      aadharXeroxUrl 
+                        ? 'border-2 border-black p-2 rounded-sm max-w-[165mm] min-w-[100mm] max-h-[115mm] min-h-[60mm] shadow-xs' 
+                        : 'w-[145mm] h-[85mm] border-2 border-dashed border-slate-400 p-4 text-center rounded-lg bg-slate-50/40'
+                    }`}>
                       {aadharXeroxUrl ? (
-                        <img
-                          src={aadharXeroxUrl}
-                          alt="Aadhar Card Xerox"
-                          className="w-full h-full object-contain"
-                        />
+                        <div className="relative group flex items-center justify-center max-h-[105mm] max-w-[155mm]">
+                          <img
+                            src={aadharXeroxUrl}
+                            alt="Aadhar Card Xerox"
+                            className="max-w-full max-h-[105mm] w-auto h-auto object-contain block mx-auto transition-transform"
+                          />
+                          {/* Quick Change / Action Toolbar on hover in UI (hidden on print) */}
+                          <div className="absolute inset-0 bg-slate-900/50 opacity-0 group-hover:opacity-100 transition-opacity rounded flex items-center justify-center gap-2 print:hidden backdrop-blur-2xs">
+                            <label className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-[10px] font-bold cursor-pointer shadow flex items-center gap-1">
+                              <UploadCloud className="w-3.5 h-3.5" />
+                              <span>{isUploadingAadhar ? 'Uploading...' : 'Change Aadhar'}</span>
+                              <input
+                                type="file"
+                                accept="image/*,application/pdf"
+                                disabled={isUploadingAadhar}
+                                onChange={(e) => e.target.files?.[0] && handleAadharUpload(e.target.files[0])}
+                                className="hidden"
+                              />
+                            </label>
+                            <button
+                              type="button"
+                              onClick={handleRemoveAadhar}
+                              className="px-3 py-1.5 bg-rose-600 hover:bg-rose-700 text-white rounded-lg text-[10px] font-bold cursor-pointer shadow flex items-center gap-1"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                              <span>Remove</span>
+                            </button>
+                          </div>
+                        </div>
                       ) : (
-                        <>
+                        <div className="flex flex-col items-center justify-center space-y-2">
                           <p className="text-black tracking-wide font-serif font-bold text-xs">Upload Xerox of AADHAR CARD HERE</p>
-                          <p className="text-black text-[10px] tracking-wider font-serif font-bold mt-2">SHOULDBESELFATTESTEDBYCONSUMER</p>
-                        </>
+                          <p className="text-black text-[10px] tracking-wider font-serif font-bold">SHOULD BE SELF ATTESTED BY CONSUMER</p>
+                          
+                          {/* Quick Upload Button on Document Canvas (hidden in print) */}
+                          <label className="mt-2 px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-[10px] font-bold cursor-pointer shadow flex items-center gap-1.5 print:hidden">
+                            <UploadCloud className="w-4 h-4" />
+                            <span>{isUploadingAadhar ? 'Uploading...' : 'Upload Aadhar Card'}</span>
+                            <input
+                              type="file"
+                              accept="image/*,application/pdf"
+                              disabled={isUploadingAadhar}
+                              onChange={(e) => e.target.files?.[0] && handleAadharUpload(e.target.files[0])}
+                              className="hidden"
+                            />
+                          </label>
+                        </div>
                       )}
                     </div>
                   </div>

@@ -246,21 +246,46 @@ async function uploadViaBackend(base64Data: string, storagePath: string, content
   }, 3, 1000);
 }
 
-/**
- * Regenerates or refreshes a 7-day signed download URL on demand for any stored B2 path or URL
- */
-export async function getFreshB2SignedUrl(storagePathOrUrl: string): Promise<string> {
-  if (!storagePathOrUrl) return storagePathOrUrl;
-  let cleanPath = storagePathOrUrl.replace(/^https?:\/\/[^\/]+\/file\/[^\/]+\//, '');
-  cleanPath = cleanPath.split('?')[0].replace(/^\/+/, '');
-  if (!cleanPath) return storagePathOrUrl;
+interface B2CachedAuth {
+  downloadUrl: string;
+  bucketName: string;
+  downloadAuthToken: string;
+  expiresAt: number;
+}
 
+const CACHE_KEY = 'ges_b2_master_auth_v1';
+let b2AuthCache: B2CachedAuth | null = (() => {
   try {
-    const freshUrl = await withExponentialBackoff(async () => {
+    const raw = typeof localStorage !== 'undefined' ? localStorage.getItem(CACHE_KEY) : null;
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (parsed && parsed.expiresAt > Date.now() + 5 * 60 * 1000) {
+        return parsed;
+      }
+    }
+  } catch (_) {}
+  return null;
+})();
+
+let pendingAuthPromise: Promise<B2CachedAuth | null> | null = null;
+
+export async function getMasterB2DownloadAuth(): Promise<B2CachedAuth | null> {
+  const now = Date.now();
+  if (b2AuthCache && b2AuthCache.expiresAt > now + 5 * 60 * 1000) {
+    return b2AuthCache;
+  }
+  if (pendingAuthPromise) {
+    return pendingAuthPromise;
+  }
+
+  pendingAuthPromise = (async () => {
+    try {
       const backendUrl = import.meta.env.VITE_BACKEND_URL || '';
+      const currentOrigin = typeof window !== 'undefined' ? window.location.origin : '';
       const authEndpoints = Array.from(new Set([
         '/api/b2-upload-url',
-        `${backendUrl}/api/b2-upload-url`,
+        `${currentOrigin}/api/b2-upload-url`,
+        backendUrl ? `${backendUrl}/api/b2-upload-url` : '',
         '/.netlify/functions/b2-upload-url'
       ])).filter(Boolean);
 
@@ -269,11 +294,17 @@ export async function getFreshB2SignedUrl(storagePathOrUrl: string): Promise<str
           const res = await fetch(endpoint);
           if (res.ok) {
             const authInfo = await res.json();
-            let url = `${authInfo.downloadUrl}/file/${authInfo.bucketName}/${cleanPath}`;
-            if (authInfo.downloadAuthToken) {
-              url += `?Authorization=${encodeURIComponent(authInfo.downloadAuthToken)}`;
+            if (authInfo.downloadUrl && authInfo.downloadAuthToken) {
+              const cacheObj: B2CachedAuth = {
+                downloadUrl: authInfo.downloadUrl,
+                bucketName: authInfo.bucketName || B2_BUCKET_NAME || 'Green-Energy-Solution',
+                downloadAuthToken: authInfo.downloadAuthToken,
+                expiresAt: Date.now() + (6 * 24 * 3600 * 1000) // Valid for 6 days
+              };
+              b2AuthCache = cacheObj;
+              try { localStorage.setItem(CACHE_KEY, JSON.stringify(cacheObj)); } catch (_) {}
+              return cacheObj;
             }
-            return url;
           }
         } catch (_) {}
       }
@@ -290,28 +321,97 @@ export async function getFreshB2SignedUrl(storagePathOrUrl: string): Promise<str
             headers: { Authorization: authData.authorizationToken },
             body: JSON.stringify({
               bucketId: B2_BUCKET_ID,
-              fileNamePrefix: cleanPath,
-              validDurationInSeconds: 604800 // 7 days
+              fileNamePrefix: '', // Empty prefix authorizes ALL files across bucket
+              validDurationInSeconds: 604800
             })
           });
-          let directUrl = `${authData.downloadUrl}/file/${B2_BUCKET_NAME}/${cleanPath}`;
           if (dnldAuthRes.ok) {
             const dnldData = await dnldAuthRes.json();
-            if (dnldData.authorizationToken) {
-              directUrl += `?Authorization=${encodeURIComponent(dnldData.authorizationToken)}`;
-            }
+            const cacheObj: B2CachedAuth = {
+              downloadUrl: authData.downloadUrl,
+              bucketName: B2_BUCKET_NAME || 'Green-Energy-Solution',
+              downloadAuthToken: dnldData.authorizationToken || '',
+              expiresAt: Date.now() + (6 * 24 * 3600 * 1000)
+            };
+            b2AuthCache = cacheObj;
+            try { localStorage.setItem(CACHE_KEY, JSON.stringify(cacheObj)); } catch (_) {}
+            return cacheObj;
           }
-          return directUrl;
         }
       }
-      return storagePathOrUrl;
-    }, 2, 500);
+    } catch (err) {
+      console.warn("Master B2 download auth note:", err);
+    } finally {
+      pendingAuthPromise = null;
+    }
+    return null;
+  })();
 
-    return freshUrl || storagePathOrUrl;
-  } catch (err) {
-    console.warn("Signed URL refresh note:", err);
+  return pendingAuthPromise;
+}
+
+// Prefetch B2 master token in the background on module initialization
+if (typeof window !== 'undefined') {
+  setTimeout(() => {
+    getMasterB2DownloadAuth().catch(() => {});
+  }, 100);
+}
+
+/**
+ * Synchronous instant URL resolver for images/thumbnails:
+ * Returns the fresh signed URL in 0ms if cached, or clean URL if not yet cached.
+ */
+export function getQuickB2Url(storagePathOrUrl: any): string {
+  if (!storagePathOrUrl) return '';
+  if (typeof storagePathOrUrl !== 'string') return '';
+  if (storagePathOrUrl.startsWith('data:') || storagePathOrUrl.startsWith('blob:')) {
     return storagePathOrUrl;
   }
+  if (!storagePathOrUrl.includes('backblazeb2.com') && !storagePathOrUrl.includes('/file/')) {
+    return storagePathOrUrl;
+  }
+
+  let cleanPath = storagePathOrUrl.replace(/^https?:\/\/[^\/]+\/file\/[^\/]+\//, '');
+  cleanPath = cleanPath.split('?')[0].replace(/^\/+/, '');
+  if (!cleanPath) return storagePathOrUrl;
+
+  if (b2AuthCache && b2AuthCache.downloadAuthToken) {
+    return `${b2AuthCache.downloadUrl}/file/${b2AuthCache.bucketName}/${cleanPath}?Authorization=${encodeURIComponent(b2AuthCache.downloadAuthToken)}`;
+  }
+
+  getMasterB2DownloadAuth().catch(() => {});
+  return storagePathOrUrl.split('?')[0];
+}
+
+/**
+ * Regenerates or refreshes a 7-day signed download URL on demand for any stored B2 path or URL.
+ * Automatically cleans any expired ?Authorization tokens and attaches the fresh master token.
+ * Instant ~0ms when cached, ~300ms when fresh auth needed.
+ */
+export async function getFreshB2SignedUrl(storagePathOrUrl: string): Promise<string> {
+  if (!storagePathOrUrl) return storagePathOrUrl;
+  if (typeof storagePathOrUrl !== 'string') return storagePathOrUrl;
+  if (storagePathOrUrl.startsWith('data:') || storagePathOrUrl.startsWith('blob:')) {
+    return storagePathOrUrl;
+  }
+  if (!storagePathOrUrl.includes('backblazeb2.com') && !storagePathOrUrl.includes('/file/')) {
+    return storagePathOrUrl;
+  }
+
+  let cleanPath = storagePathOrUrl.replace(/^https?:\/\/[^\/]+\/file\/[^\/]+\//, '');
+  cleanPath = cleanPath.split('?')[0].replace(/^\/+/, '');
+  if (!cleanPath) return storagePathOrUrl;
+
+  try {
+    const auth = await getMasterB2DownloadAuth();
+    if (auth && auth.downloadAuthToken) {
+      return `${auth.downloadUrl}/file/${auth.bucketName}/${cleanPath}?Authorization=${encodeURIComponent(auth.downloadAuthToken)}`;
+    }
+  } catch (err) {
+    console.warn("Signed URL refresh note:", err);
+  }
+
+  return storagePathOrUrl.split('?')[0];
 }
 
 /**

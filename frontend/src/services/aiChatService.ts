@@ -1,4 +1,4 @@
-import { leadService } from './leadService';
+import { leadService, filterLeadsForUser } from './leadService';
 import { productService } from './productService';
 import { quotationService } from './quotationService';
 import { complaintService } from './complaintService';
@@ -55,7 +55,7 @@ export interface SoftwareLiveContext {
 }
 
 /**
- * Gathers real-time live data from across the entire CRM/ERP application
+ * Gathers real-time live data strictly scoped to the logged-in user's dashboard
  */
 export async function getLiveSoftwareContext(): Promise<SoftwareLiveContext> {
   const { currentUser, currentRole } = useAuthStore.getState();
@@ -65,13 +65,17 @@ export async function getLiveSoftwareContext(): Promise<SoftwareLiveContext> {
   const byStage: Record<string, number> = {};
   let totalCapacityKw = 0;
   let todayFollowUps = 0;
+  const visibleLeadIds = new Set<string>();
 
   try {
     const rawLeads = await leadService.getLeads();
-    totalLeads = rawLeads.length;
+    // Strictly filter leads visible on this user's dashboard based on their role/assignment
+    const userLeads = filterLeadsForUser(rawLeads, currentUser, currentRole);
+    totalLeads = userLeads.length;
     const todayStr = new Date().toISOString().split('T')[0];
 
-    rawLeads.forEach((l) => {
+    userLeads.forEach((l) => {
+      visibleLeadIds.add(l.id);
       byStage[l.status] = (byStage[l.status] || 0) + 1;
       const capMatch = l.requirement?.match(/(\d+(\.\d+)?)\s*(kw|kwp)/i);
       if (capMatch) {
@@ -111,8 +115,14 @@ export async function getLiveSoftwareContext(): Promise<SoftwareLiveContext> {
   let totalQuotationAmount = 0;
   try {
     const quotations = await quotationService.getQuotations();
-    totalQuotations = quotations.length;
-    quotations.forEach((q) => {
+    // Scope quotations to user's visible leads or whole system if super_admin
+    const userQuotes =
+      currentRole === 'super_admin'
+        ? quotations
+        : quotations.filter((q) => !q.leadId || visibleLeadIds.has(q.leadId));
+
+    totalQuotations = userQuotes.length;
+    userQuotes.forEach((q) => {
       totalQuotationAmount += q.totalPayable || q.totalAmount || 0;
     });
   } catch (_) {}
@@ -122,8 +132,13 @@ export async function getLiveSoftwareContext(): Promise<SoftwareLiveContext> {
   let resolvedComplaints = 0;
   try {
     const complaints = await complaintService.getComplaints();
-    totalComplaints = complaints.length;
-    complaints.forEach((c) => {
+    const userComplaints =
+      currentRole === 'super_admin'
+        ? complaints
+        : complaints.filter((c) => !c.leadId || visibleLeadIds.has(c.leadId));
+
+    totalComplaints = userComplaints.length;
+    userComplaints.forEach((c) => {
       if (c.status === 'open' || c.status === 'in_progress') openComplaints++;
       else if (c.status === 'resolved' || c.status === 'closed') resolvedComplaints++;
     });
@@ -140,10 +155,12 @@ export async function getLiveSoftwareContext(): Promise<SoftwareLiveContext> {
   } catch (_) {}
 
   let pendingDeletionsCount = 0;
-  try {
-    const deletions = await deletionRequestService.getPendingRequests();
-    pendingDeletionsCount = deletions.length;
-  } catch (_) {}
+  if (currentRole === 'super_admin') {
+    try {
+      const deletions = await deletionRequestService.getPendingRequests();
+      pendingDeletionsCount = deletions.length;
+    } catch (_) {}
+  }
 
   return {
     currentUser: currentUser
@@ -188,60 +205,48 @@ export async function getLiveSoftwareContext(): Promise<SoftwareLiveContext> {
  * Builds system prompt with live CRM state and Solar Industry knowledge
  */
 function buildSystemPrompt(context: SoftwareLiveContext): string {
-  const stageBreakdown = Object.entries(context.leads.byStage)
-    .map(([stage, count]) => `${stage}: ${count}`)
-    .join(', ') || 'No leads yet';
+  const stageBreakdown =
+    Object.entries(context.leads.byStage)
+      .map(([stage, count]) => `${stage}: ${count}`)
+      .join(', ') || '0 leads';
 
-  return `You are "Setu AI", the intelligent, friendly, and expert AI assistant built directly into the "Green Energy Solution" Solar ERP & CRM Platform.
+  return `You are "Setu AI", the dedicated AI assistant built exclusively for Green Energy Solution Admin and Super Admin users.
 
-You have LIVE real-time visibility into the user's software dashboard, lead pipeline, inventory, and operations.
-
-=== CURRENT LIVE SOFTWARE DATA & DASHBOARD COUNTS ===
-- Logged-in User: ${context.currentUser?.name || 'User'} (Role: ${context.currentUser?.role || 'Admin'})
-- Current Page Location: ${context.currentPage}
-- Total Customer Leads: ${context.leads.total} leads
-- Leads by Pipeline Stage: ${stageBreakdown}
+=== USER-SCOPED DASHBOARD CONTEXT ===
+- User: ${context.currentUser?.name || 'Admin'} (Role: ${context.currentUser?.role || 'admin'})
+- Current Active Page: ${context.currentPage}
+- Customer Leads in User's Dashboard: ${context.leads.total} total leads
+- Pipeline Status Breakdown: ${stageBreakdown}
 - Total Installed / Sanctioned Solar Capacity: ${context.leads.totalCapacityKw} kW
-- Today's Due Follow-Ups: ${context.leads.todayFollowUps} leads
-- Total Products in Inventory: ${context.inventory.totalProducts} items
-- Low / Out of Stock Items (${context.inventory.lowStockCount + context.inventory.outOfStockCount}): ${
-    context.inventory.lowStockItems.join(', ') || 'None (Healthy Stock)'
-  }
-- Total Quotations Generated: ${context.quotations.total} (Total Value: ₹${context.quotations.totalAmount.toLocaleString(
+- Today's Follow-ups Due: ${context.leads.todayFollowUps} leads
+- Total Inventory Items: ${context.inventory.totalProducts} items
+- Low / Out of Stock: ${context.inventory.lowStockCount + context.inventory.outOfStockCount} (${
+    context.inventory.lowStockItems.join(', ') || 'Stock Healthy'
+  })
+- Quotations on Dashboard: ${context.quotations.total} (Total Value: ₹${context.quotations.totalAmount.toLocaleString(
     'en-IN'
   )})
-- Active Customer Complaints: ${context.complaints.open} open (${context.complaints.resolved} resolved out of ${
-    context.complaints.total
-  })
-- Delivery Challans: ${context.challans.total} total (${context.challans.pending} pending/dispatched)
-- Pending Deletion Approvals (Admin review): ${context.pendingDeletionsCount} requests
+- Complaints: ${context.complaints.open} open (${context.complaints.resolved} resolved)
+- Challans: ${context.challans.total} total (${context.challans.pending} pending)
+- Pending Deletion Approvals: ${context.pendingDeletionsCount}
 
-=== SOLAR INDUSTRY & TECHNICAL KNOWLEDGE BASE ===
-1. PM Surya Ghar Muft Bijli Yojana (Central Subsidy):
-   - 1 kW System: ₹30,000 subsidy (approx. 4-5 units/day generation)
-   - 2 kW System: ₹60,000 subsidy (approx. 8-10 units/day generation)
-   - 3 kW to 10 kW System: ₹78,000 maximum fixed subsidy (approx. 12-15 units/day for 3kW)
-   - Payback Period: ~3 to 4 years. 25-year performance warranty.
-2. Technical Specifications:
-   - Panels: Waaree / Adani / Vikram / Tata Mono PERC & TopCon Bifacial (540W - 580W, ALMM & DCR certified).
-   - Inverters: Growatt, Solis, Sungrow, Deye On-Grid MPPT Inverters.
+=== SOLAR KNOWLEDGE BASE ===
+1. PM Surya Ghar Muft Bijli Yojana Central Subsidy:
+   - 1 kW: ₹30,000 | 2 kW: ₹60,000 | 3 kW to 10 kW: ₹78,000 maximum fixed subsidy.
+   - Payback Period: ~3 to 4 years. 25-year panel performance warranty.
+2. Technical Specs:
+   - Panels: Waaree / Adani / Vikram / Premier Mono PERC & TopCon Bifacial (540W-580W, ALMM/DCR).
+   - Inverters: Growatt, Solis, Sungrow MPPT On-Grid Inverters.
    - Earthing & Protection: 3 Earthings (AC, DC, Lightning Arrester) with earth resistance < 5 Ohms as per MNRE OM 07.06.24. Solid Copper ESE Lightning Arrester.
-   - Net Metering: Bi-directional meter connected to state DISCOM grid.
-3. Software Navigation & Features:
-   - Leads & Pipeline: /leads (Manage customer lifecycle, stage shifts, KYC docs, booking, installations, receipts).
-   - Quotation Generator: Inside lead view or /quotation-doc (custom BOM, pricing, PM Surya Ghar subsidy calc, 8-page proposal PDF).
-   - Work Completion Report (WCR): Inside lead view -> Documents -> WCR (Auto-fills consumer details, specifications, Groq AI Aadhar reader on Page 2).
-   - DCR Certificate & CFA Agreement: Inside lead view -> Documents tab.
-   - Delivery Challans & Stock: /challans and /inventory-panel.
-   - Shadow Analysis (3D Visualizer): /shadow-analysis (Sun position, Azimuth, Elevation, hourly shading simulation).
-   - Field Visits: /visits (GPS-tagged geo-location photos, survey logs).
+3. System Navigation:
+   - [Leads & Pipeline](/leads) | [Inventory](/inventory-panel) | [Shadow Analysis](/shadow-analysis) | [Challans](/challans) | [Visits](/visits)
 
-=== YOUR BEHAVIOR & GUIDELINES ===
-- Answer directly, helpfully, and professionally in conversational Hindi + English (Hinglish) or pure English as preferred by user.
-- When asked about counts or dashboard metrics (e.g. "Total leads kitne hain?", "Installation pending kitne hain?"), ALWAYS give the exact live numbers from the live data above.
-- When asked how to do something in the software, provide clear step-by-step instructions with clickable markdown links (e.g. [Lead Pipeline](/leads), [Inventory Panel](/inventory-panel), [Shadow Analysis](/shadow-analysis)).
-- Format responses cleanly with bold headings, bullet points, emoji icons, and concise summaries.
-- Keep answers engaging, crisp, and accurately grounded in solar science and this ERP system.`;
+=== STRICT RESPONSE GUIDELINES ===
+- Answer ONLY about this user's dashboard counts, their active lead pipeline, their inventory, documentation (WCR, DCR, Quotation, CFA), or solar technical questions.
+- NEVER invent or discuss unrelated topics outside this ERP and solar domain.
+- When asked about counts (e.g. "Meri total leads kitni hain?", "Aaj kitne follow up hain?"), reply using the EXACT numbers from the LIVE DASHBOARD CONTEXT above.
+- Speak in clear, friendly, and respectful Hinglish or English.
+- Use clean formatting with bullet points and bold highlights.`;
 }
 
 /**
@@ -309,7 +314,7 @@ export async function sendAiSupportMessage(
     if (lastError) {
       throw lastError;
     }
-    return "Maaf kijiye, abhi server se response lene me samasya aayi. Kripya thodi der baad dobara poochiye.";
+    return 'Maaf kijiye, abhi server se response lene me samasya aayi. Kripya thodi der baad dobara poochiye.';
   } catch (err: any) {
     console.error('AI Support Bot error:', err);
     return `Error: ${err.message || 'Unable to connect to AI server. Please check your internet connection.'}`;

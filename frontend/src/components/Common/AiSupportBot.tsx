@@ -15,6 +15,7 @@ import {
   Check
 } from 'lucide-react';
 import { sendAiSupportMessage, type ChatMessage } from '../../services/aiChatService';
+import { useAuthStore } from '../../store/authStore';
 
 const STORAGE_KEY = 'green_energy_setu_ai_chat_history';
 
@@ -28,6 +29,12 @@ const DEFAULT_SUGGESTIONS = [
 ];
 
 export const AiSupportBot: React.FC = () => {
+  const currentRole = useAuthStore((state) => state.currentRole);
+
+  if (currentRole !== 'admin' && currentRole !== 'super_admin') {
+    return null;
+  }
+
   const [isOpen, setIsOpen] = useState(false);
   const [isExpanded, setIsExpanded] = useState(false);
   const [messages, setMessages] = useState<ChatMessage[]>([]);

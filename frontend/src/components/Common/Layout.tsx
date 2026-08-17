@@ -415,8 +415,10 @@ export const Layout: React.FC<LayoutProps> = ({ children }) => {
         />
       )}
 
-      {/* AI Solar & CRM Support Assistant Floating Bot */}
-      <AiSupportBot />
+      {/* AI Solar & CRM Support Assistant Floating Bot (Admin & Super Admin only) */}
+      {(currentRole === 'admin' || currentRole === 'super_admin') && (
+        <AiSupportBot />
+      )}
     </div>
   );
 };

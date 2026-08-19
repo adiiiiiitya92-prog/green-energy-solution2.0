@@ -1,12 +1,14 @@
 import React, { useEffect, useState } from 'react';
 import { useLocation } from 'react-router-dom';
-import type { Challan, Lead, Profile, Product, ChallanItem, B2BBusiness, StockTransaction } from '../../types';
+import type { Challan, Lead, Profile, Product, ChallanItem, B2BBusiness, StockTransaction, Quotation, OrderConfirmation } from '../../types';
 import { challanService } from '../../services/challanService';
-import { leadService, filterLeadsForUser } from '../../services/leadService';
+import { leadService } from '../../services/leadService';
 import { employeeService } from '../../services/employeeService';
 import { productService } from '../../services/productService';
 import { b2bBusinessService } from '../../services/b2bBusinessService';
 import { stockTransactionService } from '../../services/stockTransactionService';
+import { quotationService } from '../../services/quotationService';
+import { orderService } from '../../services/orderService';
 import { pdfService } from '../../services/pdfService';
 import { useAuthStore } from '../../store/authStore';
 import {
@@ -20,7 +22,14 @@ import {
   Building2,
   History,
   CheckCircle,
-  AlertCircle
+  AlertCircle,
+  User,
+  Phone,
+  Zap,
+  ChevronDown,
+  Sparkles,
+  FileText,
+  Check
 } from 'lucide-react';
 import dayjs from 'dayjs';
 import logoImg from '../../assets/Green-Energy-Solution.png';
@@ -39,8 +48,14 @@ export const Challans: React.FC = () => {
   // Mode Selection: Standard Lead Challan vs B2B Challan
   const [isB2BMode, setIsB2BMode] = useState(false);
 
-  // Lead Mode Form states
+  // Lead Mode Form states & Searchable Picker
   const [selectedLeadId, setSelectedLeadId] = useState('');
+  const [selectedLeadData, setSelectedLeadData] = useState<Lead | null>(null);
+  const [leadQuotation, setLeadQuotation] = useState<Quotation | null>(null);
+  const [leadOrder, setLeadOrder] = useState<OrderConfirmation | null>(null);
+  const [isLoadingLeadInfo, setIsLoadingLeadInfo] = useState(false);
+  const [leadSearchQuery, setLeadSearchQuery] = useState('');
+  const [isLeadDropdownOpen, setIsLeadDropdownOpen] = useState(false);
 
   // B2B Mode Form states & Autocomplete
   const [b2bBusinessId, setB2bBusinessId] = useState('');
@@ -92,13 +107,11 @@ export const Challans: React.FC = () => {
   const [stockTxnSearch, setStockTxnSearch] = useState('');
 
   const loadData = async () => {
-    const { currentRole, currentUser } = useAuthStore.getState();
     const cList = await challanService.getChallans();
     setChallans(cList);
 
     const rawLeads = await leadService.getLeads();
-    const userLeads = filterLeadsForUser(rawLeads, currentUser, currentRole);
-    const sortedLeads = [...userLeads].sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+    const sortedLeads = [...rawLeads].sort((a, b) => (a.name || '').localeCompare(b.name || ''));
     setLeads(sortedLeads);
 
     const eList = await employeeService.getEmployees();
@@ -140,6 +153,13 @@ export const Challans: React.FC = () => {
   const handleOpenAddModal = (b2bMode = false) => {
     setIsB2BMode(b2bMode);
     setSelectedLeadId('');
+    setSelectedLeadData(null);
+    setLeadQuotation(null);
+    setLeadOrder(null);
+    setIsLoadingLeadInfo(false);
+    setLeadSearchQuery('');
+    setIsLeadDropdownOpen(false);
+
     setB2bBusinessId('');
     setBusinessName('');
     setGstNumber('');
@@ -161,6 +181,90 @@ export const Challans: React.FC = () => {
     setCurrentUnit('Nos');
     setSelectedSerials([]);
     setShowAddModal(true);
+  };
+
+  const handleSelectLead = async (lead: Lead) => {
+    setSelectedLeadId(lead.id);
+    setSelectedLeadData(lead);
+    setIsLeadDropdownOpen(false);
+    setLeadSearchQuery('');
+
+    // Auto-assign employee if assigned in lead
+    const targetEmpId = lead.assignedEmployeeId || lead.assignedSalesPersonId || lead.assignedAdminId;
+    if (targetEmpId) {
+      const foundEmp = employees.find(e => e.id === targetEmpId);
+      if (foundEmp) {
+        setAssignedEmployeeId(foundEmp.id);
+      }
+    }
+
+    setIsLoadingLeadInfo(true);
+    try {
+      const [quotes, oc] = await Promise.all([
+        quotationService.getQuotationsByLeadId(lead.id),
+        orderService.getOrderConfirmationByLeadId(lead.id)
+      ]);
+      const validQuote = quotes.find(q => q.items && q.items.length > 0) || quotes[0] || null;
+      setLeadQuotation(validQuote || null);
+      setLeadOrder(oc || null);
+    } catch (err) {
+      console.warn("Lead info fetch note:", err);
+    } finally {
+      setIsLoadingLeadInfo(false);
+    }
+  };
+
+  const handleAutoPopulateFromQuotation = () => {
+    if (!leadQuotation || !leadQuotation.items || leadQuotation.items.length === 0) {
+      alert('No quotation line items found for this lead.');
+      return;
+    }
+
+    const newItems: ChallanItem[] = [];
+    const unmapped: string[] = [];
+
+    for (const qItem of leadQuotation.items) {
+      if (!qItem.itemName) continue;
+      const cleanQName = qItem.itemName.toLowerCase().trim();
+
+      // Try exact or partial name matching with products
+      const matchedProd = products.find(p => {
+        const pName = p.name.toLowerCase().trim();
+        return pName === cleanQName || pName.includes(cleanQName) || cleanQName.includes(pName);
+      });
+
+      const qty = Number(qItem.qty) || 1;
+      const unit = qItem.unit || matchedProd?.unit || 'Nos';
+
+      if (matchedProd) {
+        const availSerials = getAvailableSerialsForProduct(matchedProd.id, null);
+        newItems.push({
+          productId: matchedProd.id,
+          productName: matchedProd.name,
+          qty: qty,
+          unit: unit,
+          rate: matchedProd.rate || qItem.rate || 0,
+          serialNumbers: availSerials.slice(0, qty)
+        });
+      } else {
+        unmapped.push(qItem.itemName);
+        newItems.push({
+          productId: `custom_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+          productName: qItem.itemName,
+          qty: qty,
+          unit: unit,
+          rate: qItem.rate || 0,
+          serialNumbers: []
+        });
+      }
+    }
+
+    setChallanItems(newItems);
+    if (unmapped.length > 0) {
+      alert(`✅ Loaded ${newItems.length} items from Quotation BOM!\n\nNote: ${unmapped.length} item(s) (${unmapped.slice(0, 3).join(', ')}) were added as direct quotation line items.`);
+    } else {
+      alert(`✅ Successfully loaded ${newItems.length} items from Quotation BOM!`);
+    }
   };
 
   const handleProductSelect = (prodId: string) => {
@@ -408,6 +512,12 @@ export const Challans: React.FC = () => {
 
     // Reset Form & Close
     setSelectedLeadId('');
+    setSelectedLeadData(null);
+    setLeadQuotation(null);
+    setLeadOrder(null);
+    setIsLoadingLeadInfo(false);
+    setLeadSearchQuery('');
+    setIsLeadDropdownOpen(false);
     setB2bBusinessId('');
     setBusinessName('');
     setGstNumber('');
@@ -635,6 +745,18 @@ export const Challans: React.FC = () => {
       st.challanNumber.toLowerCase().includes(q) ||
       st.productName.toLowerCase().includes(q) ||
       st.challanType.toLowerCase().includes(q)
+    );
+  });
+
+  const filteredLeads = leads.filter(l => {
+    const q = leadSearchQuery.toLowerCase().trim();
+    if (!q) return true;
+    return (
+      (l.name && l.name.toLowerCase().includes(q)) ||
+      (l.phoneNumber && l.phoneNumber.toLowerCase().includes(q)) ||
+      (l.requirement && l.requirement.toLowerCase().includes(q)) ||
+      (l.email && l.email.toLowerCase().includes(q)) ||
+      (l.description && l.description.toLowerCase().includes(q))
     );
   });
 
@@ -947,7 +1069,7 @@ export const Challans: React.FC = () => {
       {/* Add Challan Modal (B2B or Standard Lead) */}
       {showAddModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 backdrop-blur-xs overflow-y-auto">
-          <div className="bg-white rounded-2xl border border-slate-200 shadow-xl w-full max-w-xl p-6 m-4 animate-scale-in my-8 max-h-[90vh] overflow-y-auto">
+          <div className="bg-white rounded-2xl border border-slate-200 shadow-xl w-full max-w-2xl sm:max-w-3xl p-6 m-4 animate-scale-in my-8 max-h-[90vh] overflow-y-auto">
             <div className="flex justify-between items-center mb-4 pb-3 border-b border-slate-100">
               <h3 className="text-lg font-black text-slate-900 flex items-center gap-2">
                 {isB2BMode ? (
@@ -1082,21 +1204,178 @@ export const Challans: React.FC = () => {
                   </div>
                 </div>
               ) : (
-                <div className="grid grid-cols-1 gap-4">
-                  <div>
-                    <label className="block text-slate-500 mb-1">Select Customer / Lead *</label>
-                    <select
-                      required
-                      value={selectedLeadId}
-                      onChange={(e) => setSelectedLeadId(e.target.value)}
-                      className="w-full border border-slate-200 rounded-xl px-3 py-2.5 bg-slate-50 focus:outline-none cursor-pointer"
-                    >
-                      <option value="">-- Choose Customer --</option>
-                      {leads.map(l => (
-                        <option key={l.id} value={l.id}>{l.name} ({l.requirement})</option>
-                      ))}
-                    </select>
-                  </div>
+                /* Standard Lead Searchable Picker & Information Display */
+                <div className="space-y-3">
+                  {!selectedLeadData ? (
+                    <div className="relative">
+                      <div className="flex items-center justify-between mb-1">
+                        <label className="block text-slate-700 font-bold text-xs">
+                          Select Customer / Lead *
+                        </label>
+                        <span className="text-[10px] text-slate-400 font-semibold">
+                          {filteredLeads.length} of {leads.length} Leads
+                        </span>
+                      </div>
+                      
+                      <div className="relative">
+                        <Search className="w-4 h-4 text-slate-400 absolute left-3 top-3" />
+                        <input
+                          type="text"
+                          value={leadSearchQuery}
+                          onChange={(e) => {
+                            setLeadSearchQuery(e.target.value);
+                            setIsLeadDropdownOpen(true);
+                          }}
+                          onFocus={() => setIsLeadDropdownOpen(true)}
+                          placeholder="Search lead by customer name, phone number, requirement..."
+                          className="w-full pl-9 pr-8 py-2.5 border border-slate-300 focus:border-emerald-500 rounded-xl bg-white text-slate-800 font-bold text-xs focus:outline-none shadow-xs"
+                        />
+                        {leadSearchQuery && (
+                          <button
+                            type="button"
+                            onClick={() => setLeadSearchQuery('')}
+                            className="absolute right-2.5 top-2.5 text-slate-400 hover:text-slate-600 p-0.5 cursor-pointer"
+                          >
+                            <X className="w-3.5 h-3.5" />
+                          </button>
+                        )}
+                      </div>
+
+                      {/* Dropdown Options List */}
+                      {isLeadDropdownOpen && (
+                        <div className="absolute z-30 left-0 right-0 mt-1.5 bg-white rounded-xl border border-slate-200 shadow-2xl max-h-60 overflow-y-auto divide-y divide-slate-100 animate-fade-in">
+                          {filteredLeads.length === 0 ? (
+                            <div className="p-4 text-center text-slate-400 text-xs font-semibold">
+                              No matching leads found for "{leadSearchQuery}"
+                            </div>
+                          ) : (
+                            filteredLeads.map(l => (
+                              <div
+                                key={l.id}
+                                onClick={() => handleSelectLead(l)}
+                                className={`p-3 hover:bg-emerald-50/80 cursor-pointer transition-colors flex items-center justify-between gap-3 ${
+                                  selectedLeadId === l.id ? 'bg-emerald-50 border-l-4 border-emerald-600' : ''
+                                }`}
+                              >
+                                <div className="min-w-0 flex-1">
+                                  <div className="flex items-center gap-2">
+                                    <span className="font-extrabold text-slate-900 text-xs truncate">{l.name}</span>
+                                    <span className={`px-2 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wider ${
+                                      l.status === 'confirmed' ? 'bg-emerald-100 text-emerald-800' :
+                                      l.status === 'installed' ? 'bg-indigo-100 text-indigo-800' :
+                                      l.status === 'quotation_sent' ? 'bg-amber-100 text-amber-800' :
+                                      'bg-slate-100 text-slate-600'
+                                    }`}>
+                                      {l.status?.replace('_', ' ')}
+                                    </span>
+                                  </div>
+                                  <div className="text-[11px] text-slate-500 flex flex-wrap items-center gap-x-3 gap-y-0.5 mt-0.5">
+                                    <span className="flex items-center gap-1 font-semibold text-slate-700">
+                                      📞 {l.phoneNumber}
+                                    </span>
+                                    {l.requirement && (
+                                      <span className="text-emerald-700 font-bold truncate">
+                                        ⚡ {l.requirement}
+                                      </span>
+                                    )}
+                                  </div>
+                                </div>
+                                <button
+                                  type="button"
+                                  className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-[10px] font-bold shrink-0 shadow-xs cursor-pointer"
+                                >
+                                  Select
+                                </button>
+                              </div>
+                            ))
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  ) : (
+                    /* Selected Lead Details Card */
+                    <div className="bg-emerald-50/80 border border-emerald-200 rounded-2xl p-4 space-y-3 shadow-xs animate-fade-in">
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="flex items-center gap-3">
+                          <div className="w-9 h-9 rounded-xl bg-emerald-600 text-white flex items-center justify-center font-bold text-sm shadow-xs shrink-0">
+                            ✓
+                          </div>
+                          <div>
+                            <div className="flex items-center gap-2">
+                              <h4 className="font-black text-slate-900 text-sm">{selectedLeadData.name}</h4>
+                              <span className="px-2 py-0.5 rounded-full bg-emerald-200/80 text-emerald-900 text-[9px] font-black uppercase tracking-wider">
+                                {selectedLeadData.status?.replace('_', ' ')}
+                              </span>
+                            </div>
+                            <p className="text-[11px] text-slate-600 font-semibold flex items-center gap-2 mt-0.5">
+                              <span>📞 +91 {selectedLeadData.phoneNumber}</span>
+                              {selectedLeadData.email && <span>• ✉️ {selectedLeadData.email}</span>}
+                            </p>
+                          </div>
+                        </div>
+
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setSelectedLeadId('');
+                            setSelectedLeadData(null);
+                            setLeadQuotation(null);
+                            setLeadOrder(null);
+                            setIsLeadDropdownOpen(true);
+                          }}
+                          className="px-2.5 py-1 bg-white hover:bg-slate-100 text-slate-700 border border-slate-300 text-[10px] font-bold rounded-lg transition-all cursor-pointer shrink-0 shadow-2xs"
+                        >
+                          Change Lead
+                        </button>
+                      </div>
+
+                      {/* Project & Quotation Specs Grid */}
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1 text-[11px] border-t border-emerald-200/60">
+                        <div className="bg-white/80 p-2.5 rounded-xl border border-emerald-100">
+                          <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block">Requirement / Capacity</span>
+                          <span className="font-extrabold text-emerald-800 text-xs">{selectedLeadData.requirement || 'Solar Rooftop System'}</span>
+                          {selectedLeadData.description && (
+                            <p className="text-[10px] text-slate-500 font-medium mt-0.5 truncate">{selectedLeadData.description}</p>
+                          )}
+                        </div>
+
+                        <div className="bg-white/80 p-2.5 rounded-xl border border-emerald-100">
+                          <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block">Quotation / Order Info</span>
+                          {isLoadingLeadInfo ? (
+                            <span className="text-[10px] text-slate-400 font-bold">Fetching quotation details...</span>
+                          ) : leadQuotation ? (
+                            <div className="flex items-center justify-between gap-1 mt-0.5">
+                              <span className="font-extrabold text-slate-800 truncate">
+                                #{leadQuotation.quotationNumber} ({leadQuotation.items?.length || 0} items)
+                              </span>
+                              <span className="font-black text-emerald-700 text-xs shrink-0">
+                                ₹{((leadQuotation as any).grandTotal || leadQuotation.subtotal || 0).toLocaleString('en-IN')}
+                              </span>
+                            </div>
+                          ) : (
+                            <span className="text-[10px] text-amber-700 font-bold">No saved quotation found</span>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Auto Populate Line Items Button from Quotation */}
+                      {leadQuotation && leadQuotation.items && leadQuotation.items.length > 0 && (
+                        <div className="pt-1 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 bg-emerald-100/70 p-2.5 rounded-xl border border-emerald-200">
+                          <div className="text-[11px] text-emerald-950 font-bold">
+                            💡 Quotation #{leadQuotation.quotationNumber} has <strong>{leadQuotation.items.length} BOM line item(s)</strong>.
+                          </div>
+                          <button
+                            type="button"
+                            onClick={handleAutoPopulateFromQuotation}
+                            className="px-3 py-1.5 bg-slate-900 hover:bg-slate-800 text-white rounded-lg text-[10px] font-black transition-all cursor-pointer shadow-xs shrink-0 flex items-center gap-1.5"
+                          >
+                            <Sparkles className="w-3.5 h-3.5 text-amber-400" />
+                            <span>Auto-fill Items from Quotation</span>
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
               )}
 

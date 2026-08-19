@@ -407,6 +407,33 @@ export const quotationService = {
     await db.quotations.delete(id);
     await markRecordAsDeleted(id, 'quotations');
     deleteRecordFromFirestore('quotations', id);
+
+    if (q && q.leadId) {
+      const remainingQuotes = await db.quotations.where({ leadId: q.leadId }).toArray();
+      const validRemaining = remainingQuotes.filter(item => item.id !== id && item.items && item.items.length > 0 && getQuotationTotalAmount(item) > 0);
+      if (validRemaining.length === 0) {
+        // No remaining valid quotations for this lead!
+        // Remove or reset order confirmations that had no payments made
+        const ocs = await db.orderConfirmations.where({ leadId: q.leadId }).toArray();
+        for (const oc of ocs) {
+          const payments = (Array.isArray(oc.payments) && oc.payments.length > 0) ? oc.payments : (oc.advanceAmount ? [{ amount: oc.advanceAmount }] : []);
+          const totalPaid = payments.reduce((s: number, p: any) => s + (p?.amount || 0), 0);
+          if (totalPaid <= 0) {
+            await db.orderConfirmations.delete(oc.id);
+            await markRecordAsDeleted(oc.id, 'orderConfirmations');
+            deleteRecordFromFirestore('orderConfirmations', oc.id);
+          }
+        }
+        // Update lead status back to new if it was quotation_sent or confirmed
+        const lead = await db.leads.get(q.leadId);
+        if (lead && (lead.status === 'quotation_sent' || lead.status === 'confirmed')) {
+          lead.status = 'new';
+          await db.leads.put(lead);
+          saveRecordToFirestore('leads', lead.id, lead);
+        }
+      }
+    }
+    window.dispatchEvent(new CustomEvent('app-realtime-update'));
     return { success: true };
   },
 

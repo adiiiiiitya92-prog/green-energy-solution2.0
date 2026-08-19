@@ -1,6 +1,7 @@
 import { db, markRecordAsDeleted, getDeletedRecordIdsSet } from './db';
 import type { OrderConfirmation, ClientDocument, ClientRegistration, InstallationPhoto, ReleaseDocument } from '../types';
 import { saveRecordToFirestore, deleteRecordFromFirestore, fetchCollectionFromFirestore } from './firebase';
+import { getQuotationTotalAmount } from './quotationService';
 
 export const orderService = {
   // Order Confirmations
@@ -73,6 +74,15 @@ export const orderService = {
   },
 
   async createOrderConfirmation(ocData: Omit<OrderConfirmation, 'id' | 'createdAt'>): Promise<string> {
+    const deletedIds = await getDeletedRecordIdsSet();
+    const existingQuotes = await db.quotations.where({ leadId: ocData.leadId }).toArray();
+    const validQuotes = existingQuotes.filter(q => !deletedIds.has(q.id) && q.items && q.items.length > 0 && getQuotationTotalAmount(q) > 0);
+
+    if (validQuotes.length === 0 && (!ocData.quotationId || ocData.quotationId === 'q_link')) {
+      console.warn("⚠️ Cannot create Order Confirmation without a valid saved quotation for lead:", ocData.leadId);
+      return '';
+    }
+
     const id = 'oc_' + Math.random().toString(36).substring(2, 11);
     const newOc: OrderConfirmation = {
       ...ocData,

@@ -1153,6 +1153,7 @@ export const ShadowAnalysisContainer: React.FC = () => {
             panelSpec={panelSpec}
             siteLatLng={siteLatLng}
             analysisDate={analysisDate}
+            onSwitchTo2D={() => setViewMode('2d')}
           />
         ) : (
           isLoaded && siteLatLng && (

@@ -46,6 +46,7 @@ export const Dashboard: React.FC = () => {
       const lList = filterLeadsForUser(rawLeads, currentUser, currentRole);
       setLeads(lList);
 
+      const allValidLeadIds = new Set(rawLeads.map(l => l.id));
       const activeLeadIds = new Set(lList.map(l => l.id));
       const roleStr = (currentRole || currentUser?.role || '').toLowerCase();
       const desigStr = (currentUser?.designation || '').toLowerCase();
@@ -54,6 +55,8 @@ export const Dashboard: React.FC = () => {
       let qList: Quotation[] = quotesRes.status === 'fulfilled' ? (quotesRes.value || []) : [];
       if (!hasFullAccess) {
         qList = qList.filter(q => !!q.leadId && activeLeadIds.has(q.leadId));
+      } else {
+        qList = qList.filter(q => !!q.leadId && allValidLeadIds.has(q.leadId));
       }
       if (lList.length === 0 && !hasFullAccess) {
         qList = [];
@@ -61,7 +64,9 @@ export const Dashboard: React.FC = () => {
       setQuotations(qList);
 
       const allOcs = ocsRes.status === 'fulfilled' ? (ocsRes.value || []) : [];
-      const matchedOcs = hasFullAccess ? allOcs : allOcs.filter(oc => activeLeadIds.has(oc.leadId));
+      const matchedOcs = hasFullAccess
+        ? allOcs.filter(oc => !!oc.leadId && allValidLeadIds.has(oc.leadId))
+        : allOcs.filter(oc => !!oc.leadId && activeLeadIds.has(oc.leadId));
       setConfirmations(matchedOcs);
 
       if (empsRes.status === 'fulfilled') setEmployees(empsRes.value || []);

@@ -125,9 +125,71 @@ export function calculateShadowPolygonsForVisualization(
 }
 
 /**
- * Perform shading analysis for each fitted panel.
+ * Helper: Test if a 3D point (px, py, pz) is shaded by an obstruction when looking towards the sun.
+ * Ray direction towards the sun: dx = -sin(azimuth), dy = -cos(azimuth), dz = tan(altitude)
+ */
+export function isPointShadedByObstruction(
+  p: { x: number; y: number; z: number },
+  obs: {
+    type: string;
+    height: number;
+    width: number;
+    localPos: Point2D;
+    localPath?: Point2D[];
+  },
+  altitudeRad: number,
+  azimuthRad: number,
+  buildingRoofHeight: number = 0
+): boolean {
+  if (altitudeRad <= 0) return true; // Night / below horizon
+
+  const zBase = buildingRoofHeight;
+  const zTop = buildingRoofHeight + obs.height;
+
+  // If obstacle top is lower than point, it cannot shade it
+  if (zTop <= p.z) return false;
+
+  const tanAlt = Math.tan(altitudeRad);
+  if (tanAlt <= 0.001) return true;
+
+  // The ray from p towards the sun reaches height z at distance t:
+  // p.z + t * tanAlt = z  =>  t = (z - p.z) / tanAlt
+  const tMin = Math.max(0, (zBase - p.z) / tanAlt);
+  const tMax = (zTop - p.z) / tanAlt;
+
+  if (tMax <= tMin) return false;
+
+  const dirX = -Math.sin(azimuthRad);
+  const dirY = -Math.cos(azimuthRad);
+
+  // Sample points along the ray segment from tMin to tMax
+  const steps = 6;
+  for (let s = 0; s <= steps; s++) {
+    const t = tMin + (tMax - tMin) * (s / steps);
+    const qx = p.x + t * dirX;
+    const qy = p.y + t * dirY;
+    const qPt: Point2D = { x: qx, y: qy };
+
+    if (obs.type === 'polygon' && obs.localPath && obs.localPath.length >= 3) {
+      if (isPointInPolygon(qPt, obs.localPath)) {
+        return true;
+      }
+    } else {
+      // Circular / cylinder obstruction
+      const rad = obs.width / 2;
+      const distSq = (qx - obs.localPos.x) ** 2 + (qy - obs.localPos.y) ** 2;
+      if (distSq <= rad * rad) {
+        return true;
+      }
+    }
+  }
+
+  return false;
+}
+
+/**
+ * Perform shading analysis for each fitted panel using 3D raycasting and multi-point sampling.
  * Supports custom date, time range, and panel tilt/azimuth.
- * Projects shadows from obstructions and computes per-panel shading percentage.
  */
 export function calculateShading(
   panels: FittedPanel[],
@@ -172,9 +234,9 @@ export function calculateShading(
   const totalSlots = sampleDates.length * sampleHours.length;
   const origin = siteLatLng;
 
-  // Initialize shading counts
-  const panelShadeCounts = new Map<string, number>();
-  panels.forEach(p => panelShadeCounts.set(p.id, 0));
+  // Track shading percentage sum per panel across all sample time slots
+  const panelShadeLossSums = new Map<string, number>();
+  panels.forEach(p => panelShadeLossSums.set(p.id, 0));
 
   // Convert obstructions to local coordinates
   const localObs = obstructions.map(obs => {
@@ -185,12 +247,9 @@ export function calculateShading(
     return { id: obs.id, type: obs.type, height: obs.heightMeters, width: obs.widthMeters, localPos, localPath };
   });
 
-  const localPanelCenters = panels.map(p => ({ id: p.id, localCenter: p.localCenter }));
-
-  // Factor in panel tilt for effective obstruction height calculation
-  const panelTiltRad = ((config?.panelTiltDeg ?? 0) * Math.PI) / 180;
-  // A tilted panel's rear edge is elevated, making it slightly more resistant to ground-level shadows
-  // but the effective ground shadow from obstructions still matters for the center point check
+  const tiltDeg = config?.panelTiltDeg ?? 15;
+  const tiltRad = (tiltDeg * Math.PI) / 180;
+  const azimuthTiltDeg = config?.panelAzimuthDeg ?? 180; // Default 180° = True South
 
   // Loop through all sample dates and hours
   sampleDates.forEach(date => {
@@ -202,66 +261,64 @@ export function calculateShading(
       const altitude = sunPos.altitude;
       const azimuth = sunPos.azimuth;
 
-      if (altitude <= 0) return;
+      if (altitude <= 0) {
+        // Night - 100% loss
+        panels.forEach(p => {
+          panelShadeLossSums.set(p.id, (panelShadeLossSums.get(p.id) || 0) + 100);
+        });
+        return;
+      }
 
-      const shadowPolygons: Point2D[][] = [];
+      // Check sun vector vs panel surface normal (dot product)
+      // Panel normal facing South (+tilt): N = (0, -sin(tilt), cos(tilt))
+      // Sun vector from earth to sun: S = (sin(azimuth)*cos(alt), -cos(azimuth)*cos(alt), sin(alt))
+      const sunCosAlt = Math.cos(altitude);
+      const sunSinAlt = Math.sin(altitude);
+      const sunDirY = -Math.cos(azimuth) * sunCosAlt;
+      const normalDotSun = sunDirY * (-Math.sin(tiltRad)) + sunSinAlt * Math.cos(tiltRad);
+      const isPast90Cutoff = Math.abs((azimuth * 180) / Math.PI) > 90;
+      const isBackLit = isPast90Cutoff || normalDotSun <= 0.05; // Sun is behind panel tilt plane
 
-      localObs.forEach(obs => {
-        // Effective obstruction height considers panel tilt
-        // If panels are tilted, the rear edge is elevated by panelLength * sin(tilt)
-        // So the obstruction needs to be taller than this to cast shadow on the panel surface
-        const effectiveHeight = panelTiltRad > 0
-          ? Math.max(0, obs.height - 0.3 * Math.sin(panelTiltRad)) // slight reduction for elevated panels
-          : obs.height;
-
-        if (effectiveHeight <= 0) return;
-
-        const shadowLength = Math.min(effectiveHeight / Math.tan(altitude), 50);
-        const dx = Math.sin(azimuth);
-        const dy = Math.cos(azimuth);
-
-        if (obs.type === 'polygon' && obs.localPath && obs.localPath.length >= 3) {
-          const poly = obs.localPath;
-          for (let i = 0; i < poly.length; i++) {
-            const v1 = poly[i];
-            const v2 = poly[(i + 1) % poly.length];
-            shadowPolygons.push([
-              v1, v2,
-              { x: v2.x + shadowLength * dx, y: v2.y + shadowLength * dy },
-              { x: v1.x + shadowLength * dx, y: v1.y + shadowLength * dy }
-            ]);
-          }
-        } else {
-          const px = -dy;
-          const py = dx;
-          const halfW = obs.width / 2;
-          const bl: Point2D = { x: obs.localPos.x - halfW * px, y: obs.localPos.y - halfW * py };
-          const br: Point2D = { x: obs.localPos.x + halfW * px, y: obs.localPos.y + halfW * py };
-          const tl: Point2D = { x: bl.x + shadowLength * dx, y: bl.y + shadowLength * dy };
-          const tr: Point2D = { x: br.x + shadowLength * dx, y: br.y + shadowLength * dy };
-          shadowPolygons.push([bl, br, tr, tl]);
+      panels.forEach(p => {
+        if (isBackLit) {
+          // If the sun is completely behind the panel's active surface
+          panelShadeLossSums.set(p.id, (panelShadeLossSums.get(p.id) || 0) + 100);
+          return;
         }
-      });
 
-      // Test panel centers against shadow polygons
-      localPanelCenters.forEach(p => {
-        const isShaded = shadowPolygons.some(poly => isPointInPolygon(p.localCenter, poly));
-        if (isShaded) {
-          panelShadeCounts.set(p.id, (panelShadeCounts.get(p.id) || 0) + 1);
-        }
+        // Test 5 sample points on the panel (4 corners + center)
+        const b = p.localBounds;
+        const pts3D: { x: number; y: number; z: number }[] = [
+          { x: b[0].x, y: b[0].y, z: 0.35 },
+          { x: b[1].x, y: b[1].y, z: 0.35 },
+          { x: b[2].x, y: b[2].y, z: 0.35 + (b[2].y - b[0].y) * Math.sin(tiltRad) },
+          { x: b[3].x, y: b[3].y, z: 0.35 + (b[3].y - b[1].y) * Math.sin(tiltRad) },
+          { x: p.localCenter.x, y: p.localCenter.y, z: 0.35 + 0.5 * (b[2].y - b[0].y) * Math.sin(tiltRad) }
+        ];
+
+        let shadedPoints = 0;
+        pts3D.forEach(pt => {
+          const shaded = localObs.some(obs =>
+            isPointShadedByObstruction(pt, obs, altitude, azimuth, 0)
+          );
+          if (shaded) shadedPoints++;
+        });
+
+        const slotLossPercent = (shadedPoints / pts3D.length) * 100;
+        panelShadeLossSums.set(p.id, (panelShadeLossSums.get(p.id) || 0) + slotLossPercent);
       });
     });
   });
 
-  // Compute shading scores
+  // Compute final shading scores
   let totalRecommended = 0;
   let totalNotRecommended = 0;
   let shadingLossSum = 0;
 
   const updatedPanels = panels.map(p => {
-    const shadedSlots = panelShadeCounts.get(p.id) || 0;
-    const shadingLoss = Math.round((shadedSlots / totalSlots) * 100);
-    const isRecommended = shadingLoss <= 40;
+    const rawLossSum = panelShadeLossSums.get(p.id) || 0;
+    const shadingLoss = Math.min(100, Math.max(0, Math.round(rawLossSum / totalSlots)));
+    const isRecommended = shadingLoss <= 30; // Standard solar recommendation threshold <= 30% loss
 
     if (isRecommended) {
       totalRecommended++;

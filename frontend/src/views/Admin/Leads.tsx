@@ -770,9 +770,12 @@ export const Leads: React.FC = () => {
       setQuoteFollowUp('');
     }
 
-    setHasAdminQuotation(quotations.length > 0);
-    if (quotations.length > 0) {
-      const q = quotations[0];
+    const validQuotes = quotations.filter(q => q.items && q.items.length > 0 && getQuotationTotalAmount(q) > 0);
+    const hasValidQuote = validQuotes.length > 0;
+    setHasAdminQuotation(hasValidQuote);
+
+    if (hasValidQuote) {
+      const q = validQuotes[0];
       setBookingItems(q.items || []);
       const latestQuoteTotal = getQuotationTotalAmount(q);
 
@@ -807,7 +810,9 @@ export const Leads: React.FC = () => {
         }
       }
     } else {
+      // STRICT RULE: No valid quotation saved => no booking items and no valid OC allowed
       setBookingItems([]);
+      oc = null;
     }
 
     setExistingOc(oc || null);
@@ -1083,6 +1088,10 @@ export const Leads: React.FC = () => {
   // 2. Booking order confirmation
   const handleConfirmOrder = async () => {
     if (!selectedLead) return;
+    if (!hasAdminQuotation || bookingItems.length === 0) {
+      alert('⚠️ Payment collection / Order Confirmation cannot be created without an official saved quotation. Please create and save a quotation first.');
+      return;
+    }
     if (advanceAmount <= 0) {
       alert('Please input a valid advance payment amount.');
       return;
@@ -1190,7 +1199,10 @@ export const Leads: React.FC = () => {
   // 2b. Handle subsequent payments (2nd, 3rd, 4th payment installments)
   const handleRecordSubsequentPayment = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!selectedLead || !existingOc) return;
+    if (!selectedLead || !existingOc || !hasAdminQuotation) {
+      alert('⚠️ Payment cannot be recorded because no valid saved quotation was found for this lead.');
+      return;
+    }
 
     const currentPayments = getPaymentsList(existingOc);
     const subtotal = existingOc.subtotal || bookingItems.reduce((sum, item) => sum + item.amount, 0);
@@ -1711,7 +1723,7 @@ export const Leads: React.FC = () => {
                 }`}
               >
                 <span>Order & KYC Docs</span>
-                {existingOc && (
+                {hasAdminQuotation && existingOc && (
                   <span className="px-1.5 py-0.5 rounded-full bg-emerald-100 text-emerald-800 text-[9px] font-black uppercase tracking-wider">
                     Payments Active
                   </span>
@@ -1833,8 +1845,8 @@ export const Leads: React.FC = () => {
               };
               const nextLabel = getOrdinalLabel(nextInstallmentNo);
 
-              const hasPaymentsRecorded = paymentsList.length > 0;
-              const isQuotationCreated = hasAdminQuotation || (bookingItems && bookingItems.length > 0) || (existingOc && existingOc.subtotal > 0);
+              const isQuotationCreated = hasAdminQuotation && bookingItems.length > 0;
+              const hasPaymentsRecorded = isQuotationCreated && paymentsList.length > 0;
 
               return (
                 <div className="space-y-8 text-xs font-semibold">
@@ -1881,15 +1893,23 @@ export const Leads: React.FC = () => {
 
                     {/* LOCK PAYMENT COLLECTION IF QUOTATION NOT CREATED YET */}
                     {!isQuotationCreated ? (
-                      <div className="bg-amber-50/80 border-2 border-amber-300 rounded-2xl p-6 text-center space-y-3 shadow-xs">
+                      <div className="bg-amber-50/90 border-2 border-amber-300 rounded-2xl p-6 text-center space-y-3 shadow-xs">
                         <div className="w-12 h-12 rounded-full bg-amber-100 border border-amber-300 text-amber-700 flex items-center justify-center font-bold mx-auto text-xl">
-                          ⚠️
+                          🔒
                         </div>
-                        <h3 className="text-sm font-black text-amber-900 uppercase tracking-wider">Quotation Pending</h3>
+                        <h3 className="text-sm font-black text-amber-900 uppercase tracking-wider">Payment Collection Locked (Quotation Pending)</h3>
                         <p className="text-xs text-amber-800 font-semibold max-w-md mx-auto leading-relaxed">
-                          Payment collection for this lead is currently <strong>LOCKED</strong> because a quotation has not been generated yet.
-                          You can generate and save the official quotation under the <strong>Create Quotation</strong> tab above to automatically unlock payment collection.
+                          Jab tak is lead ke liye official quotation generate aur save nahi hota, tab tak advance payment ya installment collect karne ka option <strong>LOCKED</strong> rahega.
                         </p>
+                        <div className="pt-2">
+                          <button
+                            type="button"
+                            onClick={() => switchTab('quotation')}
+                            className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-black shadow-xs transition-all cursor-pointer inline-flex items-center gap-1.5"
+                          >
+                            <span>📝 Create & Save Quotation Now →</span>
+                          </button>
+                        </div>
                       </div>
                     ) : hasPaymentsRecorded ? (
                       <div className="space-y-6">

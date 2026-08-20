@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { useLocation } from 'react-router-dom';
-import type { Challan, Lead, Profile, Product, ChallanItem, B2BBusiness, StockTransaction, Quotation, OrderConfirmation } from '../../types';
+import type { Challan, Lead, Profile, Product, ChallanItem, B2BBusiness, StockTransaction, Quotation, OrderConfirmation, Package, BomItem } from '../../types';
 import { challanService } from '../../services/challanService';
 import { leadService } from '../../services/leadService';
 import { employeeService } from '../../services/employeeService';
@@ -9,7 +9,9 @@ import { b2bBusinessService } from '../../services/b2bBusinessService';
 import { stockTransactionService } from '../../services/stockTransactionService';
 import { quotationService } from '../../services/quotationService';
 import { orderService } from '../../services/orderService';
+import { packageService } from '../../services/packageService';
 import { pdfService } from '../../services/pdfService';
+import { getItemDispatchCategory } from '../../services/dispatchHelper';
 import { useAuthStore } from '../../store/authStore';
 import {
   Plus,
@@ -29,10 +31,32 @@ import {
   ChevronDown,
   Sparkles,
   FileText,
-  Check
+  Check,
+  Layers,
+  Sun,
+  ShieldCheck,
+  CheckSquare,
+  Square,
+  Filter,
+  SlidersHorizontal,
+  Package as PackageIcon
 } from 'lucide-react';
 import dayjs from 'dayjs';
 import logoImg from '../../assets/Green-Energy-Solution.png';
+
+export interface BomSelectableItem {
+  id: string;
+  name: string;
+  category: 'structure' | 'inverter' | 'system' | 'bos' | 'other';
+  categoryLabel: string;
+  unit: string;
+  stockAvailable: number;
+  bomQty: number;
+  dispatchQty: number;
+  rate: number;
+  selected: boolean;
+  matchedProductId?: string;
+}
 
 export const Challans: React.FC = () => {
   const { currentRole, currentUser } = useAuthStore();
@@ -106,6 +130,17 @@ export const Challans: React.FC = () => {
   const [stockTxns, setStockTxns] = useState<StockTransaction[]>([]);
   const [stockTxnSearch, setStockTxnSearch] = useState('');
 
+  // BOM Selector Modal States
+  const [showBomModal, setShowBomModal] = useState(false);
+  const [availablePackages, setAvailablePackages] = useState<Package[]>([]);
+  const [selectedBomSourceType, setSelectedBomSourceType] = useState<'quotation' | 'package' | 'catalog_kit'>('quotation');
+  const [selectedPackageId, setSelectedPackageId] = useState('');
+  const [selectedKitCategory, setSelectedKitCategory] = useState<'all' | 'structure' | 'inverter' | 'system' | 'bos'>('all');
+  const [bomItemsToSelect, setBomItemsToSelect] = useState<BomSelectableItem[]>([]);
+  const [bomCategoryFilter, setBomCategoryFilter] = useState<'all' | 'structure' | 'inverter' | 'system' | 'bos'>('all');
+  const [bomSearchTerm, setBomSearchTerm] = useState('');
+  const [isLoadingPackages, setIsLoadingPackages] = useState(false);
+
   const loadData = async () => {
     const cList = await challanService.getChallans();
     setChallans(cList);
@@ -132,7 +167,7 @@ export const Challans: React.FC = () => {
     };
   }, []);
 
-  // Handle location state navigation triggers (e.g. from B2B Businesses page)
+  // Handle location state navigation triggers (e.g. from B2B Businesses page or Lead Card dispatch actions)
   useEffect(() => {
     if (location.state?.isB2BMode || location.state?.prefillBusiness) {
       setIsB2BMode(true);
@@ -147,6 +182,15 @@ export const Challans: React.FC = () => {
         setEmail(b.email || '');
       }
       setShowAddModal(true);
+    } else if (location.state?.prefillLeadId || location.state?.prefillLead) {
+      setIsB2BMode(false);
+      const leadId = location.state.prefillLeadId || location.state.prefillLead?.id;
+      leadService.getLeadById(leadId).then(targetLead => {
+        if (targetLead) {
+          handleSelectLead(targetLead);
+          setShowAddModal(true);
+        }
+      }).catch(err => console.warn("Prefill lead error:", err));
     }
   }, [location.state]);
 
@@ -214,57 +258,308 @@ export const Challans: React.FC = () => {
     }
   };
 
-  const handleAutoPopulateFromQuotation = () => {
-    if (!leadQuotation || !leadQuotation.items || leadQuotation.items.length === 0) {
-      alert('No quotation line items found for this lead.');
+  const buildSelectableItemsFromQuotation = (q: Quotation): BomSelectableItem[] => {
+    const rawList: { name: string; qty: number; unit?: string; rate?: number; category?: string }[] = [];
+    
+    // Combine quotation items and bomItems if present
+    if (q.bomItems && q.bomItems.length > 0) {
+      q.bomItems.forEach(b => {
+        if (b.itemName && !b.isHeader) {
+          rawList.push({
+            name: b.itemName,
+            qty: Number(b.qty) || 1,
+            unit: b.unit || 'Nos',
+            rate: 0,
+            category: b.category
+          });
+        }
+      });
+    }
+    
+    if (q.items && q.items.length > 0) {
+      q.items.forEach(item => {
+        if (item.itemName && !rawList.some(r => r.name.toLowerCase().trim() === item.itemName.toLowerCase().trim())) {
+          rawList.push({
+            name: item.itemName,
+            qty: Number(item.qty) || 1,
+            unit: item.unit || 'Nos',
+            rate: Number(item.rate) || 0
+          });
+        }
+      });
+    }
+
+    return rawList.map((item, idx) => {
+      const cleanName = item.name.toLowerCase().trim();
+      const matchedProd = products.find(p => {
+        const pName = p.name.toLowerCase().trim();
+        return pName === cleanName || pName.includes(cleanName) || cleanName.includes(pName);
+      });
+
+      const { category, categoryLabel } = getItemDispatchCategory({
+        productName: item.name,
+        category: matchedProd?.category || item.category
+      });
+
+      return {
+        id: `bom_q_${idx}_${Date.now()}`,
+        name: item.name,
+        category,
+        categoryLabel,
+        unit: item.unit || matchedProd?.unit || 'Nos',
+        stockAvailable: matchedProd ? matchedProd.stockQuantity : 0,
+        bomQty: item.qty,
+        dispatchQty: item.qty,
+        rate: matchedProd?.rate || item.rate || 0,
+        selected: true,
+        matchedProductId: matchedProd?.id
+      };
+    });
+  };
+
+  const buildSelectableItemsFromPackage = (pkg: Package): BomSelectableItem[] => {
+    const rawList: { name: string; qty: number; unit?: string; rate?: number; category?: string }[] = [];
+
+    if (pkg.bomItems && pkg.bomItems.length > 0) {
+      pkg.bomItems.forEach(b => {
+        rawList.push({
+          name: b.name,
+          qty: Number(b.qty) || 1,
+          unit: b.unit || 'Nos',
+          rate: Number(b.rate) || 0,
+          category: b.category || b.bomCategory
+        });
+      });
+    }
+
+    if (pkg.commercialItems && pkg.commercialItems.length > 0) {
+      pkg.commercialItems.forEach(c => {
+        if (!rawList.some(r => r.name.toLowerCase().trim() === c.name.toLowerCase().trim())) {
+          rawList.push({
+            name: c.name,
+            qty: Number(c.qty) || 1,
+            unit: c.unit || 'Nos',
+            rate: Number(c.rate) || 0,
+            category: c.category
+          });
+        }
+      });
+    }
+
+    return rawList.map((item, idx) => {
+      const cleanName = item.name.toLowerCase().trim();
+      const matchedProd = products.find(p => {
+        const pName = p.name.toLowerCase().trim();
+        return pName === cleanName || pName.includes(cleanName) || cleanName.includes(pName);
+      });
+
+      const { category, categoryLabel } = getItemDispatchCategory({
+        productName: item.name,
+        category: matchedProd?.category || item.category
+      });
+
+      return {
+        id: `bom_pkg_${idx}_${Date.now()}`,
+        name: item.name,
+        category,
+        categoryLabel,
+        unit: item.unit || matchedProd?.unit || 'Nos',
+        stockAvailable: matchedProd ? matchedProd.stockQuantity : 0,
+        bomQty: item.qty,
+        dispatchQty: item.qty,
+        rate: matchedProd?.rate || item.rate || 0,
+        selected: true,
+        matchedProductId: matchedProd?.id
+      };
+    });
+  };
+
+  const buildSelectableItemsFromCatalogKit = (kitCat: 'all' | 'structure' | 'inverter' | 'system' | 'bos'): BomSelectableItem[] => {
+    let prods = products;
+    if (kitCat !== 'all') {
+      prods = products.filter(p => {
+        const { category } = getItemDispatchCategory({ productName: p.name, category: p.category });
+        return category === kitCat;
+      });
+    }
+
+    return prods.map((p, idx) => {
+      const { category, categoryLabel } = getItemDispatchCategory({ productName: p.name, category: p.category });
+      return {
+        id: `bom_cat_${p.id}_${idx}`,
+        name: p.name,
+        category,
+        categoryLabel,
+        unit: p.unit || 'Nos',
+        stockAvailable: p.stockQuantity,
+        bomQty: 1,
+        dispatchQty: 1,
+        rate: p.rate || 0,
+        selected: true,
+        matchedProductId: p.id
+      };
+    });
+  };
+
+  const handleOpenBomSelectorModal = async () => {
+    setIsLoadingPackages(true);
+    try {
+      const pkgs = await packageService.getPackages();
+      const activePkgs = pkgs.filter(p => p.status === 'active' || !p.status);
+      setAvailablePackages(activePkgs);
+
+      if (leadQuotation && ((leadQuotation.items && leadQuotation.items.length > 0) || (leadQuotation.bomItems && leadQuotation.bomItems.length > 0))) {
+        setSelectedBomSourceType('quotation');
+        setBomItemsToSelect(buildSelectableItemsFromQuotation(leadQuotation));
+      } else if (activePkgs.length > 0) {
+        setSelectedBomSourceType('package');
+        setSelectedPackageId(activePkgs[0].id);
+        setBomItemsToSelect(buildSelectableItemsFromPackage(activePkgs[0]));
+      } else {
+        setSelectedBomSourceType('catalog_kit');
+        setSelectedKitCategory('all');
+        setBomItemsToSelect(buildSelectableItemsFromCatalogKit('all'));
+      }
+    } catch (err) {
+      console.warn("Packages load note:", err);
+    } finally {
+      setIsLoadingPackages(false);
+    }
+
+    setBomCategoryFilter('all');
+    setBomSearchTerm('');
+    setShowBomModal(true);
+  };
+
+  const handleSourceTypeChange = (source: 'quotation' | 'package' | 'catalog_kit') => {
+    setSelectedBomSourceType(source);
+    if (source === 'quotation') {
+      if (leadQuotation) {
+        setBomItemsToSelect(buildSelectableItemsFromQuotation(leadQuotation));
+      } else {
+        setBomItemsToSelect([]);
+      }
+    } else if (source === 'package') {
+      if (availablePackages.length > 0) {
+        const targetPkg = availablePackages.find(p => p.id === selectedPackageId) || availablePackages[0];
+        setSelectedPackageId(targetPkg.id);
+        setBomItemsToSelect(buildSelectableItemsFromPackage(targetPkg));
+      } else {
+        setBomItemsToSelect([]);
+      }
+    } else if (source === 'catalog_kit') {
+      setBomItemsToSelect(buildSelectableItemsFromCatalogKit(selectedKitCategory));
+    }
+  };
+
+  const handleSelectPackageForBom = (pkgId: string) => {
+    setSelectedPackageId(pkgId);
+    const targetPkg = availablePackages.find(p => p.id === pkgId);
+    if (targetPkg) {
+      setBomItemsToSelect(buildSelectableItemsFromPackage(targetPkg));
+    }
+  };
+
+  const handleSelectKitCategoryForBom = (cat: 'all' | 'structure' | 'inverter' | 'system' | 'bos') => {
+    setSelectedKitCategory(cat);
+    setBomItemsToSelect(buildSelectableItemsFromCatalogKit(cat));
+  };
+
+  const handleToggleBomItemSelect = (id: string) => {
+    setBomItemsToSelect(prev =>
+      prev.map(item => (item.id === id ? { ...item, selected: !item.selected } : item))
+    );
+  };
+
+  const handleSetAllBomItemsSelect = (select: boolean) => {
+    setBomItemsToSelect(prev =>
+      prev.map(item => {
+        if (bomCategoryFilter === 'all' || item.category === bomCategoryFilter) {
+          return { ...item, selected: select };
+        }
+        return item;
+      })
+    );
+  };
+
+  const handleSelectOnlyCategory = (cat: 'structure' | 'inverter' | 'system' | 'bos') => {
+    setBomCategoryFilter(cat);
+    setBomItemsToSelect(prev =>
+      prev.map(item => ({
+        ...item,
+        selected: item.category === cat
+      }))
+    );
+  };
+
+  const handleBomItemQtyChange = (id: string, newQty: number) => {
+    const qty = Math.max(1, newQty);
+    setBomItemsToSelect(prev =>
+      prev.map(item => (item.id === id ? { ...item, dispatchQty: qty, selected: true } : item))
+    );
+  };
+
+  const handleImportBomToChallan = () => {
+    const selectedItems = bomItemsToSelect.filter(item => item.selected && item.dispatchQty > 0);
+    if (selectedItems.length === 0) {
+      alert('Please select at least one BOM item with quantity greater than 0.');
       return;
     }
 
-    const newItems: ChallanItem[] = [];
-    const unmapped: string[] = [];
+    const importedChallanItems: ChallanItem[] = [];
 
-    for (const qItem of leadQuotation.items) {
-      if (!qItem.itemName) continue;
-      const cleanQName = qItem.itemName.toLowerCase().trim();
+    for (const item of selectedItems) {
+      let prodId = item.matchedProductId;
+      let targetProduct = products.find(p => p.id === prodId);
 
-      // Try exact or partial name matching with products
-      const matchedProd = products.find(p => {
-        const pName = p.name.toLowerCase().trim();
-        return pName === cleanQName || pName.includes(cleanQName) || cleanQName.includes(pName);
-      });
+      if (!targetProduct) {
+        const cleanName = item.name.toLowerCase().trim();
+        targetProduct = products.find(p => {
+          const pName = p.name.toLowerCase().trim();
+          return pName === cleanName || pName.includes(cleanName) || cleanName.includes(pName);
+        });
+        if (targetProduct) {
+          prodId = targetProduct.id;
+        }
+      }
 
-      const qty = Number(qItem.qty) || 1;
-      const unit = qItem.unit || matchedProd?.unit || 'Nos';
+      const qty = item.dispatchQty;
+      const unit = item.unit || targetProduct?.unit || 'Nos';
 
-      if (matchedProd) {
-        const availSerials = getAvailableSerialsForProduct(matchedProd.id, null);
-        newItems.push({
-          productId: matchedProd.id,
-          productName: matchedProd.name,
+      if (targetProduct) {
+        const availSerials = getAvailableSerialsForProduct(targetProduct.id, null);
+        importedChallanItems.push({
+          productId: targetProduct.id,
+          productName: targetProduct.name,
           qty: qty,
           unit: unit,
-          rate: matchedProd.rate || qItem.rate || 0,
+          rate: targetProduct.rate || item.rate || 0,
           serialNumbers: availSerials.slice(0, qty)
         });
       } else {
-        unmapped.push(qItem.itemName);
-        newItems.push({
+        importedChallanItems.push({
           productId: `custom_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
-          productName: qItem.itemName,
+          productName: item.name,
           qty: qty,
           unit: unit,
-          rate: qItem.rate || 0,
+          rate: item.rate || 0,
           serialNumbers: []
         });
       }
     }
 
-    setChallanItems(newItems);
-    if (unmapped.length > 0) {
-      alert(`✅ Loaded ${newItems.length} items from Quotation BOM!\n\nNote: ${unmapped.length} item(s) (${unmapped.slice(0, 3).join(', ')}) were added as direct quotation line items.`);
-    } else {
-      alert(`✅ Successfully loaded ${newItems.length} items from Quotation BOM!`);
-    }
+    // Merge with existing items (avoid duplicate productIds by overriding or appending)
+    setChallanItems(prev => {
+      const existingFiltered = prev.filter(p => !importedChallanItems.some(i => i.productId === p.productId));
+      return [...existingFiltered, ...importedChallanItems];
+    });
+
+    setShowBomModal(false);
+    alert(`✅ Successfully added ${importedChallanItems.length} BOM item(s) to Delivery Challan!`);
+  };
+
+  const handleAutoPopulateFromQuotation = () => {
+    handleOpenBomSelectorModal();
   };
 
   const handleProductSelect = (prodId: string) => {
@@ -1358,19 +1653,19 @@ export const Challans: React.FC = () => {
                         </div>
                       </div>
 
-                      {/* Auto Populate Line Items Button from Quotation */}
-                      {leadQuotation && leadQuotation.items && leadQuotation.items.length > 0 && (
+                      {/* Auto Populate Line Items Button from Quotation & BOM Picker */}
+                      {leadQuotation && (
                         <div className="pt-1 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 bg-emerald-100/70 p-2.5 rounded-xl border border-emerald-200">
                           <div className="text-[11px] text-emerald-950 font-bold">
-                            💡 Quotation #{leadQuotation.quotationNumber} has <strong>{leadQuotation.items.length} BOM line item(s)</strong>.
+                            💡 Quotation #{leadQuotation.quotationNumber} is available with BOM specifications.
                           </div>
                           <button
                             type="button"
-                            onClick={handleAutoPopulateFromQuotation}
+                            onClick={handleOpenBomSelectorModal}
                             className="px-3 py-1.5 bg-slate-900 hover:bg-slate-800 text-white rounded-lg text-[10px] font-black transition-all cursor-pointer shadow-xs shrink-0 flex items-center gap-1.5"
                           >
                             <Sparkles className="w-3.5 h-3.5 text-amber-400" />
-                            <span>Auto-fill Items from Quotation</span>
+                            <span>Select BOM & Set Quantities</span>
                           </button>
                         </div>
                       )}
@@ -1436,7 +1731,25 @@ export const Challans: React.FC = () => {
 
               {/* Items Dispatch Section */}
               <div className="border border-slate-200 p-4 rounded-2xl bg-slate-50/50 space-y-3">
-                <p className="text-[10px] uppercase font-bold text-slate-400 tracking-wider">Dispatched Line Items</p>
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-2 border-b border-slate-200/60">
+                  <div>
+                    <p className="text-[10px] uppercase font-bold text-slate-400 tracking-wider">
+                      Dispatched Line Items ({challanItems.length})
+                    </p>
+                    <span className="text-[11px] text-slate-500 font-semibold">
+                      Add individual items or select from BOM templates with custom quantities.
+                    </span>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={handleOpenBomSelectorModal}
+                    className="px-3.5 py-1.5 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white rounded-xl text-xs font-black shadow-xs flex items-center gap-1.5 transition-all cursor-pointer shrink-0"
+                  >
+                    <Sparkles className="w-3.5 h-3.5 text-amber-300" />
+                    <span>⚡ Select BOM / Package</span>
+                  </button>
+                </div>
 
                 {/* Item Form Inputs */}
                 <div className="grid grid-cols-1 sm:grid-cols-12 gap-2 items-end">
@@ -1922,10 +2235,366 @@ export const Challans: React.FC = () => {
               <button
                 type="button"
                 onClick={() => setShowStockHistoryModal(false)}
-                className="px-4 py-2 bg-slate-800 text-white text-xs font-bold rounded-xl"
+                className="px-4 py-2 bg-slate-800 text-white text-xs font-bold rounded-xl cursor-pointer"
               >
                 Close
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Interactive BOM & Package Selector Modal */}
+      {showBomModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-xs p-3 sm:p-4 overflow-y-auto animate-fade-in">
+          <div className="bg-white rounded-3xl border border-slate-200 shadow-2xl w-full max-w-3xl my-auto max-h-[90vh] flex flex-col overflow-hidden animate-scale-in">
+            {/* Modal Header */}
+            <div className="bg-gradient-to-r from-slate-900 via-slate-800 to-emerald-950 text-white p-5 sm:p-6 flex justify-between items-start shrink-0">
+              <div>
+                <div className="flex items-center gap-2">
+                  <div className="p-2 bg-emerald-500/20 border border-emerald-400/30 rounded-xl text-emerald-400">
+                    <Sparkles className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h3 className="text-lg font-black tracking-tight">Select BOM & Set Dispatch Quantities</h3>
+                    <p className="text-xs text-slate-300 font-semibold mt-0.5">
+                      Select components from quotation or package templates and specify the exact quantities to dispatch.
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setShowBomModal(false)}
+                className="p-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white rounded-xl transition-colors cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Modal Content */}
+            <div className="p-5 sm:p-6 overflow-y-auto space-y-5 flex-1 text-xs font-semibold">
+              {/* Source Tabs */}
+              <div className="flex flex-wrap gap-2 p-1.5 bg-slate-100 rounded-2xl border border-slate-200/80">
+                {leadQuotation && (
+                  <button
+                    type="button"
+                    onClick={() => handleSourceTypeChange('quotation')}
+                    className={`flex-1 min-w-[160px] py-2 px-3 rounded-xl text-xs font-extrabold flex items-center justify-center gap-2 transition-all cursor-pointer ${
+                      selectedBomSourceType === 'quotation'
+                        ? 'bg-white text-emerald-800 shadow-sm border border-slate-200'
+                        : 'text-slate-600 hover:text-slate-900 hover:bg-white/50'
+                    }`}
+                  >
+                    <FileText className="w-4 h-4 text-emerald-600" />
+                    <span>Lead's Quotation BOM (#{leadQuotation.quotationNumber})</span>
+                  </button>
+                )}
+
+                <button
+                  type="button"
+                  onClick={() => handleSourceTypeChange('package')}
+                  className={`flex-1 min-w-[160px] py-2 px-3 rounded-xl text-xs font-extrabold flex items-center justify-center gap-2 transition-all cursor-pointer ${
+                    selectedBomSourceType === 'package'
+                      ? 'bg-white text-indigo-800 shadow-sm border border-slate-200'
+                      : 'text-slate-600 hover:text-slate-900 hover:bg-white/50'
+                  }`}
+                >
+                  <PackageIcon className="w-4 h-4 text-indigo-600" />
+                  <span>System Package Templates ({availablePackages.length})</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => handleSourceTypeChange('catalog_kit')}
+                  className={`flex-1 min-w-[160px] py-2 px-3 rounded-xl text-xs font-extrabold flex items-center justify-center gap-2 transition-all cursor-pointer ${
+                    selectedBomSourceType === 'catalog_kit'
+                      ? 'bg-white text-slate-900 shadow-sm border border-slate-200'
+                      : 'text-slate-600 hover:text-slate-900 hover:bg-white/50'
+                  }`}
+                >
+                  <Layers className="w-4 h-4 text-amber-600" />
+                  <span>Catalog Component Kits</span>
+                </button>
+              </div>
+
+              {/* Sub-selectors for Package or Catalog Kit */}
+              {selectedBomSourceType === 'package' && (
+                <div className="bg-indigo-50/70 p-3.5 rounded-2xl border border-indigo-100 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <div>
+                    <label className="block text-[11px] font-bold text-indigo-900 mb-1">Choose System Package Template:</label>
+                    <select
+                      value={selectedPackageId}
+                      onChange={(e) => handleSelectPackageForBom(e.target.value)}
+                      className="border border-indigo-200 rounded-xl px-3 py-2 bg-white text-slate-800 font-bold text-xs focus:outline-none cursor-pointer w-full sm:w-auto min-w-[280px]"
+                    >
+                      {availablePackages.map(pkg => (
+                        <option key={pkg.id} value={pkg.id}>
+                          📦 {pkg.name} ({pkg.bomItems?.length || 0} BOM + {pkg.commercialItems?.length || 0} items)
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  {availablePackages.find(p => p.id === selectedPackageId)?.description && (
+                    <p className="text-[11px] text-indigo-700 italic max-w-xs">
+                      {availablePackages.find(p => p.id === selectedPackageId)?.description}
+                    </p>
+                  )}
+                </div>
+              )}
+
+              {selectedBomSourceType === 'catalog_kit' && (
+                <div className="bg-amber-50/70 p-3.5 rounded-2xl border border-amber-100 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <div>
+                    <label className="block text-[11px] font-bold text-amber-900 mb-1">Select Component Category Kit:</label>
+                    <div className="flex flex-wrap gap-2">
+                      {[
+                        { id: 'all', label: 'All Catalog Items', icon: Layers },
+                        { id: 'structure', label: '🏗️ Structure Kit', icon: Layers },
+                        { id: 'inverter', label: '⚡ Inverter Kit', icon: Zap },
+                        { id: 'system', label: '☀️ Solar Panels Kit', icon: Sun },
+                        { id: 'bos', label: '🔌 BOS & Protection', icon: ShieldCheck }
+                      ].map(kit => (
+                        <button
+                          key={kit.id}
+                          type="button"
+                          onClick={() => handleSelectKitCategoryForBom(kit.id as any)}
+                          className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                            selectedKitCategory === kit.id
+                              ? 'bg-amber-600 text-white shadow-xs'
+                              : 'bg-white text-slate-700 border border-amber-200 hover:bg-amber-100'
+                          }`}
+                        >
+                          {kit.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Filter & Quick Selection Controls */}
+              <div className="space-y-3 pt-1">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  {/* Category Pills */}
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    {[
+                      { id: 'all', label: 'All Items' },
+                      { id: 'structure', label: '🏗️ Structure' },
+                      { id: 'inverter', label: '⚡ Inverter' },
+                      { id: 'system', label: '☀️ Panels' },
+                      { id: 'bos', label: '🔌 BOS / Cables' }
+                    ].map(tab => (
+                      <button
+                        key={tab.id}
+                        type="button"
+                        onClick={() => setBomCategoryFilter(tab.id as any)}
+                        className={`px-2.5 py-1 rounded-lg text-[11px] font-extrabold transition-all cursor-pointer ${
+                          bomCategoryFilter === tab.id
+                            ? 'bg-slate-900 text-white shadow-2xs'
+                            : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                        }`}
+                      >
+                        {tab.label}
+                      </button>
+                    ))}
+                  </div>
+
+                  {/* Search */}
+                  <div className="relative min-w-[200px]">
+                    <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-2.5" />
+                    <input
+                      type="text"
+                      placeholder="Filter items..."
+                      value={bomSearchTerm}
+                      onChange={(e) => setBomSearchTerm(e.target.value)}
+                      className="w-full pl-8 pr-3 py-1.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-semibold focus:outline-none focus:border-emerald-500"
+                    />
+                  </div>
+                </div>
+
+                {/* Quick Selection Shortcuts */}
+                <div className="flex flex-wrap items-center justify-between gap-2 bg-slate-50 p-2.5 rounded-xl border border-slate-200/70 text-[11px]">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="text-slate-500 font-bold uppercase text-[10px]">Quick Select:</span>
+                    <button
+                      type="button"
+                      onClick={() => handleSetAllBomItemsSelect(true)}
+                      className="px-2 py-0.5 bg-white hover:bg-slate-100 text-emerald-700 font-bold rounded border border-emerald-200 cursor-pointer"
+                    >
+                      ✓ Select All
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleSetAllBomItemsSelect(false)}
+                      className="px-2 py-0.5 bg-white hover:bg-slate-100 text-rose-600 font-bold rounded border border-rose-200 cursor-pointer"
+                    >
+                      ✗ Deselect All
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleSelectOnlyCategory('structure')}
+                      className="px-2 py-0.5 bg-white hover:bg-amber-50 text-amber-800 font-bold rounded border border-amber-200 cursor-pointer"
+                    >
+                      🏗️ Structure Only
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleSelectOnlyCategory('inverter')}
+                      className="px-2 py-0.5 bg-white hover:bg-indigo-50 text-indigo-800 font-bold rounded border border-indigo-200 cursor-pointer"
+                    >
+                      ⚡ Inverter Only
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleSelectOnlyCategory('system')}
+                      className="px-2 py-0.5 bg-white hover:bg-emerald-50 text-emerald-800 font-bold rounded border border-emerald-200 cursor-pointer"
+                    >
+                      ☀️ Panels Only
+                    </button>
+                  </div>
+
+                  <span className="text-slate-500 font-extrabold">
+                    {bomItemsToSelect.filter(i => i.selected).length} of {bomItemsToSelect.length} items checked
+                  </span>
+                </div>
+              </div>
+
+              {/* Items Selection & Quantity Table */}
+              <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden shadow-xs">
+                <div className="max-h-72 overflow-y-auto">
+                  <table className="w-full text-left text-xs">
+                    <thead className="sticky top-0 bg-slate-100 text-slate-500 uppercase text-[10px] tracking-wider font-bold z-10 border-b border-slate-200">
+                      <tr>
+                        <th className="px-3 py-2.5 w-10 text-center">
+                          <input
+                            type="checkbox"
+                            checked={bomItemsToSelect.length > 0 && bomItemsToSelect.every(i => i.selected)}
+                            onChange={(e) => handleSetAllBomItemsSelect(e.target.checked)}
+                            className="w-4 h-4 rounded text-emerald-600 focus:ring-0 cursor-pointer"
+                          />
+                        </th>
+                        <th className="px-3 py-2.5">Component / Item Name</th>
+                        <th className="px-3 py-2.5 text-center">Category</th>
+                        <th className="px-3 py-2.5 text-center">Available Stock</th>
+                        <th className="px-3 py-2.5 text-right w-36">Dispatch Quantity</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {bomItemsToSelect.length === 0 ? (
+                        <tr>
+                          <td colSpan={5} className="py-8 text-center text-slate-400 font-semibold">
+                            No BOM items found for the selected template.
+                          </td>
+                        </tr>
+                      ) : (
+                        bomItemsToSelect
+                          .filter(item => {
+                            const matchesCat = bomCategoryFilter === 'all' || item.category === bomCategoryFilter;
+                            const matchesSearch = !bomSearchTerm || item.name.toLowerCase().includes(bomSearchTerm.toLowerCase());
+                            return matchesCat && matchesSearch;
+                          })
+                          .map((item) => (
+                            <tr
+                              key={item.id}
+                              className={`hover:bg-slate-50 transition-colors ${
+                                item.selected ? 'bg-emerald-50/30' : 'opacity-60 bg-white'
+                              }`}
+                            >
+                              <td className="px-3 py-2.5 text-center">
+                                <input
+                                  type="checkbox"
+                                  checked={item.selected}
+                                  onChange={() => handleToggleBomItemSelect(item.id)}
+                                  className="w-4 h-4 rounded text-emerald-600 focus:ring-0 cursor-pointer"
+                                />
+                              </td>
+                              <td className="px-3 py-2.5">
+                                <div className="font-bold text-slate-800">{item.name}</div>
+                                <div className="text-[10px] text-slate-400">
+                                  Default BOM Qty: <strong>{item.bomQty} {item.unit}</strong>
+                                </div>
+                              </td>
+                              <td className="px-3 py-2.5 text-center">
+                                <span className={`px-2 py-0.5 rounded-full text-[9px] font-black uppercase ${
+                                  item.category === 'structure' ? 'bg-amber-100 text-amber-800' :
+                                  item.category === 'inverter' ? 'bg-indigo-100 text-indigo-800' :
+                                  item.category === 'system' ? 'bg-emerald-100 text-emerald-800' :
+                                  'bg-slate-100 text-slate-700'
+                                }`}>
+                                  {item.categoryLabel}
+                                </span>
+                              </td>
+                              <td className="px-3 py-2.5 text-center">
+                                <span className={`font-extrabold text-[11px] ${
+                                  item.stockAvailable >= item.dispatchQty
+                                    ? 'text-emerald-700'
+                                    : item.stockAvailable > 0
+                                    ? 'text-amber-600'
+                                    : 'text-rose-600'
+                                }`}>
+                                  {item.stockAvailable} {item.unit}
+                                </span>
+                              </td>
+                              <td className="px-3 py-2.5 text-right">
+                                <div className="inline-flex items-center gap-1">
+                                  <button
+                                    type="button"
+                                    onClick={() => handleBomItemQtyChange(item.id, item.dispatchQty - 1)}
+                                    className="w-6 h-6 rounded bg-slate-100 hover:bg-slate-200 text-slate-700 font-black flex items-center justify-center cursor-pointer"
+                                  >
+                                    -
+                                  </button>
+                                  <input
+                                    type="number"
+                                    min={1}
+                                    value={item.dispatchQty}
+                                    onChange={(e) => handleBomItemQtyChange(item.id, Number(e.target.value))}
+                                    className="w-14 text-center py-1 px-1 border border-slate-300 rounded-lg font-black text-slate-900 bg-white focus:outline-none focus:border-emerald-500"
+                                  />
+                                  <button
+                                    type="button"
+                                    onClick={() => handleBomItemQtyChange(item.id, item.dispatchQty + 1)}
+                                    className="w-6 h-6 rounded bg-slate-100 hover:bg-slate-200 text-slate-700 font-black flex items-center justify-center cursor-pointer"
+                                  >
+                                    +
+                                  </button>
+                                  <span className="text-[10px] text-slate-400 font-bold ml-1 w-6">{item.unit}</span>
+                                </div>
+                              </td>
+                            </tr>
+                          ))
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+
+            {/* Modal Footer */}
+            <div className="bg-slate-50 border-t border-slate-200 px-6 py-4 flex flex-col sm:flex-row items-center justify-between gap-3 shrink-0">
+              <div className="text-xs text-slate-600 font-semibold">
+                Selected: <strong>{bomItemsToSelect.filter(i => i.selected).length}</strong> component(s) • Total Quantity: <strong>{bomItemsToSelect.filter(i => i.selected).reduce((s, i) => s + i.dispatchQty, 0)} units</strong>
+              </div>
+
+              <div className="flex items-center gap-2 w-full sm:w-auto">
+                <button
+                  type="button"
+                  onClick={() => setShowBomModal(false)}
+                  className="flex-1 sm:flex-none px-4 py-2 bg-white hover:bg-slate-100 text-slate-700 border border-slate-300 rounded-xl font-bold cursor-pointer transition-all"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={handleImportBomToChallan}
+                  className="flex-1 sm:flex-none px-5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-black shadow-md flex items-center justify-center gap-2 cursor-pointer transition-all"
+                >
+                  <Check className="w-4 h-4" />
+                  <span>Add Selected to Challan</span>
+                </button>
+              </div>
             </div>
           </div>
         </div>

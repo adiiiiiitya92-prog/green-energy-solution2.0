@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useRef } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useSearchParams, useNavigate } from 'react-router-dom';
 import { useAuthStore } from '../../store/authStore';
 import { leadService, filterLeadsForUser } from '../../services/leadService';
 import { challanService } from '../../services/challanService';
@@ -10,9 +10,12 @@ import { employeeService } from '../../services/employeeService';
 import { mapService } from '../../services/mapService';
 import { pdfService } from '../../services/pdfService';
 import { productService } from '../../services/productService';
-import type { Lead, Quotation, OrderConfirmation, Profile, ClientDocument, ClientRegistration, InstallationPhoto, ReleaseDocument, QuotationItem, PaymentInstallment, Product } from '../../types';
+import { computeAllLeadsDispatchMap, computeLeadDispatchSummary } from '../../services/dispatchHelper';
+import type { LeadDispatchSummary } from '../../services/dispatchHelper';
+import type { Lead, Quotation, OrderConfirmation, Profile, ClientDocument, ClientRegistration, InstallationPhoto, ReleaseDocument, QuotationItem, PaymentInstallment, Product, Challan } from '../../types';
 import { Timeline } from '../../components/Pipeline/Timeline';
 import { SignatureCapture } from '../../components/Signature/SignatureCapture';
+import { LeadDispatchModal } from '../../components/Common/LeadDispatchModal';
 import { compressImage } from '../../services/imageCompressionService';
 import { uploadImageToFirebase, uploadPdfToFirebase, getFreshB2SignedUrl, getQuickB2Url } from '../../services/firebase';
 import { DcrDocument } from './DcrDocument';
@@ -27,7 +30,8 @@ import {
   Search, Plus, Camera, CheckSquare, UploadCloud,
   ChevronLeft, Trash2, Send, Star, FileCheck, CheckCircle, Compass, X, Eye, Download,
   CreditCard, Wallet, Edit3, MessageSquare, Bell, Flame, FileText,
-  BarChart3, FileSpreadsheet, Printer, Calendar, RotateCcw, Sparkles, Truck, AlertCircle
+  BarChart3, FileSpreadsheet, Printer, Calendar, RotateCcw, Sparkles, Truck, AlertCircle,
+  Layers, Sun, Zap
 } from 'lucide-react';
 import dayjs from 'dayjs';
 
@@ -60,6 +64,7 @@ export const formatCleanLeadDescription = (desc?: string): string => {
 };
 
 export const Leads: React.FC = () => {
+  const navigate = useNavigate();
   const { currentRole, currentUser } = useAuthStore();
   const [searchParams, setSearchParams] = useSearchParams();
   const [leads, setLeads] = useState<Lead[]>([]);
@@ -88,6 +93,13 @@ export const Leads: React.FC = () => {
     return 'all';
   });
   const [dispatchedLeadIds, setDispatchedLeadIds] = useState<Set<string>>(new Set());
+
+  // Lead Category-wise Dispatch and History Modal states
+  const [allChallans, setAllChallans] = useState<Challan[]>([]);
+  const [leadsDispatchMap, setLeadsDispatchMap] = useState<Record<string, LeadDispatchSummary>>({});
+  const [selectedLeadForDispatchModal, setSelectedLeadForDispatchModal] = useState<Lead | null>(null);
+  const [showLeadDispatchModal, setShowLeadDispatchModal] = useState(false);
+  const [leadQuotationsMap, setLeadQuotationsMap] = useState<Record<string, Quotation>>({});
 
   const handleSetRawFilter = (filter: 'all' | 'raw' | 'process_done_payment_pending' | 'advanced') => {
     setRawFilter(filter);
@@ -633,14 +645,32 @@ export const Leads: React.FC = () => {
     setLeads(filteredList);
 
     try {
-      const challans = await challanService.getChallans();
+      const [challans, allQuotes] = await Promise.all([
+        challanService.getChallans(),
+        quotationService.getAllQuotations().catch(() => [])
+      ]);
+      setAllChallans(challans);
+
+      const qMap: Record<string, Quotation> = {};
+      allQuotes.forEach(q => {
+        if (q.leadId && (!qMap[q.leadId] || (q.items && q.items.length > 0))) {
+          qMap[q.leadId] = q;
+        }
+      });
+      setLeadQuotationsMap(qMap);
+
+      const dMap = computeAllLeadsDispatchMap(challans, qMap);
+      setLeadsDispatchMap(dMap);
+
       const dispatchedIds = new Set<string>();
-      challans.forEach(c => {
-        if (c.leadId) dispatchedIds.add(c.leadId);
+      Object.keys(dMap).forEach(leadId => {
+        if (dMap[leadId].totalChallansCount > 0) {
+          dispatchedIds.add(leadId);
+        }
       });
       setDispatchedLeadIds(dispatchedIds);
     } catch (e) {
-      console.warn("Challans load error in Leads view:", e);
+      console.warn("Challans/Quotes load error in Leads view:", e);
     }
 
     const empList = await employeeService.getEmployees();
@@ -3777,16 +3807,97 @@ export const Leads: React.FC = () => {
                                   <span>{isHot ? 'HOT LEAD' : 'Mark Hot'}</span>
                                 </button>
 
-                                 {/* DISPATCHED Badge */}
-                                {dispatchedLeadIds.has(lead.id) && (
-                                  <span
-                                    className="px-2.5 py-0.5 rounded-full text-[10px] font-black flex items-center gap-1 bg-emerald-700 text-white border border-emerald-800 shadow-2xs"
-                                    title="Delivery Challan generated & Goods Dispatched for this lead"
-                                  >
-                                    <Truck className="w-3.5 h-3.5 text-white" />
-                                    <span>DISPATCHED</span>
-                                  </span>
-                                )}
+                                {/* Lead Category-wise Dispatch Badges with Date & Click-to-View History */}
+                                {(() => {
+                                  const dispatchSummary = leadsDispatchMap[lead.id];
+                                  if (!dispatchSummary || dispatchSummary.totalChallansCount === 0) return null;
+
+                                  if (dispatchSummary.isOverallDispatched) {
+                                    return (
+                                      <button
+                                        type="button"
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          setSelectedLeadForDispatchModal(lead);
+                                          setShowLeadDispatchModal(true);
+                                        }}
+                                        className="px-2.5 py-0.5 rounded-full text-[10px] font-black flex items-center gap-1 bg-emerald-700 hover:bg-emerald-800 text-white border border-emerald-800 shadow-2xs transition-all cursor-pointer"
+                                        title={`Overall Goods & System Dispatched on ${dispatchSummary.overallFormattedDate || 'site'}. Click to view date-wise dispatch history.`}
+                                      >
+                                        <Truck className="w-3.5 h-3.5 text-emerald-200" />
+                                        <span>OVERALL DISPATCHED • {dispatchSummary.overallFormattedDate}</span>
+                                      </button>
+                                    );
+                                  }
+
+                                  return (
+                                    <div className="flex items-center gap-1 flex-wrap">
+                                      {dispatchSummary.hasStructure && (
+                                        <button
+                                          type="button"
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            setSelectedLeadForDispatchModal(lead);
+                                            setShowLeadDispatchModal(true);
+                                          }}
+                                          className="px-2.5 py-0.5 rounded-full text-[10px] font-black flex items-center gap-1 bg-amber-100 hover:bg-amber-200 text-amber-900 border border-amber-300 shadow-2xs transition-all cursor-pointer"
+                                          title={`Structure Dispatched on ${dispatchSummary.structureFormattedDate}. Click to view date-wise dispatch history.`}
+                                        >
+                                          <Layers className="w-3.5 h-3.5 text-amber-700" />
+                                          <span>Structure Dispatched • {dispatchSummary.structureFormattedDate}</span>
+                                        </button>
+                                      )}
+
+                                      {dispatchSummary.hasInverter && (
+                                        <button
+                                          type="button"
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            setSelectedLeadForDispatchModal(lead);
+                                            setShowLeadDispatchModal(true);
+                                          }}
+                                          className="px-2.5 py-0.5 rounded-full text-[10px] font-black flex items-center gap-1 bg-indigo-100 hover:bg-indigo-200 text-indigo-900 border border-indigo-300 shadow-2xs transition-all cursor-pointer"
+                                          title={`Inverter Dispatched on ${dispatchSummary.inverterFormattedDate}. Click to view date-wise dispatch history.`}
+                                        >
+                                          <Zap className="w-3.5 h-3.5 text-indigo-700" />
+                                          <span>Inverter Dispatched • {dispatchSummary.inverterFormattedDate}</span>
+                                        </button>
+                                      )}
+
+                                      {dispatchSummary.hasSystem && (
+                                        <button
+                                          type="button"
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            setSelectedLeadForDispatchModal(lead);
+                                            setShowLeadDispatchModal(true);
+                                          }}
+                                          className="px-2.5 py-0.5 rounded-full text-[10px] font-black flex items-center gap-1 bg-emerald-100 hover:bg-emerald-200 text-emerald-900 border border-emerald-300 shadow-2xs transition-all cursor-pointer"
+                                          title={`Solar System / Panels Dispatched on ${dispatchSummary.systemFormattedDate}. Click to view date-wise dispatch history.`}
+                                        >
+                                          <Sun className="w-3.5 h-3.5 text-emerald-700" />
+                                          <span>System Dispatched • {dispatchSummary.systemFormattedDate}</span>
+                                        </button>
+                                      )}
+
+                                      {!dispatchSummary.hasStructure && !dispatchSummary.hasInverter && !dispatchSummary.hasSystem && (
+                                        <button
+                                          type="button"
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            setSelectedLeadForDispatchModal(lead);
+                                            setShowLeadDispatchModal(true);
+                                          }}
+                                          className="px-2.5 py-0.5 rounded-full text-[10px] font-black flex items-center gap-1 bg-slate-100 hover:bg-slate-200 text-slate-800 border border-slate-300 shadow-2xs transition-all cursor-pointer"
+                                          title={`Delivery Challan generated on ${dispatchSummary.overallFormattedDate}. Click to view date-wise dispatch history.`}
+                                        >
+                                          <Truck className="w-3.5 h-3.5 text-slate-600" />
+                                          <span>Dispatched ({dispatchSummary.totalChallansCount}) • {dispatchSummary.overallFormattedDate}</span>
+                                        </button>
+                                      )}
+                                    </div>
+                                  );
+                                })()}
 
                                 {/* RAW LEAD Badge */}
                                 {(lead.status === 'new' || lead.status === 'quotation_sent') && !dispatchedLeadIds.has(lead.id) && (
@@ -4856,6 +4967,34 @@ export const Leads: React.FC = () => {
           <div className="w-5 h-5 border-2 border-emerald-400 border-t-transparent rounded-full animate-spin shrink-0" />
           <span>{pdfLoadingMsg}</span>
         </div>
+      )}
+
+      {/* Date-wise Lead Dispatch History Modal */}
+      {selectedLeadForDispatchModal && (
+        <LeadDispatchModal
+          isOpen={showLeadDispatchModal}
+          onClose={() => {
+            setShowLeadDispatchModal(false);
+            setSelectedLeadForDispatchModal(null);
+          }}
+          lead={selectedLeadForDispatchModal}
+          summary={
+            leadsDispatchMap[selectedLeadForDispatchModal.id] ||
+            computeLeadDispatchSummary(
+              selectedLeadForDispatchModal.id,
+              allChallans,
+              leadQuotationsMap[selectedLeadForDispatchModal.id]
+            )
+          }
+          quotation={leadQuotationsMap[selectedLeadForDispatchModal.id]}
+          onCreateChallanClick={(lead) => {
+            setShowLeadDispatchModal(false);
+            setSelectedLeadForDispatchModal(null);
+            navigate('/admin/challans', {
+              state: { prefillLeadId: lead.id, prefillLead: lead }
+            });
+          }}
+        />
       )}
     </div>
   );

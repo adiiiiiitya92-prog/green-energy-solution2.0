@@ -1,12 +1,13 @@
 import React, { useEffect, useState } from 'react';
-import type { Lead, Quotation, OrderConfirmation, ClientDocument, ClientRegistration, InstallationPhoto, ReleaseDocument, FieldVisitReport } from '../../types';
+import type { Lead, Quotation, OrderConfirmation, ClientDocument, ClientRegistration, InstallationPhoto, ReleaseDocument, FieldVisitReport, Challan } from '../../types';
 import { quotationService } from '../../services/quotationService';
 import { orderService } from '../../services/orderService';
 import { visitService } from '../../services/visitService';
+import { challanService } from '../../services/challanService';
 import { employeeService } from '../../services/employeeService';
 import { getFreshB2SignedUrl, getQuickB2Url } from '../../services/firebase';
 import dayjs from 'dayjs';
-import { Eye, Download, X, Trash2, Compass } from 'lucide-react';
+import { Eye, Download, X, Trash2, Compass, Truck } from 'lucide-react';
 
 interface TimelineProps {
   lead: Lead;
@@ -20,6 +21,7 @@ export const Timeline: React.FC<TimelineProps> = ({ lead }) => {
   const [photos, setPhotos] = useState<InstallationPhoto[]>([]);
   const [release, setRelease] = useState<ReleaseDocument[]>([]);
   const [visits, setVisits] = useState<FieldVisitReport[]>([]);
+  const [challans, setChallans] = useState<Challan[]>([]);
   const [profiles, setProfiles] = useState<Record<string, string>>({});
   const [previewItem, setPreviewItem] = useState<{ url: string; title: string } | null>(null);
 
@@ -43,6 +45,10 @@ export const Timeline: React.FC<TimelineProps> = ({ lead }) => {
     setRelease(relList);
 
     const visitList = await visitService.getVisitReportsByLead(lead.id);
+    setVisits(visitList);
+
+    const chList = await challanService.getChallansByLeadId(lead.id);
+    setChallans(chList);
     setVisits(visitList);
 
     const users = await employeeService.getAllProfiles();
@@ -495,6 +501,55 @@ export const Timeline: React.FC<TimelineProps> = ({ lead }) => {
                   </div>
                 );
               })}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Delivery Challans / Dispatched Goods Stage */}
+      {challans.length > 0 && (
+        <div className="relative">
+          <div className="absolute -left-[31px] top-1 bg-emerald-700 text-white rounded-full p-1.5 shadow-sm border border-white">
+            <Truck className="w-3.5 h-3.5" />
+          </div>
+          <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-xs hover:shadow-sm transition-shadow space-y-3">
+            <div className="flex items-center justify-between">
+              <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-bold bg-emerald-100 text-emerald-800">
+                🚚 Delivery Challans & Goods Dispatched ({challans.length})
+              </span>
+              <span className="text-[10px] text-slate-400 font-bold">
+                Latest: {dayjs(challans[challans.length - 1].createdAt).format('DD MMM YYYY')}
+              </span>
+            </div>
+
+            <div className="space-y-2.5">
+              {challans.map((ch) => (
+                <div key={ch.id} className="p-3 bg-slate-50 rounded-xl border border-slate-200/80 space-y-2 text-xs">
+                  <div className="flex flex-wrap items-center justify-between gap-1 border-b border-slate-200/60 pb-1.5">
+                    <span className="font-extrabold text-slate-900">Challan #{ch.challanNumber}</span>
+                    <span className="text-[10px] text-slate-500 font-semibold">{formatDate(ch.createdAt)}</span>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-2 text-[11px] text-slate-600 font-medium">
+                    <div>🚛 <strong>Vehicle:</strong> {ch.vehicleNumber}</div>
+                    <div>👤 <strong>Driver:</strong> {ch.driverName} ({ch.driverPhone})</div>
+                  </div>
+
+                  {ch.items && ch.items.length > 0 && (
+                    <div className="bg-white p-2 rounded-lg border border-slate-200/60">
+                      <span className="text-[10px] uppercase font-bold text-slate-400 block mb-1">Dispatched Items ({ch.items.length}):</span>
+                      <ul className="divide-y divide-slate-100 text-[11px]">
+                        {ch.items.map((it, idx) => (
+                          <li key={idx} className="py-1 flex justify-between items-center">
+                            <span className="font-semibold text-slate-800">{it.productName}</span>
+                            <span className="font-bold text-emerald-700">{it.qty} {it.unit || 'Nos'}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                </div>
+              ))}
             </div>
           </div>
         </div>

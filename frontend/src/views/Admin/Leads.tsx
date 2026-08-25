@@ -4038,6 +4038,41 @@ export const Leads: React.FC = () => {
                                   ₹{fin.pendingBalance.toLocaleString('en-IN')}
                                 </span>
                               </div>
+
+                              {/* Front Page Direct WhatsApp Payment Reminder Button */}
+                              {fin.pendingBalance > 0 && lead.phoneNumber && (
+                                <div className="pt-2 border-t border-slate-800 flex items-center justify-between gap-2">
+                                  <span className="text-[10px] text-amber-300/90 font-bold flex items-center gap-1">
+                                    <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse"></span>
+                                    <span>Reminder:</span>
+                                  </span>
+                                  <a
+                                    href={`https://api.whatsapp.com/send?phone=${getCleanWhatsAppPhone(lead.phoneNumber)}&text=${encodeURIComponent(
+                                      `Dear ${lead.name},\n\nGreetings from *Green Energy Solution*! ☀️\n\nThis is a polite payment reminder regarding your Solar Rooftop Order (${formatCleanLeadRequirement(lead.requirement)}):\n\n📌 *Total Contract Amount:* ₹${fin.totalValue.toLocaleString('en-IN')}\n✅ *Total Amount Paid:* ₹${fin.paidAmount.toLocaleString('en-IN')}\n⚠️ *Remaining Balance Due:* ₹${fin.pendingBalance.toLocaleString('en-IN')}\n\nKindly clear the remaining payment of *₹${fin.pendingBalance.toLocaleString('en-IN')}* at your earliest convenience to avoid installation delays.\n\nThank you!\n*Green Energy Solution*`
+                                    )}`}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    onClick={(e) => e.stopPropagation()}
+                                    className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-500 active:scale-95 text-white font-bold text-[11px] rounded-lg shadow-xs flex items-center gap-1.5 transition-all cursor-pointer border border-emerald-500/40 hover:shadow-emerald-900/50 hover:shadow-md shrink-0"
+                                    title={`Send WhatsApp Payment Reminder (₹${fin.pendingBalance.toLocaleString('en-IN')} pending) to ${lead.name}`}
+                                  >
+                                    <MessageSquare className="w-3.5 h-3.5 text-white" />
+                                    <span>Send Payment Reminder</span>
+                                  </a>
+                                </div>
+                              )}
+
+                              {fin.pendingBalance <= 0 && fin.totalValue > 0 && (
+                                <div className="pt-1.5 border-t border-slate-800 flex items-center justify-between text-[10px] text-emerald-400 font-bold">
+                                  <span className="flex items-center gap-1">
+                                    <CheckCircle className="w-3.5 h-3.5 text-emerald-400" />
+                                    <span>Fully Paid & Cleared</span>
+                                  </span>
+                                  <span className="text-[9px] bg-emerald-950/80 border border-emerald-800 text-emerald-300 px-2 py-0.5 rounded-full">
+                                    100% Paid
+                                  </span>
+                                </div>
+                              )}
                             </div>
                           ) : (
                             <div className="mt-3 p-2 px-3 bg-slate-50 border border-slate-200 rounded-xl flex items-center justify-between text-[11px] font-semibold text-slate-400">

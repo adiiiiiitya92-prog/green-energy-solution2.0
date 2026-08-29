@@ -1,5 +1,5 @@
 import jsPDF from 'jspdf';
-import type { Lead, Quotation, OrderConfirmation } from '../types';
+import type { Lead, Quotation, OrderConfirmation, PaymentInstallment } from '../types';
 import dayjs from 'dayjs';
 import logoImg from '../assets/Green-Energy-Solution.png';
 import solarEngineerImg from '../assets/solar_engineer_installing.png';
@@ -1553,6 +1553,316 @@ export const pdfService = {
       doc.setTextColor(148, 163, 184);
       doc.text('(Digitally Verified & Confirmed)', 125, 208);
     }
+
+    return doc.output('blob');
+  },
+
+  /**
+   * Generates a dedicated, official individual Payment Receipt for any installment / payment transaction
+   */
+  async generatePaymentReceiptPDF(
+    oc: OrderConfirmation,
+    installment: PaymentInstallment,
+    lead: Lead,
+    creatorName: string = 'Green Energy Solution',
+    signatureUrl?: string
+  ): Promise<Blob> {
+    const doc = new jsPDF({
+      orientation: 'portrait',
+      unit: 'mm',
+      format: 'a4',
+      compress: true
+    });
+
+    const logoData = await getLogoBase64();
+    const stampData = await getStampBase64();
+    const emerald = [16, 185, 129];
+    const emeraldDark = [5, 150, 105];
+    const slateDark = [15, 23, 42];
+    const slateGray = [71, 85, 105];
+    const lightBg = [248, 250, 252];
+
+    // Top Header Banner
+    doc.setFillColor(slateDark[0], slateDark[1], slateDark[2]);
+    doc.rect(0, 0, 210, 36, 'F');
+
+    // Accent line
+    doc.setFillColor(emerald[0], emerald[1], emerald[2]);
+    doc.rect(0, 36, 210, 2.5, 'F');
+
+    // Company Logo / Title
+    if (logoData) {
+      doc.addImage(logoData, 'PNG', 14, 6, 56, 16);
+    } else {
+      doc.setTextColor(255, 255, 255);
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(18);
+      doc.text('GREEN ENERGY SOLUTION', 14, 18);
+    }
+
+    doc.setTextColor(emerald[0], emerald[1], emerald[2]);
+    doc.setFontSize(8);
+    doc.setFont('helvetica', 'bold');
+    doc.text('SOLAR POWER SYSTEMS • OFFICIAL PAYMENT RECEIPT', 14, 27);
+    doc.setFont('helvetica', 'normal');
+    doc.setTextColor(203, 213, 225);
+    doc.setFontSize(7.5);
+    doc.text('Ph: +91 91100 48809 • Email: info@greenenergysolution.in', 14, 32);
+
+    // Document Title & Meta Box (Right Side)
+    const receiptNo = `GES-REC-${dayjs(installment.paidAt || new Date()).format('YYYYMMDD')}-${String(installment.installmentNo || 1).padStart(2, '0')}`;
+    doc.setTextColor(255, 255, 255);
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(14);
+    doc.text('PAYMENT RECEIPT', 196, 14, { align: 'right' });
+
+    doc.setFontSize(9);
+    doc.setFont('helvetica', 'bold');
+    doc.setTextColor(emerald[0], emerald[1], emerald[2]);
+    doc.text(`RECEIPT NO: ${receiptNo}`, 196, 20, { align: 'right' });
+
+    doc.setFontSize(8);
+    doc.setFont('helvetica', 'normal');
+    doc.setTextColor(226, 232, 240);
+    doc.text(`Date: ${dayjs(installment.paidAt || new Date()).format('DD MMM YYYY, hh:mm A')}`, 196, 26, { align: 'right' });
+    doc.text(`Payment Mode: ${(installment.paymentMode || 'ONLINE').replace('_', ' ').toUpperCase()}`, 196, 31, { align: 'right' });
+
+    // Grid: Left Box = Customer Details, Right Box = Payment Details
+    const startY = 44;
+    const boxHeight = 40;
+
+    // Left Box: Customer Details
+    doc.setFillColor(lightBg[0], lightBg[1], lightBg[2]);
+    doc.setDrawColor(226, 232, 240);
+    doc.roundedRect(14, startY, 88, boxHeight, 3, 3, 'FD');
+
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(9.5);
+    doc.setTextColor(slateDark[0], slateDark[1], slateDark[2]);
+    doc.text('CUSTOMER / BILL TO', 19, startY + 7);
+
+    doc.setDrawColor(203, 213, 225);
+    doc.line(19, startY + 9, 97, startY + 9);
+
+    doc.setFontSize(8.5);
+    doc.setFont('helvetica', 'bold');
+    doc.text(`Name: ${lead.name || 'Valued Customer'}`, 19, startY + 15);
+    doc.setFont('helvetica', 'normal');
+    doc.setTextColor(slateGray[0], slateGray[1], slateGray[2]);
+    doc.text(`Phone: +91 ${lead.phoneNumber || 'N/A'}`, 19, startY + 21);
+    const addr = lead.address || lead.city || 'Installation Site';
+    doc.text(`Location: ${addr.length > 35 ? addr.substring(0, 35) + '...' : addr}`, 19, startY + 27);
+    doc.text(`Requirement: ${lead.requirement || 'Solar Rooftop System'}`, 19, startY + 33);
+
+    // Right Box: Payment Details
+    doc.setFillColor(lightBg[0], lightBg[1], lightBg[2]);
+    doc.setDrawColor(226, 232, 240);
+    doc.roundedRect(108, startY, 88, boxHeight, 3, 3, 'FD');
+
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(9.5);
+    doc.setTextColor(slateDark[0], slateDark[1], slateDark[2]);
+    doc.text('PAYMENT DETAILS', 113, startY + 7);
+
+    doc.setDrawColor(203, 213, 225);
+    doc.line(113, startY + 9, 191, startY + 9);
+
+    doc.setFontSize(8.5);
+    doc.setFont('helvetica', 'bold');
+    doc.setTextColor(slateDark[0], slateDark[1], slateDark[2]);
+    doc.text(`Installment: ${installment.label || `Installment #${installment.installmentNo}`}`, 113, startY + 15);
+    doc.setFont('helvetica', 'normal');
+    doc.setTextColor(slateGray[0], slateGray[1], slateGray[2]);
+    doc.text(`Payment Mode: ${(installment.paymentMode || 'CASH').replace('_', ' ').toUpperCase()}`, 113, startY + 21);
+    doc.text(`Ref / UTR No: ${installment.paymentReference || 'N/A'}`, 113, startY + 27);
+    doc.text(`Status: RECEIVED & REALIZED`, 113, startY + 33);
+
+    // AMOUNT RECEIVED HERO CARD
+    const heroY = startY + boxHeight + 6;
+    doc.setFillColor(240, 253, 244); // emerald-50
+    doc.setDrawColor(110, 231, 183); // emerald-300
+    doc.roundedRect(14, heroY, 182, 26, 3, 3, 'FD');
+
+    doc.setTextColor(emeraldDark[0], emeraldDark[1], emeraldDark[2]);
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(9);
+    doc.text('AMOUNT RECEIVED IN THIS RECEIPT', 20, heroY + 7);
+
+    doc.setFontSize(15);
+    doc.setTextColor(15, 23, 42);
+    doc.text(`INR ${(installment.amount || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, 20, heroY + 14.5);
+
+    doc.setFontSize(8);
+    doc.setFont('helvetica', 'italic');
+    doc.setTextColor(slateGray[0], slateGray[1], slateGray[2]);
+    const words = numberToWordsINR(installment.amount || 0);
+    doc.text(`Amount in Words: Rupees ${words} Only`, 20, heroY + 20.5);
+
+    if (installment.notes) {
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(7.5);
+      doc.setTextColor(100, 116, 139);
+      doc.text(`Notes / Remarks: ${installment.notes}`, 20, heroY + 24.5);
+    }
+
+    // PROJECT & ACCOUNT STATEMENT BREAKDOWN TABLE
+    const statementY = heroY + 31;
+    const subtotal = oc.subtotal || (oc.itemsConfirmed || []).reduce((s: number, it: any) => s + (it.amount || 0), 0) || installment.amount;
+    const allPayments = oc.payments && oc.payments.length > 0 ? oc.payments : [installment];
+
+    // Find index of current installment
+    const currentIdx = allPayments.findIndex((p: any) => p.id === installment.id || (p.installmentNo === installment.installmentNo && p.amount === installment.amount));
+    const safeIdx = currentIdx >= 0 ? currentIdx : allPayments.length - 1;
+    const priorPayments = allPayments.slice(0, safeIdx);
+    const priorPaid = priorPayments.reduce((s: number, p: any) => s + (p.amount || 0), 0);
+    const cumulativePaid = priorPaid + installment.amount;
+    const balanceRemaining = Math.max(0, subtotal - cumulativePaid);
+
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(9.5);
+    doc.setTextColor(slateDark[0], slateDark[1], slateDark[2]);
+    doc.text('PROJECT ACCOUNT & PAYMENT LEDGER SUMMARY', 14, statementY);
+
+    // Table Header
+    const thY = statementY + 3.5;
+    doc.setFillColor(slateDark[0], slateDark[1], slateDark[2]);
+    doc.rect(14, thY, 182, 6.5, 'F');
+    doc.setTextColor(255, 255, 255);
+    doc.setFontSize(8);
+    doc.setFont('helvetica', 'bold');
+    doc.text('LEDGER DESCRIPTION', 18, thY + 4.5);
+    doc.text('AMOUNT (INR)', 192, thY + 4.5, { align: 'right' });
+
+    // Table Rows
+    const rows = [
+      { label: 'Total Solar Project / Contract Value', val: `Rs. ${subtotal.toLocaleString('en-IN', { minimumFractionDigits: 2 })}`, bold: false, highlight: false, isBal: false },
+      { label: 'Amount Paid Prior to this Installment', val: `Rs. ${priorPaid.toLocaleString('en-IN', { minimumFractionDigits: 2 })}`, bold: false, highlight: false, isBal: false },
+      { label: `Current Receipt (${installment.label || `Installment #${installment.installmentNo}`})`, val: `Rs. ${(installment.amount || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}`, bold: true, highlight: true, isBal: false },
+      { label: 'Total Cumulative Paid Till Date', val: `Rs. ${cumulativePaid.toLocaleString('en-IN', { minimumFractionDigits: 2 })}`, bold: true, highlight: false, isBal: false },
+      { label: 'Remaining Balance Due', val: balanceRemaining <= 0 ? 'Rs. 0.00 (Fully Settled ✓)' : `Rs. ${balanceRemaining.toLocaleString('en-IN', { minimumFractionDigits: 2 })}`, bold: true, highlight: false, isBal: true }
+    ];
+
+    let rowY = thY + 6.5;
+    rows.forEach((r, idx) => {
+      if (r.highlight) {
+        doc.setFillColor(240, 253, 244);
+        doc.rect(14, rowY, 182, 6, 'F');
+      } else if (idx % 2 === 1) {
+        doc.setFillColor(248, 250, 252);
+        doc.rect(14, rowY, 182, 6, 'F');
+      }
+      doc.setDrawColor(226, 232, 240);
+      doc.rect(14, rowY, 182, 6, 'D');
+
+      doc.setFont('helvetica', r.bold ? 'bold' : 'normal');
+      doc.setFontSize(8);
+      if (r.isBal && balanceRemaining > 0) {
+        doc.setTextColor(180, 83, 9); // amber-700
+      } else if (r.isBal && balanceRemaining <= 0) {
+        doc.setTextColor(5, 150, 105); // emerald-600
+      } else if (r.highlight) {
+        doc.setTextColor(5, 150, 105);
+      } else {
+        doc.setTextColor(slateDark[0], slateDark[1], slateDark[2]);
+      }
+      doc.text(r.label, 18, rowY + 4.2);
+      doc.text(r.val, 192, rowY + 4.2, { align: 'right' });
+      rowY += 6;
+    });
+
+    // Confirmed Items / Scope Summary (if available)
+    if (oc.itemsConfirmed && oc.itemsConfirmed.length > 0) {
+      rowY += 4;
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(8.5);
+      doc.setTextColor(slateDark[0], slateDark[1], slateDark[2]);
+      doc.text('PROJECT SCOPE / SYSTEM SPECIFICATIONS', 14, rowY);
+      rowY += 2.5;
+
+      doc.setFillColor(241, 245, 249);
+      doc.rect(14, rowY, 182, 5, 'F');
+      doc.setTextColor(71, 85, 105);
+      doc.setFontSize(7.5);
+      doc.text('ITEM / COMPONENT', 18, rowY + 3.5);
+      doc.text('QTY', 145, rowY + 3.5, { align: 'center' });
+      doc.text('AMOUNT', 192, rowY + 3.5, { align: 'right' });
+      rowY += 5;
+
+      oc.itemsConfirmed.slice(0, 3).forEach((item: any) => {
+        doc.setDrawColor(241, 245, 249);
+        doc.rect(14, rowY, 182, 5, 'D');
+        doc.setFont('helvetica', 'normal');
+        doc.setFontSize(7.5);
+        doc.setTextColor(slateDark[0], slateDark[1], slateDark[2]);
+        const itName = item.name || item.description || 'Solar Component';
+        doc.text(itName.length > 60 ? itName.substring(0, 60) + '...' : itName, 18, rowY + 3.5);
+        doc.text(String(item.quantity || 1), 145, rowY + 3.5, { align: 'center' });
+        doc.text(`Rs. ${(item.amount || item.rate || 0).toLocaleString('en-IN')}`, 192, rowY + 3.5, { align: 'right' });
+        rowY += 5;
+      });
+    }
+
+    // SIGNATURES & STAMPS
+    const signY = Math.max(rowY + 5, 230);
+
+    // Left: Client Acknowledgement
+    doc.setDrawColor(226, 232, 240);
+    doc.setFillColor(248, 250, 252);
+    doc.roundedRect(14, signY, 88, 28, 2, 2, 'FD');
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(8);
+    doc.setTextColor(slateDark[0], slateDark[1], slateDark[2]);
+    doc.text('Customer Signature / Acknowledgement:', 18, signY + 5.5);
+
+    const clientSigData = await convertImageToBase64(signatureUrl || oc.clientSignatureBlob);
+    if (clientSigData) {
+      try {
+        const fmt = (clientSigData.includes('image/jpeg') || clientSigData.includes('image/jpg')) ? 'JPEG' : 'PNG';
+        doc.addImage(clientSigData, fmt, 20, signY + 7.5, 55, 17);
+      } catch (e) {
+        console.warn("Client sig add note:", e);
+      }
+    } else {
+      doc.setFont('helvetica', 'italic');
+      doc.setFontSize(7.5);
+      doc.setTextColor(148, 163, 184);
+      doc.text('(Payment Authorized & Recorded Electronically)', 18, signY + 16);
+    }
+
+    // Right: Authorized Signatory & Official Stamp
+    doc.setFillColor(248, 250, 252);
+    doc.roundedRect(108, signY, 88, 28, 2, 2, 'FD');
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(8);
+    doc.setTextColor(slateDark[0], slateDark[1], slateDark[2]);
+    doc.text('For GREEN ENERGY SOLUTION:', 112, signY + 5.5);
+
+    if (stampData) {
+      try {
+        doc.addImage(stampData, 'PNG', 112, signY + 7, 25, 19);
+      } catch (e) {
+        console.warn("Stamp add note:", e);
+      }
+    }
+
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(7.5);
+    doc.setTextColor(slateGray[0], slateGray[1], slateGray[2]);
+    doc.text(`Authorized Signatory: ${creatorName || 'Green Energy Solution'}`, 140, signY + 14);
+    doc.setFont('helvetica', 'italic');
+    doc.setFontSize(7);
+    doc.text('Official Seal & Verification', 140, signY + 20);
+
+    // Terms & Conditions Footer Note
+    const footerY = signY + 32;
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(6.8);
+    doc.setTextColor(148, 163, 184);
+    doc.text('Terms: 1. This is a computer-generated official payment receipt. 2. Cheque/Online transfers are subject to bank realization. 3. Please retain this receipt for warranty and future service reference.', 14, footerY);
+
+    // Bottom Decorative Bar
+    doc.setFillColor(emerald[0], emerald[1], emerald[2]);
+    doc.rect(0, 292, 210, 5, 'F');
 
     return doc.output('blob');
   },

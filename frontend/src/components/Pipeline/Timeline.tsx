@@ -5,6 +5,7 @@ import { orderService } from '../../services/orderService';
 import { visitService } from '../../services/visitService';
 import { challanService } from '../../services/challanService';
 import { employeeService } from '../../services/employeeService';
+import { pdfService } from '../../services/pdfService';
 import { getFreshB2SignedUrl, getQuickB2Url } from '../../services/firebase';
 import dayjs from 'dayjs';
 import { Eye, Download, X, Trash2, Compass, Truck } from 'lucide-react';
@@ -330,21 +331,68 @@ export const Timeline: React.FC<TimelineProps> = ({ lead }) => {
 
               {/* Installment History Stepper List */}
               {paymentsList.length > 0 ? (
-                <div className="space-y-2 mt-3 bg-slate-50 p-2.5 rounded-lg border border-slate-200/80">
+                <div className="space-y-2 mt-3 bg-slate-50 p-2.5 rounded-xl border border-slate-200/80">
                   <span className="text-[10px] uppercase font-bold text-slate-500 block mb-1">
                     Recorded Payment Installments ({paymentsList.length})
                   </span>
                   {paymentsList.map((p, idx) => (
-                    <div key={p.id || idx} className="flex items-center justify-between text-xs py-1 border-b border-slate-200/60 last:border-0">
+                    <div key={p.id || idx} className="flex flex-col sm:flex-row sm:items-center justify-between text-xs py-2 border-b border-slate-200/60 last:border-0 gap-2">
                       <div>
-                        <span className="font-bold text-slate-800">✓ {p.label || `${idx + 1}st Payment`}</span>
-                        <span className="text-[10px] text-slate-500 block">
-                          {p.paymentMode?.replace('_', ' ').toUpperCase()} {p.paymentReference ? `(Ref: ${p.paymentReference})` : ''}
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <span className="font-bold text-slate-800">✓ {p.label || `${idx + 1}st Payment`}</span>
+                          <span className="text-[9px] bg-slate-200 text-slate-700 px-1.5 py-0.5 rounded font-bold uppercase">
+                            {p.paymentMode?.replace('_', ' ')}
+                          </span>
+                        </div>
+                        <span className="text-[10px] text-slate-500 block mt-0.5">
+                          {dayjs(p.paidAt).format('DD MMM YYYY, hh:mm A')} {p.paymentReference ? `• Ref: ${p.paymentReference}` : ''}
                         </span>
                       </div>
-                      <div className="text-right">
+                      <div className="flex items-center justify-between sm:justify-end gap-2.5">
                         <span className="font-black text-emerald-700 block">₹{p.amount.toLocaleString('en-IN')}</span>
-                        <span className="text-[9px] text-slate-400 block">{dayjs(p.paidAt).format('DD MMM YYYY, hh:mm A')}</span>
+                        <div className="flex items-center gap-1">
+                          <button
+                            type="button"
+                            onClick={async () => {
+                              try {
+                                const blob = await pdfService.generatePaymentReceiptPDF(
+                                  confirmation,
+                                  p,
+                                  lead,
+                                  profiles[confirmation.createdBy] || 'Green Energy Solution'
+                                );
+                                handleViewPreview(blob, `Payment Receipt - ${p.label || `Payment #${idx + 1}`} - ${lead.name}`);
+                              } catch (e) {
+                                alert('Error generating receipt preview.');
+                              }
+                            }}
+                            className="px-2 py-1 bg-white hover:bg-slate-100 text-slate-700 border border-slate-200 rounded-md text-[10px] font-bold flex items-center gap-1 cursor-pointer transition-colors"
+                            title="Preview Receipt"
+                          >
+                            <Eye className="w-3 h-3 text-slate-500" />
+                            <span>Receipt</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={async () => {
+                              try {
+                                const blob = await pdfService.generatePaymentReceiptPDF(
+                                  confirmation,
+                                  p,
+                                  lead,
+                                  profiles[confirmation.createdBy] || 'Green Energy Solution'
+                                );
+                                handleDownloadFile(blob, `Payment_Receipt_${(p.label || `Payment_${idx + 1}`).replace(/\s+/g, '_')}_${lead.name.replace(/\s+/g, '_')}.pdf`);
+                              } catch (e) {
+                                alert('Error downloading receipt.');
+                              }
+                            }}
+                            className="p-1 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 rounded-md text-[10px] font-bold flex items-center gap-1 cursor-pointer transition-colors"
+                            title="Download Receipt"
+                          >
+                            <Download className="w-3 h-3 text-emerald-700" />
+                          </button>
+                        </div>
                       </div>
                     </div>
                   ))}

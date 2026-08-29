@@ -342,6 +342,14 @@ export const Leads: React.FC = () => {
   const [subsequentReference, setSubsequentReference] = useState<string>('');
   const [subsequentNotes, setSubsequentNotes] = useState<string>('');
   const [isRecordingPayment, setIsRecordingPayment] = useState<boolean>(false);
+  const [receiptPreviewState, setReceiptPreviewState] = useState<{
+    isOpen: boolean;
+    title: string;
+    pdfBlob?: Blob;
+    pdfUrl?: string;
+    fileName: string;
+    isLoading?: boolean;
+  } | null>(null);
 
   // KYC Document Slots States
   const [kycDocs, setKycDocs] = useState<ClientDocument[]>([]);
@@ -1164,14 +1172,41 @@ export const Leads: React.FC = () => {
       }
 
       // Fast synchronous receipt PDF generation (~20ms)
+      const sigUrlToUse = signatureUrl || sigUrl || (typeof signatureBlob === 'string' ? signatureBlob : '');
       const pdfBlob = await pdfService.generateConfirmationPDF(
         ocDraft as any,
         selectedLead,
         currentUser?.fullName || 'Booking Manager',
-        signatureUrl || sigUrl || (typeof signatureBlob === 'string' ? signatureBlob : '')
+        sigUrlToUse
       );
 
       const localPdfUrl = URL.createObjectURL(pdfBlob);
+
+      // Generate individual payment receipt for 1st Advance
+      try {
+        const firstReceiptBlob = await pdfService.generatePaymentReceiptPDF(
+          ocDraft as any,
+          initialPayment,
+          selectedLead,
+          currentUser?.fullName || 'Booking Manager',
+          sigUrlToUse
+        );
+        const localReceiptUrl = URL.createObjectURL(firstReceiptBlob);
+        initialPayment.receiptPdfUrl = localReceiptUrl;
+
+        uploadImageToFirebase(firstReceiptBlob, `orders/${selectedLead.id}/receipt_pay_1_${Date.now()}.pdf`).then(async (remoteUrl) => {
+          if (remoteUrl) {
+            initialPayment.receiptPdfUrl = remoteUrl;
+            const ocLatest = await orderService.getOrderConfirmationByLeadId(selectedLead.id);
+            if (ocLatest && ocLatest.payments && ocLatest.payments[0]) {
+              ocLatest.payments[0].receiptPdfUrl = remoteUrl;
+              await orderService.updateOrderConfirmation(ocLatest);
+            }
+          }
+        }).catch(e => console.warn('Payment 1 receipt upload note:', e));
+      } catch (rErr) {
+        console.warn('Initial receipt gen note:', rErr);
+      }
 
       if (existingOc) {
         const updatedOc: OrderConfirmation = {
@@ -1289,9 +1324,39 @@ export const Leads: React.FC = () => {
         payments: updatedPayments
       };
 
-      // Fast synchronous receipt PDF generation (~20ms)
+      const sigUrl = signatureUrl || (typeof existingOc.clientSignatureBlob === 'string' ? existingOc.clientSignatureBlob : '');
+
+      // Generate individual payment receipt for this specific installment
       try {
-        const sigUrl = signatureUrl || (typeof existingOc.clientSignatureBlob === 'string' ? existingOc.clientSignatureBlob : '');
+        const receiptBlob = await pdfService.generatePaymentReceiptPDF(
+          updatedOc,
+          newPayment,
+          selectedLead,
+          currentUser?.fullName || 'Booking Manager',
+          sigUrl
+        );
+        const localReceiptUrl = URL.createObjectURL(receiptBlob);
+        newPayment.receiptPdfUrl = localReceiptUrl;
+
+        uploadImageToFirebase(receiptBlob, `orders/${selectedLead.id}/receipt_pay_${nextNo}_${Date.now()}.pdf`).then(async (remoteUrl) => {
+          if (remoteUrl) {
+            newPayment.receiptPdfUrl = remoteUrl;
+            const ocLatest = await orderService.getOrderConfirmationByLeadId(selectedLead.id);
+            if (ocLatest && ocLatest.payments) {
+              const pIdx = ocLatest.payments.findIndex(p => p.id === newPayment.id);
+              if (pIdx >= 0) {
+                ocLatest.payments[pIdx].receiptPdfUrl = remoteUrl;
+                await orderService.updateOrderConfirmation(ocLatest);
+              }
+            }
+          }
+        }).catch(e => console.warn('Payment installment receipt upload note:', e));
+      } catch (rErr) {
+        console.warn('Installment receipt gen note:', rErr);
+      }
+
+      // Fast synchronous overall receipt PDF generation (~20ms)
+      try {
         const pdfBlob = await pdfService.generateConfirmationPDF(
           updatedOc,
           selectedLead,
@@ -1334,6 +1399,137 @@ export const Leads: React.FC = () => {
       alert('Error recording payment installment.');
     } finally {
       setIsRecordingPayment(false);
+    }
+  };
+
+  // Individual Receipt Handlers (Preview, Download, WhatsApp Share)
+  const handlePreviewInstallmentReceipt = async (installment: PaymentInstallment) => {
+    if (!selectedLead || !existingOc) return;
+    try {
+      setReceiptPreviewState({
+        isOpen: true,
+        title: `Payment Receipt #${installment.installmentNo} - ${selectedLead.name}`,
+        pdfUrl: '',
+        fileName: `Payment_Receipt_${(installment.label || `Installment_${installment.installmentNo}`).replace(/\s+/g, '_')}_${selectedLead.name.replace(/\s+/g, '_')}.pdf`,
+        isLoading: true
+      });
+
+      const sigUrl = signatureUrl || (typeof existingOc.clientSignatureBlob === 'string' ? existingOc.clientSignatureBlob : '');
+      const blob = await pdfService.generatePaymentReceiptPDF(
+        existingOc,
+        installment,
+        selectedLead,
+        currentUser?.fullName || 'Booking Manager',
+        sigUrl
+      );
+      const localUrl = URL.createObjectURL(blob);
+      setReceiptPreviewState(prev => prev ? { ...prev, pdfBlob: blob, pdfUrl: localUrl, isLoading: false } : null);
+    } catch (err) {
+      console.error('Error generating installment receipt preview:', err);
+      alert('Failed to generate payment receipt preview.');
+      setReceiptPreviewState(null);
+    }
+  };
+
+  const handleDownloadInstallmentReceipt = async (installment: PaymentInstallment) => {
+    if (!selectedLead || !existingOc) return;
+    try {
+      const sigUrl = signatureUrl || (typeof existingOc.clientSignatureBlob === 'string' ? existingOc.clientSignatureBlob : '');
+      const blob = await pdfService.generatePaymentReceiptPDF(
+        existingOc,
+        installment,
+        selectedLead,
+        currentUser?.fullName || 'Booking Manager',
+        sigUrl
+      );
+      const localUrl = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = localUrl;
+      a.download = `Payment_Receipt_${(installment.label || `Installment_${installment.installmentNo}`).replace(/\s+/g, '_')}_${selectedLead.name.replace(/\s+/g, '_')}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(localUrl), 10000);
+    } catch (err) {
+      console.error('Error downloading installment receipt:', err);
+      alert('Failed to download payment receipt.');
+    }
+  };
+
+  const handleShareInstallmentReceiptWhatsApp = (installment: PaymentInstallment, idx: number) => {
+    if (!selectedLead || !existingOc) return;
+    const currentPayments = getPaymentsList(existingOc);
+    const subtotal = existingOc.subtotal || bookingItems.reduce((sum, item) => sum + item.amount, 0);
+    const paidTillThis = currentPayments.slice(0, idx + 1).reduce((s, p) => s + p.amount, 0);
+    const balAfter = Math.max(0, subtotal - paidTillThis);
+    const receiptNo = `GES-REC-${dayjs(installment.paidAt).format('YYYYMMDD')}-${String(installment.installmentNo || idx + 1).padStart(2, '0')}`;
+
+    const text = `*GREEN ENERGY SOLUTION* ☀️\n*Official Payment Receipt Confirmation*\n\n` +
+      `Dear *${selectedLead.name}*,\n` +
+      `Thank you for your payment. We have successfully received and acknowledged your transaction.\n\n` +
+      `📄 *Receipt No:* ${receiptNo}\n` +
+      `💰 *Amount Received:* ₹${(installment.amount || 0).toLocaleString('en-IN')}\n` +
+      `📌 *Installment:* ${installment.label || `Payment #${installment.installmentNo || idx + 1}`}\n` +
+      `💳 *Payment Mode:* ${(installment.paymentMode || 'ONLINE').replace('_', ' ').toUpperCase()}\n` +
+      (installment.paymentReference ? `🔢 *Ref / UTR No:* ${installment.paymentReference}\n` : '') +
+      `📅 *Payment Date:* ${dayjs(installment.paidAt).format('DD MMM YYYY, hh:mm A')}\n\n` +
+      `📊 *Project Account Summary:*\n` +
+      `• Total Contract Amount: ₹${subtotal.toLocaleString('en-IN')}\n` +
+      `• Total Paid Till Date: ₹${paidTillThis.toLocaleString('en-IN')}\n` +
+      `• Remaining Balance: ${balAfter <= 0 ? '₹0 (Fully Settled ✓)' : `₹${balAfter.toLocaleString('en-IN')}`}\n\n` +
+      `Thank you for choosing Green Energy Solution! 🌿\nFor any queries, please contact our support team.`;
+
+    window.open(`https://api.whatsapp.com/send?phone=${getCleanWhatsAppPhone(selectedLead.phoneNumber)}&text=${encodeURIComponent(text)}`, '_blank');
+  };
+
+  const handlePreviewOverallBookingConfirmation = async () => {
+    if (!selectedLead || !existingOc) return;
+    try {
+      setReceiptPreviewState({
+        isOpen: true,
+        title: `Order Booking Confirmation - ${selectedLead.name}`,
+        pdfUrl: '',
+        fileName: `Order_Confirmation_Receipt_${selectedLead.name.replace(/\s+/g, '_')}.pdf`,
+        isLoading: true
+      });
+
+      const sigUrl = signatureUrl || (typeof existingOc.clientSignatureBlob === 'string' ? existingOc.clientSignatureBlob : '');
+      const blob = await pdfService.generateConfirmationPDF(
+        existingOc,
+        selectedLead,
+        currentUser?.fullName || 'Booking Manager',
+        sigUrl
+      );
+      const localUrl = URL.createObjectURL(blob);
+      setReceiptPreviewState(prev => prev ? { ...prev, pdfBlob: blob, pdfUrl: localUrl, isLoading: false } : null);
+    } catch (err) {
+      console.error('Error generating booking receipt preview:', err);
+      alert('Failed to generate booking confirmation receipt.');
+      setReceiptPreviewState(null);
+    }
+  };
+
+  const handleDownloadOverallBookingConfirmation = async () => {
+    if (!selectedLead || !existingOc) return;
+    try {
+      const sigUrl = signatureUrl || (typeof existingOc.clientSignatureBlob === 'string' ? existingOc.clientSignatureBlob : '');
+      const blob = await pdfService.generateConfirmationPDF(
+        existingOc,
+        selectedLead,
+        currentUser?.fullName || 'Booking Manager',
+        sigUrl
+      );
+      const localUrl = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = localUrl;
+      a.download = `Order_Confirmation_Receipt_${selectedLead.name.replace(/\s+/g, '_')}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(localUrl), 10000);
+    } catch (err) {
+      console.error('Error downloading booking receipt:', err);
+      alert('Failed to download booking confirmation receipt.');
     }
   };
 
@@ -1994,51 +2190,126 @@ export const Leads: React.FC = () => {
 
                         {/* Payments Breakdown History List */}
                         <div className="space-y-3">
-                          <h4 className="text-xs font-bold text-slate-800 uppercase tracking-wider flex items-center justify-between">
-                            <span>Payment Installment History ({paymentsList.length})</span>
-                            {existingOc && typeof existingOc.confirmationPdfBlob === 'string' && (
-                              <a
-                                href={existingOc.confirmationPdfBlob}
-                                target="_blank"
-                                rel="noreferrer"
-                                className="text-[10px] text-violet-600 hover:text-violet-800 font-bold flex items-center gap-1 cursor-pointer"
-                              >
-                                <Download className="w-3 h-3" /> Latest Receipt PDF
-                              </a>
-                            )}
-                          </h4>
+                          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                            <div>
+                              <h4 className="text-xs font-bold text-slate-800 uppercase tracking-wider flex items-center gap-1.5">
+                                <Wallet className="w-3.5 h-3.5 text-emerald-600" />
+                                <span>Payment Installment History ({paymentsList.length})</span>
+                              </h4>
+                              <p className="text-[10px] text-slate-400 font-medium mt-0.5">Har payment installment ki separate official receipt preview, download aur WhatsApp share karein.</p>
+                            </div>
 
-                          <div className="border border-slate-200 rounded-xl overflow-hidden divide-y divide-slate-100">
+                            {existingOc && (
+                              <div className="flex items-center gap-1.5 flex-wrap">
+                                <button
+                                  type="button"
+                                  onClick={handlePreviewOverallBookingConfirmation}
+                                  className="px-2.5 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-[10px] font-bold flex items-center gap-1 cursor-pointer transition-all border border-slate-200"
+                                  title="Preview Order Booking Confirmation"
+                                >
+                                  <Eye className="w-3 h-3 text-slate-600" />
+                                  <span>Booking Receipt</span>
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={handleDownloadOverallBookingConfirmation}
+                                  className="px-2.5 py-1 bg-violet-50 hover:bg-violet-100 text-violet-700 rounded-lg text-[10px] font-bold flex items-center gap-1 cursor-pointer transition-all border border-violet-200"
+                                  title="Download Order Booking Confirmation PDF"
+                                >
+                                  <Download className="w-3 h-3 text-violet-600" />
+                                  <span>Download</span>
+                                </button>
+                              </div>
+                            )}
+                          </div>
+
+                          <div className="border border-slate-200 rounded-2xl overflow-hidden divide-y divide-slate-100 bg-white shadow-xs">
                             {paymentsList.map((pay, idx) => {
                               const paidTillThis = paymentsList.slice(0, idx + 1).reduce((s, p) => s + p.amount, 0);
                               const balAfter = Math.max(0, orderSubtotal - paidTillThis);
+                              const mode = pay.paymentMode || 'online';
+                              const modeBadgeStyle = 
+                                mode === 'cash' ? 'bg-amber-100 text-amber-800 border-amber-200' :
+                                mode === 'cheque' ? 'bg-purple-100 text-purple-800 border-purple-200' :
+                                mode === 'utr' ? 'bg-blue-100 text-blue-800 border-blue-200' :
+                                'bg-emerald-100 text-emerald-800 border-emerald-200';
 
                               return (
-                                <div key={pay.id || idx} className="p-3.5 bg-slate-50/50 hover:bg-slate-50 transition-colors flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                                  <div className="flex items-start gap-3">
-                                    <div className="w-8 h-8 rounded-lg bg-emerald-100 border border-emerald-200 text-emerald-800 flex items-center justify-center font-black text-xs shrink-0">
+                                <div key={pay.id || idx} className="p-4 bg-white hover:bg-slate-50/80 transition-colors flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+                                  <div className="flex items-start gap-3.5">
+                                    <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-emerald-500 to-teal-600 text-white flex items-center justify-center font-black text-xs shrink-0 shadow-xs">
                                       #{pay.installmentNo || idx + 1}
                                     </div>
-                                    <div>
-                                      <div className="flex items-center gap-2">
-                                        <span className="font-bold text-slate-900 text-xs">{pay.label || `${idx === 0 ? '1st Advance' : `${idx + 1}nd`} Payment`}</span>
-                                        <span className="px-2 py-0.5 rounded bg-slate-200/60 text-[9px] font-bold text-slate-700 uppercase">
-                                          {pay.paymentMode?.replace('_', ' ')}
+                                    <div className="space-y-1">
+                                      <div className="flex items-center gap-2 flex-wrap">
+                                        <span className="font-extrabold text-slate-900 text-xs">
+                                          {pay.label || `${idx === 0 ? '1st Advance' : `${idx + 1}nd`} Payment`}
+                                        </span>
+                                        <span className={`px-2 py-0.5 rounded-md text-[9px] font-extrabold uppercase border ${modeBadgeStyle}`}>
+                                          {mode.replace('_', ' ')}
+                                        </span>
+                                        <span className="text-[10px] text-slate-400 font-medium">
+                                          {dayjs(pay.paidAt).format('DD MMM YYYY, hh:mm A')}
                                         </span>
                                       </div>
-                                      <p className="text-[10px] text-slate-500 font-medium mt-0.5">
-                                        Paid on {dayjs(pay.paidAt).format('DD MMM YYYY, hh:mm A')}
-                                        {pay.paymentReference ? ` • Ref: ${pay.paymentReference}` : ''}
-                                      </p>
-                                      {pay.notes && <p className="text-[10px] text-slate-600 italic mt-0.5">"{pay.notes}"</p>}
+
+                                      <div className="flex items-center gap-3 text-[10px] text-slate-500 font-medium flex-wrap">
+                                        {pay.paymentReference && (
+                                          <span className="bg-slate-100 px-1.5 py-0.5 rounded text-slate-700 font-mono">
+                                            Ref / UTR: <strong className="text-slate-900">{pay.paymentReference}</strong>
+                                          </span>
+                                        )}
+                                        {pay.notes && (
+                                          <span className="italic text-slate-600">
+                                            "{pay.notes}"
+                                          </span>
+                                        )}
+                                      </div>
                                     </div>
                                   </div>
 
-                                  <div className="text-right shrink-0">
-                                    <span className="text-sm font-black text-emerald-700 block">₹{pay.amount.toLocaleString('en-IN')}</span>
-                                    <span className="text-[10px] text-slate-400 font-semibold block">
-                                      Remaining: ₹{balAfter.toLocaleString('en-IN')}
-                                    </span>
+                                  <div className="flex items-center justify-between lg:justify-end gap-4 border-t lg:border-t-0 pt-2.5 lg:pt-0 border-slate-100">
+                                    <div className="text-left lg:text-right">
+                                      <span className="text-sm font-black text-emerald-700 block">
+                                        ₹{pay.amount.toLocaleString('en-IN')}
+                                      </span>
+                                      <span className="text-[10px] text-slate-400 font-semibold block">
+                                        {balAfter <= 0 ? '✓ Order Settled' : `Bal: ₹${balAfter.toLocaleString('en-IN')}`}
+                                      </span>
+                                    </div>
+
+                                    {/* Action Buttons for this specific installment receipt */}
+                                    <div className="flex items-center gap-1.5 shrink-0">
+                                      <button
+                                        type="button"
+                                        onClick={() => handlePreviewInstallmentReceipt(pay)}
+                                        className="px-2.5 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-800 rounded-lg text-[10px] font-extrabold flex items-center gap-1 transition-all cursor-pointer border border-slate-200"
+                                        title={`Preview Receipt for ${pay.label || `Payment #${idx + 1}`}`}
+                                      >
+                                        <Eye className="w-3 h-3 text-slate-600" />
+                                        <span>Receipt</span>
+                                      </button>
+
+                                      <button
+                                        type="button"
+                                        onClick={() => handleDownloadInstallmentReceipt(pay)}
+                                        className="px-2.5 py-1.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 rounded-lg text-[10px] font-extrabold flex items-center gap-1 transition-all cursor-pointer border border-emerald-200"
+                                        title={`Download Receipt PDF for ${pay.label || `Payment #${idx + 1}`}`}
+                                      >
+                                        <Download className="w-3 h-3 text-emerald-700" />
+                                        <span className="hidden sm:inline">Download</span>
+                                      </button>
+
+                                      <button
+                                        type="button"
+                                        onClick={() => handleShareInstallmentReceiptWhatsApp(pay, idx)}
+                                        className="px-2.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-[10px] font-extrabold flex items-center gap-1 transition-all cursor-pointer shadow-xs"
+                                        title={`Share Receipt details on WhatsApp to ${selectedLead?.name}`}
+                                      >
+                                        <MessageSquare className="w-3 h-3" />
+                                        <span className="hidden sm:inline">WhatsApp</span>
+                                      </button>
+                                    </div>
                                   </div>
                                 </div>
                               );
@@ -5030,6 +5301,89 @@ export const Leads: React.FC = () => {
             });
           }}
         />
+      )}
+
+      {/* Official Payment Receipt Preview Modal */}
+      {receiptPreviewState?.isOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-950/80 backdrop-blur-sm animate-in fade-in duration-200">
+          <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-4xl max-h-[94vh] flex flex-col overflow-hidden">
+            {/* Modal Header */}
+            <div className="px-5 py-3.5 bg-slate-900 text-white flex items-center justify-between border-b border-slate-800 shrink-0">
+              <div className="flex items-center gap-2.5">
+                <div className="w-8 h-8 rounded-lg bg-emerald-500/20 text-emerald-400 flex items-center justify-center border border-emerald-500/30">
+                  <FileText className="w-4 h-4" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-white">{receiptPreviewState.title}</h3>
+                  <p className="text-[10px] text-slate-400">Green Energy Solution • Official Payment Receipt</p>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2">
+                {receiptPreviewState.pdfUrl && (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const printWin = window.open(receiptPreviewState.pdfUrl, '_blank');
+                        if (printWin) {
+                          printWin.focus();
+                        }
+                      }}
+                      className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer border border-slate-700"
+                      title="Print Receipt"
+                    >
+                      <Printer className="w-3.5 h-3.5" />
+                      <span className="hidden sm:inline">Print</span>
+                    </button>
+
+                    <a
+                      href={receiptPreviewState.pdfUrl}
+                      download={receiptPreviewState.fileName}
+                      className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-bold flex items-center gap-1.5 transition-colors cursor-pointer shadow-xs"
+                      title="Download Receipt PDF"
+                    >
+                      <Download className="w-3.5 h-3.5" />
+                      <span>Download PDF</span>
+                    </a>
+                  </>
+                )}
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (receiptPreviewState.pdfUrl) URL.revokeObjectURL(receiptPreviewState.pdfUrl);
+                    setReceiptPreviewState(null);
+                  }}
+                  className="p-1.5 text-slate-400 hover:text-white hover:bg-slate-800 rounded-lg transition-colors cursor-pointer"
+                  title="Close"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+            </div>
+
+            {/* Modal Body / PDF Viewer */}
+            <div className="flex-1 bg-slate-100 p-2 sm:p-4 overflow-auto flex items-center justify-center min-h-[480px]">
+              {receiptPreviewState.isLoading ? (
+                <div className="text-center py-16 space-y-3">
+                  <div className="w-10 h-10 border-3 border-emerald-600 border-t-transparent rounded-full animate-spin mx-auto" />
+                  <p className="text-xs font-bold text-slate-600">Generating Official Receipt PDF...</p>
+                </div>
+              ) : receiptPreviewState.pdfUrl ? (
+                <iframe
+                  src={receiptPreviewState.pdfUrl}
+                  title="Payment Receipt PDF Preview"
+                  className="w-full h-[70vh] rounded-xl shadow-md border border-slate-300 bg-white"
+                />
+              ) : (
+                <div className="text-center py-16 text-slate-500 text-xs font-semibold">
+                  Unable to load receipt preview. Please click download.
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

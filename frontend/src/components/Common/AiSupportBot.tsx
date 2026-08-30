@@ -12,12 +12,19 @@ import {
   ChevronDown,
   Sun,
   Copy,
-  Check
+  Check,
+  Move
 } from 'lucide-react';
 import { sendAiSupportMessage, type ChatMessage } from '../../services/aiChatService';
 import { useAuthStore } from '../../store/authStore';
 
 const STORAGE_KEY = 'green_energy_setu_ai_chat_history';
+const POSITION_STORAGE_KEY = 'green_energy_setu_ai_bot_position';
+
+interface Position {
+  x: number;
+  y: number;
+}
 
 const DEFAULT_SUGGESTIONS = [
   { text: '📊 Dashboard Live Summary', prompt: 'Mujhe abhi ke dashboard counts, total leads aur status breakdown batao.' },
@@ -43,6 +50,138 @@ export const AiSupportBot: React.FC = () => {
   const [isListening, setIsListening] = useState(false);
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [unreadNotification, setUnreadNotification] = useState(false);
+
+  // Draggable position state
+  const [position, setPosition] = useState<Position>(() => {
+    try {
+      const saved = localStorage.getItem(POSITION_STORAGE_KEY);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (typeof parsed.x === 'number' && typeof parsed.y === 'number') {
+          const maxX = Math.max(10, (typeof window !== 'undefined' ? window.innerWidth : 1000) - 70);
+          const maxY = Math.max(10, (typeof window !== 'undefined' ? window.innerHeight : 800) - 70);
+          return {
+            x: Math.min(Math.max(10, parsed.x), maxX),
+            y: Math.min(Math.max(10, parsed.y), maxY)
+          };
+        }
+      }
+    } catch (_) {}
+    const defaultX = typeof window !== 'undefined' ? Math.max(10, window.innerWidth - 75) : 20;
+    const defaultY = typeof window !== 'undefined' ? Math.max(10, window.innerHeight - 75) : 20;
+    return { x: defaultX, y: defaultY };
+  });
+
+  const [isDragging, setIsDragging] = useState(false);
+  const wasDraggingRef = useRef(false);
+  const pointerStartRef = useRef<{ startX: number; startY: number; posX: number; posY: number } | null>(null);
+
+  // Keep within bounds on window resize
+  useEffect(() => {
+    const handleResize = () => {
+      setPosition((prev) => {
+        const maxX = Math.max(10, window.innerWidth - 70);
+        const maxY = Math.max(10, window.innerHeight - 70);
+        return {
+          x: Math.min(Math.max(10, prev.x), maxX),
+          y: Math.min(Math.max(10, prev.y), maxY)
+        };
+      });
+    };
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
+
+  // Escape key to close
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && isOpen) {
+        setIsOpen(false);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isOpen]);
+
+  // Autofocus input on open
+  useEffect(() => {
+    if (isOpen) {
+      setTimeout(() => {
+        inputRef.current?.focus();
+      }, 150);
+    }
+  }, [isOpen]);
+
+  const handlePointerDown = (e: React.PointerEvent) => {
+    if (e.button !== 0) return;
+    pointerStartRef.current = {
+      startX: e.clientX,
+      startY: e.clientY,
+      posX: position.x,
+      posY: position.y
+    };
+    wasDraggingRef.current = false;
+  };
+
+  const handlePointerMove = (e: React.PointerEvent) => {
+    if (!pointerStartRef.current) return;
+    const deltaX = e.clientX - pointerStartRef.current.startX;
+    const deltaY = e.clientY - pointerStartRef.current.startY;
+    const dist = Math.hypot(deltaX, deltaY);
+
+    // Only initiate drag after moving > 6px
+    if (dist > 6) {
+      if (!wasDraggingRef.current) {
+        wasDraggingRef.current = true;
+        setIsDragging(true);
+        try {
+          (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+        } catch (_) {}
+      }
+
+      const maxX = Math.max(10, window.innerWidth - 70);
+      const maxY = Math.max(10, window.innerHeight - 70);
+      const nextX = Math.min(Math.max(10, pointerStartRef.current.posX + deltaX), maxX);
+      const nextY = Math.min(Math.max(10, pointerStartRef.current.posY + deltaY), maxY);
+      setPosition({ x: nextX, y: nextY });
+    }
+  };
+
+  const handlePointerUp = (e: React.PointerEvent) => {
+    if (!pointerStartRef.current) return;
+
+    try {
+      if ((e.currentTarget as HTMLElement).hasPointerCapture(e.pointerId)) {
+        (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId);
+      }
+    } catch (_) {}
+
+    if (wasDraggingRef.current) {
+      try {
+        localStorage.setItem(POSITION_STORAGE_KEY, JSON.stringify(position));
+      } catch (_) {}
+      // Keep wasDraggingRef true briefly so onClick is suppressed
+      setTimeout(() => {
+        wasDraggingRef.current = false;
+        setIsDragging(false);
+      }, 100);
+    } else {
+      setIsDragging(false);
+    }
+
+    pointerStartRef.current = null;
+  };
+
+  const handleToggleOpen = (e?: React.MouseEvent) => {
+    if (e) {
+      e.stopPropagation();
+    }
+    if (wasDraggingRef.current) {
+      return;
+    }
+    setIsOpen((prev) => !prev);
+    setUnreadNotification(false);
+  };
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -263,42 +402,108 @@ Aap mujhse neeche diye gaye topics par pooch sakte hain ya seedha apna sawal typ
     return formatted;
   };
 
+  const isNearLeft = position.x < 180;
+  const isNearTop = position.y < 120;
+
+  const getChatWindowStyle = (): React.CSSProperties => {
+    if (isExpanded) return {};
+    if (typeof window === 'undefined') return {};
+
+    if (window.innerWidth < 640) {
+      return {
+        position: 'fixed',
+        left: '12px',
+        right: '12px',
+        bottom: '16px',
+        maxHeight: '85vh',
+        height: '560px'
+      };
+    }
+
+    const chatW = 420;
+    const chatH = 580;
+    const pad = 16;
+    const maxW = window.innerWidth;
+    const maxH = window.innerHeight;
+
+    let targetLeft = position.x - chatW + 56;
+    if (targetLeft < pad) {
+      targetLeft = position.x;
+    }
+    targetLeft = Math.max(pad, Math.min(targetLeft, maxW - chatW - pad));
+
+    let targetTop = position.y - chatH - 10;
+    if (targetTop < pad) {
+      targetTop = position.y + 65;
+    }
+    targetTop = Math.max(pad, Math.min(targetTop, maxH - chatH - pad));
+
+    return {
+      position: 'fixed',
+      left: `${targetLeft}px`,
+      top: `${targetTop}px`,
+      width: `${chatW}px`,
+      height: `${Math.min(chatH, maxH - pad * 2)}px`
+    };
+  };
+
   return (
     <>
-      {/* Floating Action Button (Always on top bottom-right) */}
-      <div className="fixed bottom-5 right-5 z-50 flex flex-col items-end gap-2 print:hidden">
+      {/* Backdrop for mobile & fullscreen mode */}
+      {isOpen && (
+        <div
+          onClick={() => setIsOpen(false)}
+          className={`fixed inset-0 bg-black/40 backdrop-blur-xs z-[9990] transition-opacity duration-200 ${
+            isExpanded ? 'block' : 'sm:hidden block'
+          }`}
+        />
+      )}
+
+      {/* Floating Draggable Action Button */}
+      <div
+        style={{
+          left: `${position.x}px`,
+          top: `${position.y}px`,
+          touchAction: 'none'
+        }}
+        onPointerDown={handlePointerDown}
+        onPointerMove={handlePointerMove}
+        onPointerUp={handlePointerUp}
+        onPointerCancel={handlePointerUp}
+        className={`fixed z-[9999] flex flex-col ${isNearTop ? 'flex-col-reverse' : 'flex-col'} ${
+          isNearLeft ? 'items-start' : 'items-end'
+        } gap-2 print:hidden select-none cursor-grab active:cursor-grabbing ${
+          isDragging ? 'scale-105 transition-none' : 'transition-transform duration-200'
+        }`}
+      >
         {/* Pulsing Greeting Pill when collapsed */}
         {!isOpen && (
           <div
-            onClick={() => {
-              setIsOpen(true);
-              setUnreadNotification(false);
-            }}
-            className="group cursor-pointer bg-slate-950/95 hover:bg-black text-white px-3.5 py-2 rounded-2xl shadow-2xl border border-orange-500/50 backdrop-blur-md flex items-center gap-2 transition-all duration-300 hover:scale-105 animate-fade-in"
+            onClick={handleToggleOpen}
+            className="group bg-slate-950/95 hover:bg-black text-white px-3 py-1.5 sm:px-3.5 sm:py-2 rounded-2xl shadow-2xl border border-orange-500/50 backdrop-blur-md flex items-center gap-2 transition-all duration-300 hover:scale-105 animate-fade-in cursor-pointer select-none"
+            title="Click to Ask Setu AI • Drag anywhere to move"
           >
-            <div className="w-2 h-2 rounded-full bg-orange-400 animate-ping" />
-            <span className="text-xs font-bold bg-gradient-to-r from-orange-400 via-amber-300 to-yellow-200 bg-clip-text text-transparent">
+            <div className="w-2 h-2 rounded-full bg-orange-400 animate-ping shrink-0" />
+            <span className="text-xs font-bold bg-gradient-to-r from-orange-400 via-amber-300 to-yellow-200 bg-clip-text text-transparent whitespace-nowrap">
               ✨ Ask Setu AI
             </span>
-            <span className="text-[10px] bg-orange-500/20 text-orange-300 px-1.5 py-0.5 rounded-full font-bold border border-orange-500/30">
+            <span className="text-[10px] bg-orange-500/20 text-orange-300 px-1.5 py-0.5 rounded-full font-bold border border-orange-500/30 whitespace-nowrap">
               Live CRM
             </span>
+            <Move className="w-3 h-3 text-slate-400 opacity-60 group-hover:opacity-100 transition-opacity ml-0.5" />
           </div>
         )}
 
         {/* Circular Launch Button (Warm Vibrant Orange Theme) */}
         <button
           type="button"
-          onClick={() => {
-            setIsOpen(!isOpen);
-            setUnreadNotification(false);
-          }}
-          className={`relative p-3.5 rounded-2xl shadow-2xl transition-all duration-300 transform active:scale-95 cursor-pointer flex items-center justify-center ${
+          onClick={handleToggleOpen}
+          className={`relative p-3.5 rounded-2xl shadow-2xl transition-all duration-300 transform active:scale-95 flex items-center justify-center cursor-grab active:cursor-grabbing ${
             isOpen
               ? 'bg-slate-800 text-white rotate-90 scale-90 border border-slate-700'
               : 'bg-gradient-to-tr from-orange-600 via-amber-500 to-orange-500 text-white hover:shadow-orange-500/40 hover:shadow-2xl hover:scale-105 border-2 border-orange-400/50'
           }`}
-          title="Setu AI Assistant (Solar & CRM Support)"
+          title={isOpen ? 'Close Setu AI' : 'Setu AI Assistant (Solar & CRM Support) • Drag anywhere to move'}
         >
           {isOpen ? (
             <X className="w-6 h-6" />
@@ -319,10 +524,11 @@ Aap mujhse neeche diye gaye topics par pooch sakte hain ya seedha apna sawal typ
       {/* Main Chat Window Drawer (Orange Themed) */}
       {isOpen && (
         <div
-          className={`fixed z-50 transition-all duration-300 ease-out flex flex-col bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-2xl rounded-3xl overflow-hidden print:hidden backdrop-blur-xl ${
+          style={getChatWindowStyle()}
+          className={`fixed z-[9999] transition-all duration-300 ease-out flex flex-col bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-2xl rounded-3xl overflow-hidden print:hidden backdrop-blur-xl ${
             isExpanded
               ? 'inset-4 md:inset-10 max-w-5xl mx-auto h-[calc(100vh-5rem)]'
-              : 'bottom-20 right-4 sm:right-6 w-[calc(100vw-2rem)] sm:w-[420px] md:w-[440px] h-[580px] max-h-[82vh]'
+              : 'w-[calc(100vw-2rem)] sm:w-[420px] md:w-[440px] max-h-[85vh]'
           }`}
         >
           {/* Header - Orange / Amber Gradient */}
@@ -368,10 +574,10 @@ Aap mujhse neeche diye gaye topics par pooch sakte hain ya seedha apna sawal typ
               <button
                 type="button"
                 onClick={() => setIsOpen(false)}
-                className="p-1.5 text-slate-400 hover:text-white rounded-lg hover:bg-slate-800/80 transition-colors cursor-pointer"
-                title="Close Window"
+                className="p-1.5 text-slate-300 hover:text-white hover:bg-rose-600/80 rounded-lg transition-colors cursor-pointer"
+                title="Close Window (Esc)"
               >
-                <ChevronDown className="w-5 h-5" />
+                <X className="w-5 h-5" />
               </button>
             </div>
           </div>

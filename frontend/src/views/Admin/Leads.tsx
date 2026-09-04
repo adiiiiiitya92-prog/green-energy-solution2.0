@@ -858,13 +858,13 @@ export const Leads: React.FC = () => {
     setRegChecklist(reg || null);
     setInstallPhotos(photos);
 
-    // Load Release Docs & auto-correct premature closed status if NOC file is missing
+    // Load Release Docs
     const rels = await orderService.getReleaseDocumentsByLeadId(lead.id);
     setReleaseDocs(rels);
-    if (rels.length === 0 && lead.status === 'closed') {
-      await leadService.updateLeadStatus(lead.id, 'confirmed');
-      lead.status = 'confirmed';
-      setSelectedLead({ ...lead, status: 'confirmed' });
+    if (rels.length > 0 && lead.status !== 'closed') {
+      await leadService.updateLeadStatus(lead.id, 'closed');
+      lead.status = 'closed';
+      setSelectedLead({ ...lead, status: 'closed' });
     }
   };
 
@@ -1380,8 +1380,10 @@ export const Leads: React.FC = () => {
       await orderService.updateOrderConfirmation(updatedOc);
       setExistingOc(updatedOc);
 
-      // Maintain confirmed status on payment recording
-      const targetStatus = selectedLead.status === 'closed' ? 'closed' : 'confirmed';
+      // Maintain advanced status if already registered, installed, or closed
+      const targetStatus = ['registered', 'installed', 'closed'].includes(selectedLead.status)
+        ? selectedLead.status
+        : 'confirmed';
       await leadService.updateLeadStatus(selectedLead.id, targetStatus);
       selectedLead.status = targetStatus;
 
@@ -1638,7 +1640,7 @@ export const Leads: React.FC = () => {
         fileUrl = await uploadImageToFirebase(compressedBlob, storagePath);
       } else {
         const storagePath = `documents/${selectedLead.id}/bank_${Date.now()}.pdf`;
-        fileUrl = await uploadImageToFirebase(file, storagePath);
+        fileUrl = await uploadPdfToFirebase(file, storagePath);
       }
 
       const updated = {
@@ -1757,7 +1759,7 @@ export const Leads: React.FC = () => {
         fileUrl = await uploadImageToFirebase(compressedBlob, storagePath);
       } else {
         const storagePath = `release/${selectedLead.id}/release_${Date.now()}.pdf`;
-        fileUrl = await uploadImageToFirebase(file, storagePath);
+        fileUrl = await uploadPdfToFirebase(file, storagePath);
       }
 
       await orderService.uploadReleaseDocument({
@@ -1786,6 +1788,31 @@ export const Leads: React.FC = () => {
     }
   };
 
+  const handleCompleteReleaseWithoutDoc = async () => {
+    if (!selectedLead) return;
+    try {
+      if (releaseNotes && releaseNotes.trim()) {
+        await orderService.uploadReleaseDocument({
+          leadId: selectedLead.id,
+          fileBlob: '' as any,
+          uploadedBy: currentUser?.id || 'mock_admin',
+          notes: releaseNotes.trim()
+        });
+      }
+      await leadService.updateLeadStatus(selectedLead.id, 'closed');
+      setReleaseNotes('');
+      const updated = await leadService.getLeadById(selectedLead.id);
+      if (updated) setSelectedLead(updated);
+      const rels = await orderService.getReleaseDocumentsByLeadId(selectedLead.id);
+      setReleaseDocs(rels);
+      loadData();
+      alert('🏆 Lead status is now CLOSED (Release Complete)!');
+    } catch (err) {
+      console.error(err);
+      alert('Error updating lead status.');
+    }
+  };
+
   const handleReleaseDelete = async (relId: string) => {
     if (!selectedLead) return;
     if (confirm('Delete this Handover NOC document? This will re-open the pipeline status.')) {
@@ -1793,7 +1820,9 @@ export const Leads: React.FC = () => {
       const rels = await orderService.getReleaseDocumentsByLeadId(selectedLead.id);
       setReleaseDocs(rels);
       if (rels.length === 0) {
-        await leadService.updateLeadStatus(selectedLead.id, 'confirmed');
+        const photos = await orderService.getInstallationPhotosByLeadId(selectedLead.id);
+        const prevStatus = photos.length >= 3 ? 'installed' : (regChecklist?.registrationDone ? 'registered' : 'confirmed');
+        await leadService.updateLeadStatus(selectedLead.id, prevStatus);
         const updated = await leadService.getLeadById(selectedLead.id);
         if (updated) setSelectedLead(updated);
         loadData();
@@ -3172,6 +3201,18 @@ export const Leads: React.FC = () => {
                     </div>
                   ) : (
                     <div className="space-y-4">
+                      {selectedLead?.status === 'closed' && (
+                        <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-3.5 flex items-center justify-between">
+                          <span className="text-xs font-bold text-emerald-800 flex items-center gap-1.5">
+                            <CheckCircle className="w-4 h-4 text-emerald-600" />
+                            <span>Pipeline is CLOSED (Release Phase Complete)</span>
+                          </span>
+                          <span className="text-[10px] bg-emerald-800 text-white font-black px-2 py-0.5 rounded-full uppercase">
+                            ✓ Closed
+                          </span>
+                        </div>
+                      )}
+
                       <div>
                         <label className="block text-slate-600 font-bold mb-1">Release Comments / Inspector Notes</label>
                         <input
@@ -3185,20 +3226,33 @@ export const Leads: React.FC = () => {
 
                       <div>
                         <label className="block text-slate-600 font-bold mb-1.5">Handover Document Upload (NOC / Completion)</label>
-                        <div className="relative overflow-hidden w-full max-w-md">
-                          <input
-                            type="file"
-                            accept="image/*,application/pdf"
-                            onChange={(e) => e.target.files?.[0] && handleReleaseUpload(e.target.files[0])}
-                            className="absolute inset-0 opacity-0 cursor-pointer w-full z-10"
-                          />
-                          <button
-                            type="button"
-                            className="w-full py-3 px-4 bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white rounded-xl text-xs font-black transition-all text-center flex items-center justify-center gap-2 shadow-md hover:shadow-lg cursor-pointer"
-                          >
-                            <UploadCloud className="w-4 h-4 text-white" />
-                            <span>📁 Choose File / Upload Single Handover NOC Document</span>
-                          </button>
+                        <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
+                          <div className="relative overflow-hidden w-full max-w-md">
+                            <input
+                              type="file"
+                              accept="image/*,application/pdf"
+                              onChange={(e) => e.target.files?.[0] && handleReleaseUpload(e.target.files[0])}
+                              className="absolute inset-0 opacity-0 cursor-pointer w-full z-10"
+                            />
+                            <button
+                              type="button"
+                              className="w-full py-3 px-4 bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white rounded-xl text-xs font-black transition-all text-center flex items-center justify-center gap-2 shadow-md hover:shadow-lg cursor-pointer"
+                            >
+                              <UploadCloud className="w-4 h-4 text-white" />
+                              <span>📁 Choose File / Upload Single Handover NOC Document</span>
+                            </button>
+                          </div>
+                          {selectedLead?.status !== 'closed' && (
+                            <button
+                              type="button"
+                              onClick={handleCompleteReleaseWithoutDoc}
+                              className="py-3 px-4 bg-slate-800 hover:bg-slate-900 active:bg-black text-white rounded-xl text-xs font-black transition-all text-center flex items-center justify-center gap-1.5 shadow-md cursor-pointer shrink-0"
+                              title="Mark pipeline as closed without uploading file"
+                            >
+                              <CheckCircle className="w-4 h-4 text-emerald-400" />
+                              <span>Mark Closed (Without File)</span>
+                            </button>
+                          )}
                         </div>
                       </div>
                     </div>

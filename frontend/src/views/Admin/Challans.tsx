@@ -13,6 +13,7 @@ import { packageService } from '../../services/packageService';
 import { pdfService } from '../../services/pdfService';
 import { getItemDispatchCategory } from '../../services/dispatchHelper';
 import { useAuthStore } from '../../store/authStore';
+import { SearchableProductSelect } from '../../components/Common/SearchableProductSelect';
 import {
   Plus,
   Search,
@@ -1754,17 +1755,13 @@ export const Challans: React.FC = () => {
                 {/* Item Form Inputs */}
                 <div className="grid grid-cols-1 sm:grid-cols-12 gap-2 items-end">
                   <div className="sm:col-span-5">
-                    <label className="block text-slate-500 mb-1">Select Product</label>
-                    <select
-                      value={currentProductId}
-                      onChange={(e) => handleProductSelect(e.target.value)}
-                      className="w-full border border-slate-200 rounded-xl px-2.5 py-2 bg-white cursor-pointer"
-                    >
-                      <option value="">-- Select Component --</option>
-                      {products.map(p => (
-                        <option key={p.id} value={p.id}>{p.name} (Stock: {p.stockQuantity} {p.unit || 'Nos'})</option>
-                      ))}
-                    </select>
+                    <label className="block text-slate-500 mb-1 font-semibold text-xs">Select / Search Product</label>
+                    <SearchableProductSelect
+                      products={products}
+                      selectedProductId={currentProductId}
+                      onSelectProduct={handleProductSelect}
+                      placeholder="Type name, brand or choose component..."
+                    />
                   </div>
 
                   <div className="sm:col-span-2">
@@ -2002,17 +1999,13 @@ export const Challans: React.FC = () => {
                 {/* Item Form Inputs */}
                 <div className="grid grid-cols-1 sm:grid-cols-12 gap-2 items-end">
                   <div className="sm:col-span-5">
-                    <label className="block text-slate-500 mb-1">Select Product</label>
-                    <select
-                      value={currentEditProductId}
-                      onChange={(e) => handleEditProductSelect(e.target.value)}
-                      className="w-full border border-slate-200 rounded-xl px-2.5 py-2 bg-white cursor-pointer"
-                    >
-                      <option value="">-- Select Component --</option>
-                      {products.map(p => (
-                        <option key={p.id} value={p.id}>{p.name} (Stock: {p.stockQuantity} {p.unit || 'Nos'})</option>
-                      ))}
-                    </select>
+                    <label className="block text-slate-500 mb-1 font-semibold text-xs">Select / Search Product</label>
+                    <SearchableProductSelect
+                      products={products}
+                      selectedProductId={currentEditProductId}
+                      onSelectProduct={handleEditProductSelect}
+                      placeholder="Type name, brand or choose component..."
+                    />
                   </div>
 
                   <div className="sm:col-span-2">

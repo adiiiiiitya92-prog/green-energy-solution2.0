@@ -3,9 +3,11 @@ import type { Product, ProductUnit } from '../../types';
 import { productService } from '../../services/productService';
 import { useAuthStore } from '../../store/authStore';
 import { PackageManager } from '../../components/Packages/PackageManager';
+import { AiPalletScannerModal } from '../../components/Products/AiPalletScannerModal';
 import {
   Plus, Search, Trash2, Tag, Layers, Package, Filter, Pencil, Check, X,
-  Barcode, RefreshCw, Clipboard, CheckCircle2, ChevronDown, ChevronUp, AlertCircle, Boxes, Calendar
+  Barcode, RefreshCw, Clipboard, CheckCircle2, ChevronDown, ChevronUp, AlertCircle, Boxes, Calendar,
+  List, LayoutGrid, Sparkles
 } from 'lucide-react';
 
 const formatBatchDateDisplay = (isoStr?: string): string => {
@@ -111,6 +113,13 @@ export const Products: React.FC = () => {
   const [searchTerm, setSearchTerm] = useState('');
   const [activeTab, setActiveTab] = useState<'commercial' | 'bom' | 'packages'>('commercial');
   const [selectedBomCategoryFilter, setSelectedBomCategoryFilter] = useState<string>('all');
+  const [viewMode, setViewMode] = useState<'list' | 'grid'>(() => {
+    try {
+      return (localStorage.getItem('products_view_mode') as 'list' | 'grid') || 'list';
+    } catch {
+      return 'list';
+    }
+  });
   const [showAddModal, setShowAddModal] = useState(false);
   const [showAddBomModal, setShowAddBomModal] = useState(false);
 
@@ -161,6 +170,10 @@ export const Products: React.FC = () => {
   const [serialSearchTerm, setSerialSearchTerm] = useState<string>('');
   const [serialModalTab, setSerialModalTab] = useState<'available' | 'sold' | 'all'>('available');
   const [addBatchQty, setAddBatchQty] = useState<number | ''>('');
+
+  // AI Pallet / Serial Scanner Modal State
+  const [showAiPalletModal, setShowAiPalletModal] = useState(false);
+  const [aiScanTargetProduct, setAiScanTargetProduct] = useState<Product | null>(null);
 
   // Smooth Toast Notification State
   const [toastMsg, setToastMsg] = useState<string | null>(null);
@@ -679,6 +692,19 @@ export const Products: React.FC = () => {
         </div>
 
         <div className="flex flex-wrap items-center gap-2 self-start sm:self-auto">
+          {/* AI Pallet / Label Scanner Button */}
+          <button
+            onClick={() => {
+              setAiScanTargetProduct(null);
+              setShowAiPalletModal(true);
+            }}
+            className="px-3.5 py-2 bg-gradient-to-r from-teal-600 to-emerald-600 hover:from-teal-700 hover:to-emerald-700 active:scale-[0.98] text-white font-black text-xs rounded-xl shadow-md flex items-center gap-2 cursor-pointer transition-all border border-emerald-400/30"
+            title="Scan Pallet packing slip or box label with Groq Vision AI to inward serial numbers"
+          >
+            <Sparkles className="w-4 h-4 text-emerald-200 animate-pulse" />
+            <span>📸 AI Scan Pallet / Label</span>
+          </button>
+
           {/* Main Add Commercial Product Button */}
           <button
             onClick={() => {
@@ -828,163 +854,381 @@ export const Products: React.FC = () => {
             </div>
           )}
 
-          {/* Search Input */}
-          <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-xs flex items-center space-x-3">
-            <Search className="w-4 h-4 text-slate-400 shrink-0" />
-            <input
-              type="text"
-              placeholder={
-                activeTab === 'commercial'
-                  ? "Search commercial products by name, brand, description, unit or category..."
-                  : "Search BOM components by item name, brand, description, category or unit..."
-              }
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              className="text-xs font-medium text-slate-800 focus:outline-none w-full bg-transparent"
-            />
+          {/* Search Input & View Mode Switcher */}
+          <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 bg-white p-3 sm:p-3.5 rounded-xl border border-slate-200 shadow-xs">
+            <div className="flex items-center space-x-3 flex-1">
+              <Search className="w-4 h-4 text-slate-400 shrink-0" />
+              <input
+                type="text"
+                placeholder={
+                  activeTab === 'commercial'
+                    ? "Search commercial products by name, brand, description, unit or category..."
+                    : "Search BOM components by item name, brand, description, category or unit..."
+                }
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                className="text-xs font-medium text-slate-800 focus:outline-none w-full bg-transparent"
+              />
+            </div>
+
+            {/* View Mode Switcher (List vs Grid) */}
+            <div className="flex items-center bg-slate-100 p-1 rounded-xl border border-slate-200/80 shrink-0 self-end sm:self-auto">
+              <button
+                type="button"
+                onClick={() => {
+                  setViewMode('list');
+                  try { localStorage.setItem('products_view_mode', 'list'); } catch {}
+                }}
+                className={`px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer ${
+                  viewMode === 'list'
+                    ? 'bg-white text-emerald-700 shadow-xs'
+                    : 'text-slate-500 hover:text-slate-800'
+                }`}
+                title="List View"
+              >
+                <List className="w-3.5 h-3.5" />
+                <span>List View</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setViewMode('grid');
+                  try { localStorage.setItem('products_view_mode', 'grid'); } catch {}
+                }}
+                className={`px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer ${
+                  viewMode === 'grid'
+                    ? 'bg-white text-emerald-700 shadow-xs'
+                    : 'text-slate-500 hover:text-slate-800'
+                }`}
+                title="Grid Cards View"
+              >
+                <LayoutGrid className="w-3.5 h-3.5" />
+                <span>Cards</span>
+              </button>
+            </div>
           </div>
 
           {/* Low Stock Alert Banner (Commercial Products only) */}
           {activeTab === 'commercial' && lowStockItems.length > 0 && (
-            <div className="bg-amber-50 border-l-4 border-amber-500 p-4 rounded-xl flex items-center justify-between shadow-xs">
+            <div className="bg-amber-50 border-l-4 border-amber-500 p-3 sm:p-4 rounded-xl flex items-center justify-between shadow-xs">
               <div className="flex items-center space-x-3">
                 <span className="text-lg">⚠️</span>
                 <div className="text-xs">
-                  <p className="font-extrabold text-amber-800">Inventory Alert: {lowStockItems.length} items are running low in stock!</p>
-                  <p className="text-amber-600 font-bold mt-0.5">Some components have fallen to or below their configured minimum alert threshold.</p>
+                  <p className="font-extrabold text-amber-900">Inventory Alert: {lowStockItems.length} items are running low in stock!</p>
+                  <p className="text-amber-700 font-medium mt-0.5">Some components have fallen to or below their configured minimum alert threshold.</p>
                 </div>
               </div>
             </div>
           )}
 
-          {/* Grid */}
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {filteredProducts.map((p) => {
-              const unitsList = p.productUnits && p.productUnits.length > 0
-                ? p.productUnits
-                : (p.serialNumbers || []).map((sn, i) => ({ id: `u_${i}`, unitNumber: i + 1, serialNumber: sn, status: 'available' as const }));
+          {/* PRODUCTS LIST / TABLE VIEW */}
+          {viewMode === 'list' ? (
+            <div className="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden">
+              <div className="overflow-x-auto">
+                <table className="w-full text-left border-collapse">
+                  <thead>
+                    <tr className="bg-slate-50/90 border-b border-slate-200 text-[10.5px] font-black text-slate-500 uppercase tracking-wider">
+                      <th className="py-3 px-4 w-12 text-center">#</th>
+                      <th className="py-3 px-4">Product / Item</th>
+                      <th className="py-3 px-4">Category & Details</th>
+                      <th className="py-3 px-4 text-right">Standard Rate</th>
+                      <th className="py-3 px-4 text-center">In-Hand Stock</th>
+                      {activeTab === 'commercial' && (
+                        <th className="py-3 px-4 text-center">Serials</th>
+                      )}
+                      <th className="py-3 px-4 text-right">Total Valuation</th>
+                      <th className="py-3 px-4 text-center w-24">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100 text-xs">
+                    {filteredProducts.map((p, idx) => {
+                      const unitsList = p.productUnits && p.productUnits.length > 0
+                        ? p.productUnits
+                        : (p.serialNumbers || []).map((sn, i) => ({ id: `u_${i}`, unitNumber: i + 1, serialNumber: sn, status: 'available' as const }));
 
-              const availableCount = unitsList.filter(u => u.status === 'available' || !u.status).length;
-              const soldCount = unitsList.filter(u => u.status && u.status !== 'available').length;
-              const totalUnits = unitsList.length || p.stockQuantity || 0;
+                      const availableCount = unitsList.filter(u => u.status === 'available' || !u.status).length;
+                      const soldCount = unitsList.filter(u => u.status && u.status !== 'available').length;
+                      const totalUnits = unitsList.length || p.stockQuantity || 0;
+                      const isLowStock = activeTab === 'commercial' && p.minStockThreshold !== undefined && availableCount <= p.minStockThreshold;
+                      const isOutOfStock = availableCount === 0;
 
-              return (
-                <div
-                  key={p.id}
-                  className={`bg-white border rounded-2xl p-5 hover:shadow-md transition-shadow relative flex flex-col justify-between min-h-[210px] ${
-                    p.category === 'bom_item' ? 'border-purple-200/90 shadow-2xs' : 'border-slate-200'
-                  }`}
-                >
-                  <div>
-                    <div className="flex justify-between items-start gap-2">
-                      <div className="flex flex-wrap gap-1 items-center">
-                        <span
-                          className={`inline-flex items-center px-2 py-0.5 rounded text-[9px] font-extrabold uppercase tracking-wider border ${
-                            p.category === 'bom_item'
-                              ? 'bg-purple-100 text-purple-900 border-purple-200'
-                              : 'bg-emerald-50 text-emerald-800 border-emerald-100'
+                      return (
+                        <tr
+                          key={p.id}
+                          className={`hover:bg-slate-50/80 transition-colors ${
+                            isOutOfStock ? 'bg-rose-50/20' : isLowStock ? 'bg-amber-50/20' : ''
                           }`}
                         >
-                          {getCategoryLabel(p.category, p.bomCategory)}
-                        </span>
+                          {/* # Index */}
+                          <td className="py-3.5 px-4 text-center text-[11px] font-bold text-slate-400">
+                            {idx + 1}
+                          </td>
 
-                        {p.brand && (
-                          <span className="inline-flex items-center px-2 py-0.5 rounded text-[9px] font-black bg-blue-50 text-blue-800 border border-blue-100 uppercase tracking-wider">
-                            🏷️ {p.brand}
+                          {/* Product Name & Description */}
+                          <td className="py-3.5 px-4 min-w-[220px]">
+                            <div className="font-extrabold text-slate-900 text-xs sm:text-[13px] leading-snug">
+                              {p.name}
+                            </div>
+                            {p.description && (
+                              <div className="text-[11px] text-slate-400 line-clamp-1 mt-0.5">
+                                {p.description}
+                              </div>
+                            )}
+                          </td>
+
+                          {/* Category, Brand, Unit */}
+                          <td className="py-3.5 px-4 whitespace-nowrap">
+                            <div className="flex flex-wrap gap-1 items-center">
+                              <span
+                                className={`inline-flex items-center px-2 py-0.5 rounded text-[9.5px] font-extrabold uppercase tracking-wider border ${
+                                  p.category === 'bom_item'
+                                    ? 'bg-purple-100 text-purple-900 border-purple-200'
+                                    : 'bg-emerald-50 text-emerald-800 border-emerald-100'
+                                }`}
+                              >
+                                {getCategoryLabel(p.category, p.bomCategory)}
+                              </span>
+
+                              {p.brand && (
+                                <span className="inline-flex items-center px-2 py-0.5 rounded text-[9.5px] font-black bg-blue-50 text-blue-800 border border-blue-100 uppercase tracking-wider">
+                                  🏷️ {p.brand}
+                                </span>
+                              )}
+
+                              <span className="inline-flex items-center px-2 py-0.5 rounded text-[9.5px] font-black bg-slate-100 text-slate-700 border border-slate-200 uppercase tracking-wider">
+                                📐 {p.unit || 'Nos'}
+                              </span>
+                            </div>
+                          </td>
+
+                          {/* Standard Rate */}
+                          <td className="py-3.5 px-4 text-right font-black text-slate-900 whitespace-nowrap">
+                            {p.category !== 'bom_item' ? (
+                              <span>₹{(p.rate || 0).toLocaleString('en-IN')}</span>
+                            ) : (
+                              <span className="text-purple-800 bg-purple-50 px-2 py-0.5 rounded border border-purple-100 text-[11px]">
+                                {p.bomCategory || 'General'}
+                              </span>
+                            )}
+                          </td>
+
+                          {/* Stock Status */}
+                          <td className="py-3.5 px-4 text-center whitespace-nowrap">
+                            <div className="inline-flex flex-col items-center">
+                              <span
+                                className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-extrabold border ${
+                                  isOutOfStock
+                                    ? 'bg-rose-50 text-rose-700 border-rose-200'
+                                    : isLowStock
+                                    ? 'bg-amber-50 text-amber-800 border-amber-200'
+                                    : 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                                }`}
+                              >
+                                <span
+                                  className={`w-1.5 h-1.5 rounded-full ${
+                                    isOutOfStock ? 'bg-rose-500' : isLowStock ? 'bg-amber-500' : 'bg-emerald-500'
+                                  }`}
+                                />
+                                <span>{availableCount} Available</span>
+                              </span>
+                              {soldCount > 0 && (
+                                <span className="text-[10px] text-slate-400 font-semibold mt-0.5">
+                                  {soldCount} Dispatched
+                                </span>
+                              )}
+                            </div>
+                          </td>
+
+                          {/* Serials Button */}
+                          {activeTab === 'commercial' && (
+                            <td className="py-3.5 px-4 text-center whitespace-nowrap">
+                              <button
+                                type="button"
+                                onClick={() => handleOpenManageSerialsModal(p)}
+                                className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-blue-50 hover:bg-blue-100 text-blue-700 font-extrabold text-[11px] rounded-lg border border-blue-200 transition-colors cursor-pointer"
+                              >
+                                <Barcode className="w-3.5 h-3.5" />
+                                <span>Serials ({totalUnits})</span>
+                              </button>
+                            </td>
+                          )}
+
+                          {/* Total Valuation */}
+                          <td className="py-3.5 px-4 text-right whitespace-nowrap">
+                            <span className="inline-block text-xs font-black text-emerald-800 bg-emerald-50 px-2.5 py-0.5 rounded-lg border border-emerald-200/80">
+                              ₹{((p.rate || p.bomRate || 0) * availableCount).toLocaleString('en-IN')}
+                            </span>
+                          </td>
+
+                          {/* Actions */}
+                          <td className="py-3.5 px-4 text-center whitespace-nowrap">
+                            <div className="flex items-center justify-center gap-1">
+                              <button
+                                type="button"
+                                onClick={() => handleOpenEditModal(p)}
+                                className="p-1.5 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors cursor-pointer"
+                                title="Edit Product"
+                              >
+                                <Pencil className="w-3.5 h-3.5" />
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleDeleteProduct(p.id)}
+                                className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer"
+                                title="Delete Product"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+
+              {filteredProducts.length === 0 && (
+                <div className="bg-slate-50 border-t border-slate-200 p-8 text-center">
+                  <Tag className="w-8 h-8 text-slate-300 mx-auto mb-2" />
+                  <p className="text-xs text-slate-400 font-bold">
+                    {activeTab === 'commercial'
+                      ? 'No commercial products found. Click "➕ Add Product" to create new ones.'
+                      : 'No Bill of Materials (BOM) items found. Click "📄 Add Bill of Materials (BOM)" to add components like cables, earthing kits, or switches.'}
+                  </p>
+                </div>
+              )}
+            </div>
+          ) : (
+            /* GRID VIEW (CARDS) */
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              {filteredProducts.map((p) => {
+                const unitsList = p.productUnits && p.productUnits.length > 0
+                  ? p.productUnits
+                  : (p.serialNumbers || []).map((sn, i) => ({ id: `u_${i}`, unitNumber: i + 1, serialNumber: sn, status: 'available' as const }));
+
+                const availableCount = unitsList.filter(u => u.status === 'available' || !u.status).length;
+                const soldCount = unitsList.filter(u => u.status && u.status !== 'available').length;
+                const totalUnits = unitsList.length || p.stockQuantity || 0;
+
+                return (
+                  <div
+                    key={p.id}
+                    className={`bg-white border rounded-2xl p-5 hover:shadow-md transition-shadow relative flex flex-col justify-between min-h-[210px] ${
+                      p.category === 'bom_item' ? 'border-purple-200/90 shadow-2xs' : 'border-slate-200'
+                    }`}
+                  >
+                    <div>
+                      <div className="flex justify-between items-start gap-2">
+                        <div className="flex flex-wrap gap-1 items-center">
+                          <span
+                            className={`inline-flex items-center px-2 py-0.5 rounded text-[9px] font-extrabold uppercase tracking-wider border ${
+                              p.category === 'bom_item'
+                                ? 'bg-purple-100 text-purple-900 border-purple-200'
+                                : 'bg-emerald-50 text-emerald-800 border-emerald-100'
+                            }`}
+                          >
+                            {getCategoryLabel(p.category, p.bomCategory)}
                           </span>
-                        )}
 
-                        <span className="inline-flex items-center px-2 py-0.5 rounded text-[9px] font-black bg-amber-50 text-amber-900 border border-amber-200 uppercase tracking-wider">
-                          📐 {p.unit || 'Nos'}
-                        </span>
+                          {p.brand && (
+                            <span className="inline-flex items-center px-2 py-0.5 rounded text-[9px] font-black bg-blue-50 text-blue-800 border border-blue-100 uppercase tracking-wider">
+                              🏷️ {p.brand}
+                            </span>
+                          )}
+
+                          <span className="inline-flex items-center px-2 py-0.5 rounded text-[9px] font-black bg-amber-50 text-amber-900 border border-amber-200 uppercase tracking-wider">
+                            📐 {p.unit || 'Nos'}
+                          </span>
+                        </div>
+
+                        <div className="flex items-center gap-1.5 shrink-0">
+                          {/* EDIT BUTTON */}
+                          <button
+                            onClick={() => handleOpenEditModal(p)}
+                            className="p-1 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors cursor-pointer"
+                            title="Edit Description & Specifications"
+                          >
+                            <Pencil className="w-4 h-4" />
+                          </button>
+
+                          {/* DELETE BUTTON */}
+                          <button
+                            onClick={() => handleDeleteProduct(p.id)}
+                            className="p-1 text-slate-300 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer"
+                            title="Remove from Catalog"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </div>
                       </div>
 
-                      <div className="flex items-center gap-1.5 shrink-0">
-                        {/* EDIT BUTTON */}
-                        <button
-                          onClick={() => handleOpenEditModal(p)}
-                          className="p-1 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors cursor-pointer"
-                          title="Edit Description & Specifications"
-                        >
-                          <Pencil className="w-4 h-4" />
-                        </button>
+                      <h3 className="font-black text-slate-900 text-sm mt-3">{p.name}</h3>
 
-                        {/* DELETE BUTTON */}
-                        <button
-                          onClick={() => handleDeleteProduct(p.id)}
-                          className="p-1 text-slate-300 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer"
-                          title="Remove from Catalog"
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </button>
-                      </div>
-                    </div>
-
-                    <h3 className="font-black text-slate-900 text-sm mt-3">{p.name}</h3>
-
-                    {p.description && (
-                      <p className="text-xs text-slate-500 mt-1 line-clamp-2">{p.description}</p>
-                    )}
-                  </div>
-
-                  <div className="mt-4 pt-3 border-t border-slate-100 space-y-2">
-                    {p.category !== 'bom_item' ? (
-                      <div className="flex justify-between items-center text-xs">
-                        <span className="text-slate-500 font-bold">Standard Price Rate:</span>
-                        <span className="font-extrabold text-slate-900 text-sm">₹{(p.rate || 0).toLocaleString('en-IN')}</span>
-                      </div>
-                    ) : (
-                      <div className="flex justify-between items-center text-xs">
-                        <span className="text-purple-700 font-bold">Category Component:</span>
-                        <span className="font-extrabold text-purple-900 text-xs bg-purple-50 px-2 py-0.5 rounded">
-                          {p.bomCategory || 'General'}
-                        </span>
-                      </div>
-                    )}
-
-                    <div className="flex justify-between items-center text-xs bg-slate-50 p-2.5 rounded-xl border border-slate-100">
-                      <div>
-                        <span className="text-[10px] text-slate-400 font-extrabold block uppercase tracking-wider">
-                          {p.category === 'bom_item' ? 'Standard Stock' : 'Inventory Units'}
-                        </span>
-                        <span className="font-black text-slate-800 text-xs">
-                          {availableCount} Available {soldCount > 0 ? `(${soldCount} Dispatched)` : ''}
-                        </span>
-                      </div>
-
-                      {p.category !== 'bom_item' && (
-                        <button
-                          onClick={() => handleOpenManageSerialsModal(p)}
-                          className="px-2.5 py-1 bg-blue-50 hover:bg-blue-100 text-blue-700 font-extrabold text-[10px] rounded-lg border border-blue-200 transition-colors flex items-center gap-1 cursor-pointer"
-                        >
-                          <Barcode className="w-3.5 h-3.5" />
-                          <span>Serials ({totalUnits})</span>
-                        </button>
+                      {p.description && (
+                        <p className="text-xs text-slate-500 mt-1 line-clamp-2">{p.description}</p>
                       )}
                     </div>
 
-                    <div className="flex justify-between items-center text-xs pt-1">
-                      <span className="text-slate-500 font-bold text-[11px]">Total Stock Value:</span>
-                      <span className="text-xs font-black text-emerald-800 bg-emerald-50 px-2.5 py-0.5 rounded-lg border border-emerald-200/80 shadow-2xs">
-                        ₹{((p.rate || p.bomRate || 0) * availableCount).toLocaleString('en-IN')}
-                      </span>
+                    <div className="mt-4 pt-3 border-t border-slate-100 space-y-2">
+                      {p.category !== 'bom_item' ? (
+                        <div className="flex justify-between items-center text-xs">
+                          <span className="text-slate-500 font-bold">Standard Price Rate:</span>
+                          <span className="font-extrabold text-slate-900 text-sm">₹{(p.rate || 0).toLocaleString('en-IN')}</span>
+                        </div>
+                      ) : (
+                        <div className="flex justify-between items-center text-xs">
+                          <span className="text-purple-700 font-bold">Category Component:</span>
+                          <span className="font-extrabold text-purple-900 text-xs bg-purple-50 px-2 py-0.5 rounded">
+                            {p.bomCategory || 'General'}
+                          </span>
+                        </div>
+                      )}
+
+                      <div className="flex justify-between items-center text-xs bg-slate-50 p-2.5 rounded-xl border border-slate-100">
+                        <div>
+                          <span className="text-[10px] text-slate-400 font-extrabold block uppercase tracking-wider">
+                            {p.category === 'bom_item' ? 'Standard Stock' : 'Inventory Units'}
+                          </span>
+                          <span className="font-black text-slate-800 text-xs">
+                            {availableCount} Available {soldCount > 0 ? `(${soldCount} Dispatched)` : ''}
+                          </span>
+                        </div>
+
+                        {p.category !== 'bom_item' && (
+                          <button
+                            onClick={() => handleOpenManageSerialsModal(p)}
+                            className="px-2.5 py-1 bg-blue-50 hover:bg-blue-100 text-blue-700 font-extrabold text-[10px] rounded-lg border border-blue-200 transition-colors flex items-center gap-1 cursor-pointer"
+                          >
+                            <Barcode className="w-3.5 h-3.5" />
+                            <span>Serials ({totalUnits})</span>
+                          </button>
+                        )}
+                      </div>
+
+                      <div className="flex justify-between items-center text-xs pt-1">
+                        <span className="text-slate-500 font-bold text-[11px]">Total Stock Value:</span>
+                        <span className="text-xs font-black text-emerald-800 bg-emerald-50 px-2.5 py-0.5 rounded-lg border border-emerald-200/80 shadow-2xs">
+                          ₹{((p.rate || p.bomRate || 0) * availableCount).toLocaleString('en-IN')}
+                        </span>
+                      </div>
                     </div>
                   </div>
-                </div>
-              );
-            })}
+                );
+              })}
 
-            {filteredProducts.length === 0 && (
-              <div className="col-span-full bg-slate-50 border-2 border-dashed border-slate-200 p-8 text-center rounded-xl">
-                <Tag className="w-8 h-8 text-slate-300 mx-auto mb-2" />
-                <p className="text-xs text-slate-400 font-bold">
-                  {activeTab === 'commercial'
-                    ? 'No commercial products found. Click "➕ Add Product" to create new ones.'
-                    : 'No Bill of Materials (BOM) items found. Click "📄 Add Bill of Materials (BOM)" to add components like cables, earthing kits, or switches.'}
-                </p>
-              </div>
-            )}
-          </div>
+              {filteredProducts.length === 0 && (
+                <div className="col-span-full bg-slate-50 border-2 border-dashed border-slate-200 p-8 text-center rounded-xl">
+                  <Tag className="w-8 h-8 text-slate-300 mx-auto mb-2" />
+                  <p className="text-xs text-slate-400 font-bold">
+                    {activeTab === 'commercial'
+                      ? 'No commercial products found. Click "➕ Add Product" to create new ones.'
+                      : 'No Bill of Materials (BOM) items found. Click "📄 Add Bill of Materials (BOM)" to add components like cables, earthing kits, or switches.'}
+                  </p>
+                </div>
+              )}
+            </div>
+          )}
         </>
       )}
 
@@ -1185,6 +1429,18 @@ export const Products: React.FC = () => {
                           className="px-2.5 py-1 bg-purple-50 text-purple-700 border border-purple-200 rounded-lg text-[11px] font-bold flex items-center gap-1 cursor-pointer"
                         >
                           <Clipboard className="w-3 h-3" /> Bulk Paste
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setShowAddModal(false);
+                            setShowAiPalletModal(true);
+                          }}
+                          className="px-2.5 py-1 bg-emerald-50 text-emerald-800 border border-emerald-200 rounded-lg text-[11px] font-bold flex items-center gap-1 cursor-pointer"
+                          title="Scan label with AI to autofill product details and serials"
+                        >
+                          <Sparkles className="w-3 h-3 text-emerald-600" /> AI Scan
                         </button>
                       </div>
 
@@ -1702,6 +1958,19 @@ export const Products: React.FC = () => {
                   >
                     <Clipboard className="w-3.5 h-3.5" /> Bulk Paste New Batch
                   </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setAiScanTargetProduct(managingSerialsProduct);
+                      setShowAiPalletModal(true);
+                    }}
+                    className="px-3 py-1.5 bg-gradient-to-r from-emerald-50 to-teal-50 hover:from-emerald-100 hover:to-teal-100 border border-emerald-300 text-emerald-800 font-extrabold text-xs rounded-xl flex items-center gap-1.5 transition-colors cursor-pointer shadow-2xs"
+                    title="Scan pallet packing slip photo to add serials directly to this product"
+                  >
+                    <Sparkles className="w-3.5 h-3.5 text-emerald-600" />
+                    <span>AI Scan Pallet</span>
+                  </button>
                 </div>
               </div>
 
@@ -1905,6 +2174,37 @@ export const Products: React.FC = () => {
             </div>
           </div>
         </div>
+      )}
+      {/* MODAL 5: AI Pallet & Serial Numbers Scanner Modal */}
+      {showAiPalletModal && (
+        <AiPalletScannerModal
+          isOpen={showAiPalletModal}
+          onClose={() => {
+            setShowAiPalletModal(false);
+            setAiScanTargetProduct(null);
+          }}
+          products={products}
+          preSelectedProduct={aiScanTargetProduct}
+          onSuccess={(updatedOrNew, count) => {
+            setProducts(prev => {
+              const exists = prev.some(p => p.id === updatedOrNew.id);
+              if (exists) {
+                return prev.map(p => p.id === updatedOrNew.id ? updatedOrNew : p);
+              } else {
+                return [updatedOrNew, ...prev];
+              }
+            });
+
+            // If user was viewing serials modal for this product, refresh its units
+            if (managingSerialsProduct && managingSerialsProduct.id === updatedOrNew.id) {
+              const norm = normalizeProductUnits(updatedOrNew);
+              setManagingSerialsProduct(updatedOrNew);
+              setManagingUnits(norm);
+              setManagingStockQty(norm.filter(u => u.status === 'available').length);
+            }
+          }}
+          showToast={showToast}
+        />
       )}
     </div>
   );

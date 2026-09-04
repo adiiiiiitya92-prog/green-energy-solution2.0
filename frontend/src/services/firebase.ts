@@ -821,6 +821,20 @@ export async function syncAllLocalDataToFirestore(): Promise<void> {
       console.warn("Complaint sync note:", err);
     }
 
+    // 6. Reconcile & Sync Release Documents
+    try {
+      const localReleases = await db.releaseDocuments.toArray();
+      for (const rel of localReleases) {
+        if (deletedIds.has(rel.id) || (rel.leadId && deletedIds.has(rel.leadId))) {
+          await db.releaseDocuments.delete(rel.id);
+          continue;
+        }
+        await saveRecordToFirestore('releaseDocuments', rel.id, rel);
+      }
+    } catch (err) {
+      console.warn("Release document sync note:", err);
+    }
+
     console.log("🔥 Initialized background dual-sync & reconciliation of all local data to Firestore!");
   } catch (err) {
     console.warn("syncAllLocalDataToFirestore note:", err);

@@ -293,7 +293,9 @@ export const quotationService = {
         // 1. Update Lead status & sync Follow-up Date
         const lead = await db.leads.get(qData.leadId);
         if (lead) {
-          lead.status = 'quotation_sent';
+          if (lead.status === 'new') {
+            lead.status = 'quotation_sent';
+          }
           if (finalQuotation.followUpDate && finalQuotation.followUpDate.trim() !== '') {
             lead.nextFollowUpDate = finalQuotation.followUpDate;
             lead.followUpCompleted = false;

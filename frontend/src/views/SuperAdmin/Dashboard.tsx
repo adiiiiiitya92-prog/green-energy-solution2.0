@@ -10,7 +10,7 @@ import { productService } from '../../services/productService';
 import { useAuthStore } from '../../store/authStore';
 import { FollowUpReminders } from '../../components/Common/FollowUpReminders';
 import type { Lead, Quotation, OrderConfirmation, Profile, Product, PaymentInstallment, DeletionRequest } from '../../types';
-import { TrendingUp, DollarSign, Award, ClipboardList, PackageCheck, ShieldAlert, Boxes, Check, X, AlertCircle, ChevronRight, Wallet } from 'lucide-react';
+import { TrendingUp, DollarSign, Award, ClipboardList, PackageCheck, ShieldAlert, Boxes, Check, X, AlertCircle, ChevronRight, Wallet, ChevronDown, ChevronUp } from 'lucide-react';
 
 export const Dashboard: React.FC = () => {
   const { currentRole, currentUser } = useAuthStore();
@@ -22,6 +22,13 @@ export const Dashboard: React.FC = () => {
   const [products, setProducts] = useState<Product[]>([]);
   const [lowStockProducts, setLowStockProducts] = useState<Product[]>([]);
   const [pendingDeleteRequests, setPendingDeleteRequests] = useState<DeletionRequest[]>([]);
+  const [isLowStockMinimized, setIsLowStockMinimized] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem('minimized_inventory_alert') === 'true';
+    } catch {
+      return false;
+    }
+  });
 
   const getPaymentsList = (c: OrderConfirmation): PaymentInstallment[] => {
     if (c.payments && c.payments.length > 0) return c.payments;
@@ -255,19 +262,52 @@ export const Dashboard: React.FC = () => {
 
       {/* Low Stock Warning Alert */}
       {lowStockProducts.length > 0 && (
-        <div className="bg-red-50 border-l-4 border-red-500 p-4 rounded-xl shadow-xs flex items-start space-x-3">
-          <ShieldAlert className="w-5 h-5 text-red-600 shrink-0 mt-0.5" />
-          <div className="text-xs">
-            <h4 className="font-extrabold text-red-800 uppercase tracking-wider">CRITICAL INVENTORY ALERT: {lowStockProducts.length} Items Running Low!</h4>
-            <p className="text-red-600 font-bold mt-1">The following items have fallen below their safety stock thresholds. Please restock immediately:</p>
-            <div className="mt-2 flex flex-wrap gap-2">
-              {lowStockProducts.map(p => (
-                <span key={p.id} className="inline-block bg-white text-red-700 font-black border border-red-200/80 px-2 py-0.5 rounded-lg text-[10px]">
-                  ⚠️ {p.name} ({p.stockQuantity} remaining, Min: {p.minStockThreshold})
+        <div className="bg-red-50/95 border-l-4 border-red-500 rounded-xl shadow-xs transition-all duration-200 overflow-hidden">
+          <div className="p-3 sm:p-3.5 flex items-center justify-between gap-3">
+            <div className="flex items-center space-x-2.5 min-w-0">
+              <ShieldAlert className="w-5 h-5 text-red-600 shrink-0" />
+              <div className="flex items-center gap-2 flex-wrap min-w-0">
+                <h4 className="font-extrabold text-red-800 uppercase tracking-wider text-xs sm:text-sm">
+                  CRITICAL INVENTORY ALERT: {lowStockProducts.length} Items Running Low!
+                </h4>
+                <span className="text-[10px] font-bold bg-red-100 text-red-700 px-2 py-0.5 rounded-md border border-red-200">
+                  Restock Needed
                 </span>
-              ))}
+              </div>
             </div>
+            <button
+              type="button"
+              onClick={() => {
+                const next = !isLowStockMinimized;
+                setIsLowStockMinimized(next);
+                try {
+                  localStorage.setItem('minimized_inventory_alert', String(next));
+                } catch {
+                  // ignore
+                }
+              }}
+              className="flex items-center gap-1.5 text-xs font-bold text-red-700 hover:text-red-900 bg-red-100/90 hover:bg-red-200 px-2.5 py-1 rounded-lg transition-colors cursor-pointer shrink-0"
+              title={isLowStockMinimized ? "Expand alert details" : "Minimize alert"}
+            >
+              <span>{isLowStockMinimized ? "Show Items" : "Minimize"}</span>
+              {isLowStockMinimized ? <ChevronDown className="w-4 h-4" /> : <ChevronUp className="w-4 h-4" />}
+            </button>
           </div>
+
+          {!isLowStockMinimized && (
+            <div className="px-3 sm:px-4 pb-3.5 pt-0 text-xs border-t border-red-100/80">
+              <p className="text-red-600 font-bold mt-2 mb-2">
+                The following items have fallen below their safety stock thresholds. Please restock immediately:
+              </p>
+              <div className="flex flex-wrap gap-2 max-h-48 overflow-y-auto pr-1">
+                {lowStockProducts.map(p => (
+                  <span key={p.id} className="inline-flex items-center bg-white text-red-700 font-extrabold border border-red-200/90 px-2.5 py-1 rounded-lg text-[10.5px] shadow-2xs">
+                    ⚠️ {p.name} <span className="ml-1 text-red-500 font-medium">({p.stockQuantity} remaining, Min: {p.minStockThreshold})</span>
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       )}
 

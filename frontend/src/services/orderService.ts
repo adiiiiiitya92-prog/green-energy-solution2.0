@@ -93,7 +93,7 @@ export const orderService = {
       await db.orderConfirmations.add(newOc);
       
       const lead = await db.leads.get(ocData.leadId);
-      if (lead) {
+      if (lead && (lead.status === 'new' || lead.status === 'quotation_sent')) {
         lead.status = 'confirmed';
         lead.updatedAt = new Date().toISOString();
         await db.leads.put(lead);

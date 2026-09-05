@@ -32,6 +32,8 @@ export interface Lead {
   status: 'new' | 'quotation_sent' | 'confirmed' | 'registered' | 'installed' | 'closed' | 'lost';
   clientRating?: 1 | 2 | 3 | 4 | 5;
   isHot?: boolean;
+  isLoan?: boolean; // 🏦 Loan Case (Bank Loan Financing)
+  loanBankName?: string; // Optional Bank Name (e.g. SBI, Canara Bank, BoM)
   nextFollowUpDate?: string;
   followUpNotes?: string;
   followUpSetAt?: string;

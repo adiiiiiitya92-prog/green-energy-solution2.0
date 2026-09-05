@@ -31,7 +31,7 @@ import {
   ChevronLeft, Trash2, Send, Star, FileCheck, CheckCircle, Compass, X, Eye, Download,
   CreditCard, Wallet, Edit3, MessageSquare, Bell, Flame, FileText,
   BarChart3, FileSpreadsheet, Printer, Calendar, RotateCcw, Sparkles, Truck, AlertCircle,
-  Layers, Sun, Zap
+  Layers, Sun, Zap, Landmark
 } from 'lucide-react';
 import dayjs from 'dayjs';
 
@@ -80,17 +80,19 @@ export const Leads: React.FC = () => {
   const [statusFilter, setStatusFilter] = useState('');
   const [employeeFilter, setEmployeeFilter] = useState('');
   const [hotFilter, setHotFilter] = useState<'all' | 'hot' | 'normal'>('all');
+  const [loanFilter, setLoanFilter] = useState<'all' | 'loan' | 'non_loan'>('all');
   const [dispatchFilter, setDispatchFilter] = useState<'all' | 'dispatched' | 'not_dispatched'>('all');
-  const [rawFilter, setRawFilter] = useState<'all' | 'raw' | 'process_done_payment_pending' | 'advanced'>(() => {
+  const [rawFilter, setRawFilter] = useState<'all' | 'raw' | 'process_done_payment_pending' | 'advanced' | 'confirmed'>(() => {
     const fromUrl = new URLSearchParams(window.location.search).get('filter') || new URLSearchParams(window.location.search).get('rawFilter');
-    if (fromUrl === 'process_done_payment_pending' || fromUrl === 'raw' || fromUrl === 'advanced') {
-      return fromUrl;
+    if (fromUrl === 'process_done_payment_pending' || fromUrl === 'raw' || fromUrl === 'advanced' || fromUrl === 'confirmed' || fromUrl === 'all') {
+      return fromUrl as any;
     }
     const fromStorage = sessionStorage.getItem('leads_rawFilter');
-    if (fromStorage === 'process_done_payment_pending' || fromStorage === 'raw' || fromStorage === 'advanced') {
-      return fromStorage;
+    if (fromStorage === 'process_done_payment_pending' || fromStorage === 'raw' || fromStorage === 'confirmed') {
+      return fromStorage as any;
     }
-    return 'all';
+    // Default to confirmed leads only (as requested by user)
+    return 'confirmed';
   });
   const [dispatchedLeadIds, setDispatchedLeadIds] = useState<Set<string>>(new Set());
 
@@ -101,11 +103,11 @@ export const Leads: React.FC = () => {
   const [showLeadDispatchModal, setShowLeadDispatchModal] = useState(false);
   const [leadQuotationsMap, setLeadQuotationsMap] = useState<Record<string, Quotation>>({});
 
-  const handleSetRawFilter = (filter: 'all' | 'raw' | 'process_done_payment_pending' | 'advanced') => {
+  const handleSetRawFilter = (filter: 'all' | 'raw' | 'process_done_payment_pending' | 'advanced' | 'confirmed') => {
     setRawFilter(filter);
     sessionStorage.setItem('leads_rawFilter', filter);
     const nextParams = new URLSearchParams(searchParams);
-    if (filter === 'all') {
+    if (filter === 'confirmed') {
       nextParams.delete('filter');
       nextParams.delete('rawFilter');
     } else {
@@ -138,6 +140,8 @@ export const Leads: React.FC = () => {
   const [leadAssignedSalesPersonId, setLeadAssignedSalesPersonId] = useState('');
   const [leadAssignedAdminId, setLeadAssignedAdminId] = useState('');
   const [leadIsHot, setLeadIsHot] = useState(false);
+  const [leadIsLoan, setLeadIsLoan] = useState(false);
+  const [leadLoanBankName, setLeadLoanBankName] = useState('');
   const [leadFollowUpDate, setLeadFollowUpDate] = useState('');
   const [leadFollowUpNotes, setLeadFollowUpNotes] = useState('');
   const [createNameWarning, setCreateNameWarning] = useState<string | null>(null);
@@ -152,6 +156,8 @@ export const Leads: React.FC = () => {
   const [editDescription, setEditDescription] = useState('');
   const [editStatus, setEditStatus] = useState<Lead['status']>('new');
   const [editIsHot, setEditIsHot] = useState(false);
+  const [editIsLoan, setEditIsLoan] = useState(false);
+  const [editLoanBankName, setEditLoanBankName] = useState('');
   const [editAssignedSalesPersonId, setEditAssignedSalesPersonId] = useState('');
   const [editAssignedAdminId, setEditAssignedAdminId] = useState('');
   const [editFollowUpDate, setEditFollowUpDate] = useState('');
@@ -170,6 +176,8 @@ export const Leads: React.FC = () => {
       setEditDescription(leadToEdit.description || '');
       setEditStatus(leadToEdit.status || 'new');
       setEditIsHot(Boolean(leadToEdit.isHot || (leadToEdit.clientRating && leadToEdit.clientRating >= 4)));
+      setEditIsLoan(Boolean(leadToEdit.isLoan));
+      setEditLoanBankName(leadToEdit.loanBankName || '');
       setEditAssignedSalesPersonId(leadToEdit.assignedSalesPersonId || leadToEdit.assignedEmployeeId || '');
       setEditAssignedAdminId(leadToEdit.assignedAdminId || '');
       setEditFollowUpDate(leadToEdit.nextFollowUpDate || '');
@@ -381,6 +389,35 @@ export const Leads: React.FC = () => {
       alert('Failed to save installation remark.');
     } finally {
       setIsSavingInstallRemark(false);
+    }
+  };
+
+  // Solar Financing & Bank Loan Case States
+  const [isLoanCase, setIsLoanCase] = useState<boolean>(false);
+  const [loanBankName, setLoanBankName] = useState<string>('');
+  const [isSavingLoan, setIsSavingLoan] = useState<boolean>(false);
+  const [loanSaveSuccess, setLoanSaveSuccess] = useState<boolean>(false);
+
+  const handleSaveLoanStatus = async () => {
+    if (!selectedLead) return;
+    setIsSavingLoan(true);
+    try {
+      const patch: Partial<Lead> = {
+        isLoan: isLoanCase,
+        loanBankName: isLoanCase ? loanBankName.trim() : undefined
+      };
+      await leadService.updateLead(selectedLead.id, patch);
+      setSelectedLead((prev) => (prev ? { ...prev, ...patch } : null));
+      setLeads((prev) => prev.map((l) => (l.id === selectedLead.id ? { ...l, ...patch } : l)));
+      setLoanSaveSuccess(true);
+      setTimeout(() => setLoanSaveSuccess(false), 2500);
+      loadData();
+      window.dispatchEvent(new CustomEvent('app-realtime-update'));
+    } catch (err: any) {
+      console.error('Error saving loan status:', err);
+      alert('Failed to save loan status: ' + (err?.message || 'Unknown error'));
+    } finally {
+      setIsSavingLoan(false);
     }
   };
 
@@ -696,22 +733,21 @@ export const Leads: React.FC = () => {
     productService.getProducts().then(setCatalogProducts).catch(e => console.warn("Load products error:", e));
   };
 
-  // Sync searchParams & sessionStorage filter state
+  // Sync searchParams filter state
   useEffect(() => {
     const filterFromUrl = searchParams.get('filter') || searchParams.get('rawFilter');
-    const filterFromStorage = sessionStorage.getItem('leads_rawFilter');
-    const active = filterFromUrl || filterFromStorage;
-
-    if (active === 'process_done_payment_pending' || active === 'raw' || active === 'advanced') {
-      setRawFilter(active as any);
-      sessionStorage.setItem('leads_rawFilter', active);
-      setSelectedLead(null);
-      sessionStorage.removeItem('leads_selectedLeadId');
-      setStatusFilter('');
-      setMainTab('pipeline');
-    } else if (filterFromUrl === 'all') {
-      setRawFilter('all');
-      sessionStorage.setItem('leads_rawFilter', 'all');
+    if (filterFromUrl) {
+      if (filterFromUrl === 'process_done_payment_pending' || filterFromUrl === 'raw' || filterFromUrl === 'advanced' || filterFromUrl === 'confirmed') {
+        setRawFilter(filterFromUrl as any);
+        sessionStorage.setItem('leads_rawFilter', filterFromUrl);
+        setSelectedLead(null);
+        sessionStorage.removeItem('leads_selectedLeadId');
+        setStatusFilter('');
+        setMainTab('pipeline');
+      } else if (filterFromUrl === 'all') {
+        setRawFilter('all');
+        sessionStorage.setItem('leads_rawFilter', 'all');
+      }
     }
   }, [searchParams]);
 
@@ -777,6 +813,9 @@ export const Leads: React.FC = () => {
     const shouldPreserveTab = preserveTab !== undefined ? preserveTab : (selectedLead?.id === lead.id);
     setSelectedLead(lead);
     setInstallRemarkText(lead.installationRemark || '');
+    setIsLoanCase(Boolean(lead.isLoan));
+    setLoanBankName(lead.loanBankName || '');
+    setLoanSaveSuccess(false);
     // Persist to sessionStorage so refresh restores same lead + tab
     sessionStorage.setItem('leads_selectedLeadId', lead.id);
     if (!shouldPreserveTab) {
@@ -946,6 +985,8 @@ export const Leads: React.FC = () => {
         status: 'new',
         isHot: leadIsHot,
         clientRating: leadIsHot ? 5 : 3,
+        isLoan: leadIsLoan,
+        loanBankName: leadIsLoan ? leadLoanBankName.trim() || undefined : undefined,
         nextFollowUpDate: formattedFollowUpDate,
         followUpNotes: leadFollowUpNotes.trim() || undefined,
         followUpSetAt: formattedFollowUpDate ? nowIso : undefined,
@@ -963,6 +1004,8 @@ export const Leads: React.FC = () => {
       setLeadAssignedSalesPersonId('');
       setLeadAssignedAdminId('');
       setLeadIsHot(false);
+      setLeadIsLoan(false);
+      setLeadLoanBankName('');
       setLeadFollowUpDate('');
       setLeadFollowUpNotes('');
       setCreateNameWarning(null);
@@ -1003,6 +1046,8 @@ export const Leads: React.FC = () => {
         status: editStatus,
         isHot: editIsHot,
         clientRating: editIsHot ? 5 : (leadToEdit.clientRating || 3),
+        isLoan: editIsLoan,
+        loanBankName: editIsLoan ? editLoanBankName.trim() || undefined : undefined,
         assignedSalesPersonId: editAssignedSalesPersonId || undefined,
         assignedAdminId: editAssignedAdminId || undefined,
         assignedEmployeeId: editAssignedSalesPersonId || editAssignedAdminId || leadToEdit.assignedEmployeeId,
@@ -1872,6 +1917,12 @@ export const Leads: React.FC = () => {
                   🏪 CREATED BY DEALER: {selectedLead.dealerName || selectedLead.createdBy}
                 </span>
               )}
+              {selectedLead.isLoan && (
+                <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black bg-indigo-100 text-indigo-800 border border-indigo-300 shadow-2xs flex items-center gap-1" title={selectedLead.loanBankName ? `Bank Loan (${selectedLead.loanBankName})` : "Bank Loan Case"}>
+                  <Landmark className="w-3.5 h-3.5 text-indigo-700" />
+                  <span>🏦 LOAN CASE{selectedLead.loanBankName ? `: ${selectedLead.loanBankName}` : ''}</span>
+                </span>
+              )}
               <button
                 type="button"
                 onClick={() => setLeadToEdit(selectedLead)}
@@ -2146,6 +2197,93 @@ export const Leads: React.FC = () => {
                       )}
                     </div>
 
+                    {/* Solar Financing / Bank Loan Case Card */}
+                    <div className={`p-4 rounded-xl border transition-all ${
+                      isLoanCase
+                        ? 'bg-gradient-to-r from-indigo-50/90 via-blue-50/40 to-slate-50 border-indigo-200 ring-1 ring-indigo-200/60 shadow-xs'
+                        : 'bg-slate-50 border-slate-200'
+                    }`}>
+                      <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+                        <div className="flex items-start gap-3">
+                          <div className={`w-10 h-10 rounded-xl flex items-center justify-center font-bold text-sm shrink-0 shadow-2xs ${
+                            isLoanCase ? 'bg-indigo-600 text-white' : 'bg-slate-200 text-slate-600'
+                          }`}>
+                            <Landmark className="w-5 h-5" />
+                          </div>
+                          <div>
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <h4 className="text-xs font-bold text-slate-800 uppercase tracking-wider flex items-center gap-1.5">
+                                <span>Solar Financing / Bank Loan Status</span>
+                              </h4>
+                              <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider ${
+                                isLoanCase 
+                                  ? 'bg-indigo-100 text-indigo-800 border border-indigo-300' 
+                                  : 'bg-slate-200 text-slate-700'
+                              }`}>
+                                {isLoanCase ? '🏦 Bank Loan Case' : '💵 Self-Funded / Direct Cash'}
+                              </span>
+                            </div>
+                            <p className="text-[11px] text-slate-500 font-medium mt-0.5">
+                              Is this project financed through a bank loan? Check the box and save to prominently display the <strong className="text-indigo-900 font-black">"LOAN CASE"</strong> badge on the pipeline lead card.
+                            </p>
+                          </div>
+                        </div>
+
+                        {/* Checkbox, Bank Input, and Save Button */}
+                        <div className="flex flex-col sm:flex-row sm:items-center gap-2.5 shrink-0">
+                          <label className="flex items-center gap-2 cursor-pointer bg-white px-3 py-2 rounded-xl border border-slate-200 hover:border-indigo-300 transition-all select-none shadow-2xs">
+                            <input
+                              type="checkbox"
+                              checked={isLoanCase}
+                              onChange={(e) => setIsLoanCase(e.target.checked)}
+                              className="w-4 h-4 rounded text-indigo-600 focus:ring-indigo-500 cursor-pointer accent-indigo-600"
+                            />
+                            <span className="text-xs font-bold text-slate-800">
+                              Mark as Bank Loan Case
+                            </span>
+                          </label>
+
+                          {isLoanCase && (
+                            <input
+                              type="text"
+                              value={loanBankName}
+                              onChange={(e) => setLoanBankName(e.target.value)}
+                              placeholder="Bank Name (e.g. SBI, Canara Bank)"
+                              className="px-3 py-2 text-xs border border-indigo-200 rounded-xl bg-white font-semibold text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500 w-full sm:w-48 shadow-2xs"
+                            />
+                          )}
+
+                          <button
+                            type="button"
+                            onClick={handleSaveLoanStatus}
+                            disabled={isSavingLoan}
+                            className={`px-4 py-2 rounded-xl text-xs font-black transition-all cursor-pointer shadow-xs flex items-center justify-center gap-1.5 ${
+                              loanSaveSuccess
+                                ? 'bg-emerald-600 text-white'
+                                : isLoanCase !== !!selectedLead?.isLoan || (isLoanCase && loanBankName !== (selectedLead?.loanBankName || ''))
+                                ? 'bg-indigo-600 hover:bg-indigo-700 text-white animate-pulse'
+                                : 'bg-indigo-600 hover:bg-indigo-700 text-white'
+                            }`}
+                            title="Save Loan Status"
+                          >
+                            {loanSaveSuccess ? (
+                              <>
+                                <CheckCircle className="w-3.5 h-3.5 text-white" />
+                                <span>Saved!</span>
+                              </>
+                            ) : isSavingLoan ? (
+                              <span>Saving...</span>
+                            ) : (
+                              <>
+                                <CheckSquare className="w-3.5 h-3.5" />
+                                <span>Save Loan Status</span>
+                              </>
+                            )}
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+
                     {/* LOCK PAYMENT COLLECTION IF QUOTATION NOT CREATED YET */}
                     {!isQuotationCreated ? (
                       <div className="bg-amber-50/90 border-2 border-amber-300 rounded-2xl p-6 text-center space-y-3 shadow-xs">
@@ -2154,7 +2292,7 @@ export const Leads: React.FC = () => {
                         </div>
                         <h3 className="text-sm font-black text-amber-900 uppercase tracking-wider">Payment Collection Locked (Quotation Pending)</h3>
                         <p className="text-xs text-amber-800 font-semibold max-w-md mx-auto leading-relaxed">
-                          Jab tak is lead ke liye official quotation generate aur save nahi hota, tab tak advance payment ya installment collect karne ka option <strong>LOCKED</strong> rahega.
+                          Payment collection is locked until an official quotation is generated and saved for this lead.
                         </p>
                         <div className="pt-2">
                           <button
@@ -2225,7 +2363,7 @@ export const Leads: React.FC = () => {
                                 <Wallet className="w-3.5 h-3.5 text-emerald-600" />
                                 <span>Payment Installment History ({paymentsList.length})</span>
                               </h4>
-                              <p className="text-[10px] text-slate-400 font-medium mt-0.5">Har payment installment ki separate official receipt preview, download aur WhatsApp share karein.</p>
+                              <p className="text-[10px] text-slate-400 font-medium mt-0.5">Preview, download, and share official receipts for each installment payment on WhatsApp.</p>
                             </div>
 
                             {existingOc && (
@@ -3804,6 +3942,14 @@ export const Leads: React.FC = () => {
               return (l.status === 'new' || l.status === 'quotation_sent') && hasNoPayment && !dispatchedLeadIds.has(l.id);
             }).length;
 
+            const confirmedLeadsCount = leads.filter(l => {
+              const fin = leadFinancialMap[l.id];
+              const hasPayment = !!fin && (fin.paidAmount || 0) > 0;
+              const isDispatched = dispatchedLeadIds.has(l.id);
+              const isRaw = (l.status === 'new' || l.status === 'quotation_sent') && !hasPayment && !isDispatched;
+              return !isRaw;
+            }).length;
+
             const hotLeadsCount = leads.filter(l => {
               const fin = leadFinancialMap[l.id];
               const hasPayment = !!fin && (fin.paidAmount || 0) > 0;
@@ -3817,6 +3963,8 @@ export const Leads: React.FC = () => {
               return isProcessDone && fin && fin.pendingBalance > 0;
             }).length;
 
+            const loanLeadsCount = leads.filter(l => Boolean(l.isLoan)).length;
+
             const filteredLeads = leads.filter(lead => {
               const searchStr = (searchTerm || '').toLowerCase().trim();
               const fin = leadFinancialMap[lead.id];
@@ -3826,6 +3974,8 @@ export const Leads: React.FC = () => {
                 lead.name.toLowerCase().includes(searchStr) || 
                 lead.phoneNumber.includes(searchStr) ||
                 (lead.requirement || '').toLowerCase().includes(searchStr) ||
+                (lead.isLoan && 'loan case'.includes(searchStr)) ||
+                (lead.loanBankName && lead.loanBankName.toLowerCase().includes(searchStr)) ||
                 (fin && (
                   fin.pendingBalance.toString().includes(searchStr) ||
                   fin.totalValue.toString().includes(searchStr) ||
@@ -3845,6 +3995,10 @@ export const Leads: React.FC = () => {
                 (hotFilter === 'hot' && isHot) || 
                 (hotFilter === 'normal' && !isHot);
 
+              const matchesLoan = loanFilter === 'all' ||
+                (loanFilter === 'loan' && Boolean(lead.isLoan)) ||
+                (loanFilter === 'non_loan' && !lead.isLoan);
+
               const isDispatched = dispatchedLeadIds.has(lead.id);
               let matchesDispatch = true;
               if (dispatchFilter === 'dispatched') {
@@ -3858,12 +4012,16 @@ export const Leads: React.FC = () => {
               const isProcessDonePaymentPending = isProcessDone && !!fin && fin.pendingBalance > 0;
 
               let matchesRaw = true;
-              if (rawFilter === 'raw') {
+              if (rawFilter === 'confirmed') {
+                matchesRaw = !isRaw;
+              } else if (rawFilter === 'raw') {
                 matchesRaw = isRaw;
               } else if (rawFilter === 'process_done_payment_pending') {
                 matchesRaw = isProcessDonePaymentPending;
               } else if (rawFilter === 'advanced') {
                 matchesRaw = !isRaw;
+              } else if (rawFilter === 'all') {
+                matchesRaw = true;
               }
 
               let matchesBalance = true;
@@ -3877,7 +4035,7 @@ export const Leads: React.FC = () => {
                 matchesBalance = !fin || fin.paymentStatus === 'No Quote';
               }
 
-              return matchesSearch && matchesStatus && matchesEmployee && matchesHot && matchesBalance && matchesDispatch && matchesRaw;
+              return matchesSearch && matchesStatus && matchesEmployee && matchesHot && matchesBalance && matchesDispatch && matchesRaw && matchesLoan;
             });
 
             return (
@@ -3896,10 +4054,30 @@ export const Leads: React.FC = () => {
                   </div>
 
                   <div className="flex flex-wrap items-center gap-2">
+                    {/* Quick Confirmed Leads Filter Toggle Pill */}
+                    <button
+                      type="button"
+                      onClick={() => handleSetRawFilter('confirmed')}
+                      className={`px-3 py-2 rounded-lg border flex items-center gap-1.5 transition-all cursor-pointer ${
+                        rawFilter === 'confirmed'
+                          ? 'bg-emerald-600 text-white border-emerald-700 shadow-xs font-black'
+                          : 'bg-emerald-50 text-emerald-800 border-emerald-200 hover:bg-emerald-100 font-bold'
+                      }`}
+                      title="Filter Confirmed Leads Only (Active Pipeline Projects)"
+                    >
+                      <CheckCircle className={`w-4 h-4 ${rawFilter === 'confirmed' ? 'text-white' : 'text-emerald-600'}`} />
+                      <span>⚡ Confirmed Leads</span>
+                      <span className={`px-1.5 py-0.2 rounded-full text-[10px] ${
+                        rawFilter === 'confirmed' ? 'bg-white text-emerald-700 font-black' : 'bg-emerald-200/80 text-emerald-900 font-black'
+                      }`}>
+                        {confirmedLeadsCount}
+                      </span>
+                    </button>
+
                     {/* Quick Raw Lead Filter Toggle Pill */}
                     <button
                       type="button"
-                      onClick={() => handleSetRawFilter(rawFilter === 'raw' ? 'all' : 'raw')}
+                      onClick={() => handleSetRawFilter(rawFilter === 'raw' ? 'confirmed' : 'raw')}
                       className={`px-3 py-2 rounded-lg border flex items-center gap-1.5 transition-all cursor-pointer ${
                         rawFilter === 'raw'
                           ? 'bg-blue-600 text-white border-blue-700 shadow-xs font-black'
@@ -3919,7 +4097,7 @@ export const Leads: React.FC = () => {
                     {/* Quick Process Done & Payment Due Filter Toggle Pill */}
                     <button
                       type="button"
-                      onClick={() => handleSetRawFilter(rawFilter === 'process_done_payment_pending' ? 'all' : 'process_done_payment_pending')}
+                      onClick={() => handleSetRawFilter(rawFilter === 'process_done_payment_pending' ? 'confirmed' : 'process_done_payment_pending')}
                       className={`px-3 py-2 rounded-lg border flex items-center gap-1.5 transition-all cursor-pointer ${
                         rawFilter === 'process_done_payment_pending'
                           ? 'bg-purple-700 text-white border-purple-800 shadow-xs font-black'
@@ -3953,6 +4131,26 @@ export const Leads: React.FC = () => {
                         hotFilter === 'hot' ? 'bg-white text-amber-700 font-black' : 'bg-amber-200/80 text-amber-900 font-black'
                       }`}>
                         {hotLeadsCount}
+                      </span>
+                    </button>
+
+                    {/* Quick Loan Cases Filter Toggle Pill */}
+                    <button
+                      type="button"
+                      onClick={() => setLoanFilter(prev => prev === 'loan' ? 'all' : 'loan')}
+                      className={`px-3 py-2 rounded-lg border flex items-center gap-1.5 transition-all cursor-pointer ${
+                        loanFilter === 'loan'
+                          ? 'bg-indigo-600 text-white border-indigo-700 shadow-xs font-black'
+                          : 'bg-indigo-50 text-indigo-800 border-indigo-200 hover:bg-indigo-100 font-bold'
+                      }`}
+                      title="Filter Bank Loan Cases Only"
+                    >
+                      <Landmark className={`w-4 h-4 ${loanFilter === 'loan' ? 'text-white' : 'text-indigo-600'}`} />
+                      <span>🏦 Loan Cases</span>
+                      <span className={`px-1.5 py-0.2 rounded-full text-[10px] ${
+                        loanFilter === 'loan' ? 'bg-white text-indigo-700 font-black' : 'bg-indigo-200/80 text-indigo-900 font-black'
+                      }`}>
+                        {loanLeadsCount}
                       </span>
                     </button>
 
@@ -4002,10 +4200,10 @@ export const Leads: React.FC = () => {
                       onChange={(e) => handleSetRawFilter(e.target.value as any)}
                       className="border border-slate-200 rounded-lg p-2.5 bg-slate-50 focus:outline-none cursor-pointer text-slate-700 font-bold"
                     >
-                      <option value="all">All Lead Pipeline Types</option>
+                      <option value="confirmed">⚡ Confirmed Leads ({confirmedLeadsCount})</option>
                       <option value="raw">🌱 Raw Leads ({rawLeadsCount})</option>
                       <option value="process_done_payment_pending">⚠️ Process Done - Payment Due ({processDonePaymentDueCount})</option>
-                      <option value="advanced">⚡ Advanced / Confirmed Leads</option>
+                      <option value="all">🌐 All Leads (Raw & Confirmed)</option>
                     </select>
 
                     {/* Dispatch Filter Select */}
@@ -4062,6 +4260,37 @@ export const Leads: React.FC = () => {
                   </div>
                 </div>
 
+                {/* Active Filter Banner for Raw Leads */}
+                {rawFilter === 'raw' && (
+                  <div className="bg-gradient-to-r from-blue-950 via-slate-900 to-blue-950 border border-blue-500/40 text-white p-4 rounded-2xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-lg animate-fade-in">
+                    <div className="flex items-center gap-3">
+                      <div className="p-2.5 rounded-xl bg-blue-500/20 border border-blue-500/30 text-blue-300 shrink-0">
+                        <Compass className="w-5 h-5 text-blue-300" />
+                      </div>
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <span className="text-[10px] font-black text-blue-300 uppercase tracking-widest bg-blue-500/20 px-2.5 py-0.5 rounded-full border border-blue-400/30">
+                            FILTER ACTIVE
+                          </span>
+                          <span className="text-xs font-black text-white">
+                            Raw Inquiry Leads ({filteredLeads.length} Lead{filteredLeads.length === 1 ? '' : 's'})
+                          </span>
+                        </div>
+                        <p className="text-[11px] text-blue-200/80 font-medium mt-0.5">
+                          Showing initial inquiries and proposal-stage leads. Click "Confirmed Leads" to return to active confirmed projects.
+                        </p>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => handleSetRawFilter('confirmed')}
+                      className="px-3.5 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-xs font-bold transition-all cursor-pointer shrink-0 shadow-xs"
+                    >
+                      Back to Confirmed Leads
+                    </button>
+                  </div>
+                )}
+
                 {/* Active Filter Banner for Process Done & Payment Pending */}
                 {rawFilter === 'process_done_payment_pending' && (
                   <div className="bg-gradient-to-r from-purple-950 via-slate-900 to-purple-950 border border-purple-500/40 text-white p-4 rounded-2xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-lg animate-fade-in">
@@ -4085,10 +4314,10 @@ export const Leads: React.FC = () => {
                     </div>
                     <button
                       type="button"
-                      onClick={() => handleSetRawFilter('all')}
+                      onClick={() => handleSetRawFilter('confirmed')}
                       className="px-3.5 py-2 bg-purple-600 hover:bg-purple-500 text-white rounded-xl text-xs font-bold transition-all cursor-pointer shrink-0 shadow-xs"
                     >
-                      Show All Leads
+                      Back to Confirmed Leads
                     </button>
                   </div>
                 )}
@@ -4131,6 +4360,17 @@ export const Leads: React.FC = () => {
                                   <Flame className={`w-3.5 h-3.5 ${isHot ? 'fill-white text-white' : 'text-slate-400'}`} />
                                   <span>{isHot ? 'HOT LEAD' : 'Mark Hot'}</span>
                                 </button>
+
+                                {/* LOAN CASE Badge */}
+                                {lead.isLoan && (
+                                  <span
+                                    className="px-2.5 py-0.5 rounded-full text-[10px] font-black flex items-center gap-1 bg-indigo-50 text-indigo-800 border border-indigo-200 shadow-2xs"
+                                    title={lead.loanBankName ? `Bank Loan Case (${lead.loanBankName})` : "Bank Loan Case"}
+                                  >
+                                    <Landmark className="w-3.5 h-3.5 text-indigo-700" />
+                                    <span>LOAN CASE{lead.loanBankName ? `: ${lead.loanBankName}` : ''}</span>
+                                  </span>
+                                )}
 
                                 {/* Lead Category-wise Dispatch Badges with Date & Click-to-View History */}
                                 {(() => {
@@ -4225,7 +4465,7 @@ export const Leads: React.FC = () => {
                                 })()}
 
                                 {/* RAW LEAD Badge */}
-                                {(lead.status === 'new' || lead.status === 'quotation_sent') && !dispatchedLeadIds.has(lead.id) && (
+                                {(lead.status === 'new' || lead.status === 'quotation_sent') && (!fin || (fin.paidAmount || 0) === 0) && !dispatchedLeadIds.has(lead.id) && (
                                   <span
                                     className="px-2.5 py-0.5 rounded-full text-[10px] font-black flex items-center gap-1 bg-blue-100 text-blue-800 border border-blue-200 shadow-2xs"
                                     title="Raw Lead (Initial Follow-up & Quotation Stage)"
@@ -4582,6 +4822,32 @@ export const Leads: React.FC = () => {
                 </label>
               </div>
 
+              {/* Loan Case Checkbox */}
+              <div className="bg-indigo-50/70 border border-indigo-200 rounded-xl p-3 space-y-2">
+                <div className="flex items-center space-x-2">
+                  <input
+                    type="checkbox"
+                    id="createIsLoanCase"
+                    checked={leadIsLoan}
+                    onChange={(e) => setLeadIsLoan(e.target.checked)}
+                    className="w-4 h-4 rounded text-indigo-600 focus:ring-indigo-500 cursor-pointer accent-indigo-600"
+                  />
+                  <label htmlFor="createIsLoanCase" className="text-xs font-extrabold text-indigo-950 cursor-pointer flex items-center gap-1.5 select-none">
+                    <Landmark className="w-4 h-4 text-indigo-600" />
+                    <span>Mark as Bank Loan Case (Solar Financing) 🏦</span>
+                  </label>
+                </div>
+                {leadIsLoan && (
+                  <input
+                    type="text"
+                    value={leadLoanBankName}
+                    onChange={(e) => setLeadLoanBankName(e.target.value)}
+                    placeholder="Bank / Financer Name (Optional, e.g. SBI, Canara Bank, BoM)"
+                    className="w-full border border-indigo-200 rounded-lg px-3 py-2 bg-white text-xs font-medium text-slate-800 focus:outline-none focus:ring-1 focus:ring-indigo-500 shadow-2xs"
+                  />
+                )}
+              </div>
+
               {/* Follow-up Reminder Schedule Block */}
               <div className="bg-emerald-50/70 border border-emerald-200/90 rounded-xl p-3.5 space-y-2.5">
                 <div className="flex items-center gap-1.5 text-xs font-extrabold text-emerald-900">
@@ -4818,6 +5084,32 @@ export const Leads: React.FC = () => {
                   <Flame className="w-4 h-4 text-amber-500 fill-amber-500" />
                   <span>Mark as High Priority Hot Lead 🔥</span>
                 </label>
+              </div>
+
+              {/* Loan Case Checkbox */}
+              <div className="bg-indigo-50/70 border border-indigo-200 rounded-xl p-3 space-y-2">
+                <div className="flex items-center space-x-2">
+                  <input
+                    type="checkbox"
+                    id="editIsLoanCase"
+                    checked={editIsLoan}
+                    onChange={(e) => setEditIsLoan(e.target.checked)}
+                    className="w-4 h-4 rounded text-indigo-600 focus:ring-indigo-500 cursor-pointer accent-indigo-600"
+                  />
+                  <label htmlFor="editIsLoanCase" className="text-xs font-extrabold text-indigo-950 cursor-pointer flex items-center gap-1.5 select-none">
+                    <Landmark className="w-4 h-4 text-indigo-600" />
+                    <span>Mark as Bank Loan Case (Solar Financing) 🏦</span>
+                  </label>
+                </div>
+                {editIsLoan && (
+                  <input
+                    type="text"
+                    value={editLoanBankName}
+                    onChange={(e) => setEditLoanBankName(e.target.value)}
+                    placeholder="Bank / Financer Name (Optional, e.g. SBI, Canara Bank, BoM)"
+                    className="w-full border border-indigo-200 rounded-lg px-3 py-2 bg-white text-xs font-medium text-slate-800 focus:outline-none focus:ring-1 focus:ring-indigo-500 shadow-2xs"
+                  />
+                )}
               </div>
 
               {/* Follow-up Reminder Schedule Block */}

@@ -116,6 +116,14 @@ export interface Quotation {
   whatsappSentAt?: string;
 }
 
+export interface CashProofLocation {
+  latitude: number;
+  longitude: number;
+  address?: string;
+  timestamp: string;
+  accuracy?: number;
+}
+
 export interface PaymentInstallment {
   id: string;
   installmentNo: number;
@@ -126,6 +134,8 @@ export interface PaymentInstallment {
   paidAt: string;
   receiptPdfUrl?: string;
   notes?: string;
+  cashProofImageUrl?: string;
+  cashProofLocation?: CashProofLocation;
 }
 
 export interface OrderConfirmation {
@@ -140,6 +150,8 @@ export interface OrderConfirmation {
   clientSignatureBlob: Blob | string; // PNG or Firebase Storage URL
   confirmationPdfBlob?: Blob | string;
   payments?: PaymentInstallment[];
+  cashProofImageUrl?: string;
+  cashProofLocation?: CashProofLocation;
   createdBy: string;
   createdAt: string;
 }
@@ -535,6 +547,8 @@ export interface Complaint {
   resolutionSummary?: string;
   workPerformed?: string;
   productsReplacedSummary?: string;
+  resolutionProofImageUrl?: string;
+  resolutionProofLocation?: CashProofLocation;
   customerFeedback?: string;
   customerRating?: 1 | 2 | 3 | 4 | 5;
 

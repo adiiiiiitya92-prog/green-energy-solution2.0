@@ -11,6 +11,7 @@ import type {
   ComplaintTimelineEntry,
   ComplaintAssignmentHistory,
   ComplaintConfigCategory,
+  CashProofLocation,
   Lead
 } from '../types';
 import { saveRecordToFirestore, fetchCollectionFromFirestore, deleteRecordFromFirestore } from './firebase';
@@ -54,7 +55,6 @@ export const DEFAULT_COMPLAINT_STATUSES: ComplaintStatus[] = [
   'Field Work in Progress',
   'Vendor / Manufacturer Support Required',
   'Resolved',
-  'Closed',
   'Reopened'
 ];
 
@@ -780,6 +780,8 @@ export const complaintService = {
       resolutionSummary: string;
       workPerformed?: string;
       productsReplacedSummary?: string;
+      resolutionProofImageUrl?: string;
+      resolutionProofLocation?: CashProofLocation;
     },
     currentUser: { id: string; fullName: string; role: string }
   ): Promise<Complaint> {
@@ -795,7 +797,7 @@ export const complaintService = {
       userName: currentUser.fullName,
       userRole: currentUser.role,
       action: 'Complaint Resolved',
-      details: `Resolved: ${resolutionData.resolutionSummary}`,
+      details: `Resolved: ${resolutionData.resolutionSummary}${resolutionData.resolutionProofImageUrl ? ' (With Geotagged Proof Photo)' : ''}`,
       timestamp: now
     });
 
@@ -805,6 +807,8 @@ export const complaintService = {
       resolutionSummary: resolutionData.resolutionSummary,
       workPerformed: resolutionData.workPerformed,
       productsReplacedSummary: resolutionData.productsReplacedSummary,
+      resolutionProofImageUrl: resolutionData.resolutionProofImageUrl,
+      resolutionProofLocation: resolutionData.resolutionProofLocation,
       resolvedAt: now,
       resolvedByUserId: currentUser.id,
       resolvedByUserName: currentUser.fullName,

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { useAuthStore } from '../../store/authStore';
 import { db } from '../../services/db';
 import { complaintService, DEFAULT_COMPLAINT_CATEGORIES, DEFAULT_COMPLAINT_STATUSES } from '../../services/complaintService';
@@ -11,7 +11,8 @@ import type {
   Lead,
   Profile,
   Product,
-  ComplaintConfigCategory
+  ComplaintConfigCategory,
+  CashProofLocation
 } from '../../types';
 import {
   CheckCircle2,
@@ -32,8 +33,14 @@ import {
   Check,
   AlertTriangle,
   Edit3,
-  Trash2
+  Trash2,
+  Camera,
+  Download,
+  Eye,
+  Loader2
 } from 'lucide-react';
+import { uploadImageToFirebase } from '../../services/firebase';
+import { acquireCurrentGpsLocation, applyGpsWatermark, type GpsWatermarkData } from '../../services/watermarkService';
 import dayjs from 'dayjs';
 
 export const Complaints: React.FC = () => {
@@ -99,20 +106,68 @@ export const Complaints: React.FC = () => {
     return () => window.removeEventListener('app-realtime-update', handleRealtimeUpdate);
   }, []);
 
-  // Filter Complaints
-  const filteredComplaints = complaints.filter(c => {
-    // Role-based visibility check
-    if (currentRole === 'field_employee') {
-      const isAssigned = c.assignedToId === currentUser?.id ||
-        c.assignedFieldEmployeeId === currentUser?.id ||
-        (c.fieldVisits && c.fieldVisits.some(v => v.assignedFieldEmployeeId === currentUser?.id));
-      if (!isAssigned) return false;
-    } else if (currentRole === 'inventory_manager' || currentRole === 'inventory') {
-      const hasInvReq = c.inventoryRequests && c.inventoryRequests.length > 0;
-      const isInvCategory = c.category === 'Inventory Issue' || c.category === 'Product Defect' || c.category === 'Product Damage';
-      if (!hasInvReq && !isInvCategory) return false;
+  const isAdmin = currentRole === 'super_admin' || currentRole === 'admin' || currentUser?.role === 'super_admin' || currentUser?.role === 'admin';
+
+  // Base pool of complaints accessible to the current logged-in user:
+  // - Admins/Super Admins see all complaints across the company.
+  // - Employees strictly see only complaints assigned to them.
+  // - Inventory managers see complaints with inventory requests or inventory categories.
+  const accessibleComplaints = useMemo(() => {
+    if (isAdmin) {
+      return complaints;
     }
 
+    const currentUserId = currentUser?.id || '';
+    const currentUserName = (currentUser?.fullName || '').trim().toLowerCase();
+
+    return complaints.filter(c => {
+      // 1. Check if assigned directly to this employee (by ID or name)
+      const isAssignedDirectly = Boolean(
+        (currentUserId && c.assignedToId === currentUserId) ||
+        (currentUserName && c.assignedToName?.trim().toLowerCase() === currentUserName)
+      );
+
+      // 2. Check if assigned as field employee or sales employee
+      const isAssignedField = Boolean(
+        (currentUserId && c.assignedFieldEmployeeId === currentUserId) ||
+        (currentUserName && c.assignedFieldEmployeeName?.trim().toLowerCase() === currentUserName)
+      );
+
+      const isAssignedSales = Boolean(
+        (currentUserId && c.assignedSalesEmployeeId === currentUserId) ||
+        (currentUserName && c.assignedSalesEmployeeName?.trim().toLowerCase() === currentUserName)
+      );
+
+      const isRelatedEmployee = Boolean(
+        currentUserId && c.relatedEmployeeId === currentUserId
+      );
+
+      // 3. Check if any field visit task in this complaint is assigned to this employee
+      const hasAssignedVisit = Boolean(
+        c.fieldVisits && c.fieldVisits.some(v =>
+          (currentUserId && v.assignedFieldEmployeeId === currentUserId) ||
+          (currentUserName && v.assignedFieldEmployeeName?.trim().toLowerCase() === currentUserName)
+        )
+      );
+
+      // 4. Check if created by this employee
+      const isCreator = Boolean(currentUserId && c.createdByUserId === currentUserId);
+
+      // 5. Inventory manager role check
+      const isInvManager = currentRole === 'inventory_manager' || currentUser?.role === 'inventory_manager';
+      if (isInvManager) {
+        const hasInvReq = Boolean(c.inventoryRequests && c.inventoryRequests.length > 0);
+        const isInvCategory = c.category === 'Inventory Issue' || c.category === 'Product Defect' || c.category === 'Product Damage';
+        if (hasInvReq || isInvCategory) return true;
+      }
+
+      // Complaint will only go to this employee's panel if assigned to them or created by them
+      return isAssignedDirectly || isAssignedField || isAssignedSales || isRelatedEmployee || hasAssignedVisit || isCreator;
+    });
+  }, [complaints, isAdmin, currentRole, currentUser]);
+
+  // Filter Complaints from accessibleComplaints
+  const filteredComplaints = accessibleComplaints.filter(c => {
     // Overdue Filter
     if (overdueOnly && !c.isOverdue) return false;
 
@@ -145,8 +200,8 @@ export const Complaints: React.FC = () => {
     // Customer Type Filter
     if (customerTypeFilter !== 'all' && c.customerType !== customerTypeFilter) return false;
 
-    // Assigned Employee Filter
-    if (assignedFilter !== 'all') {
+    // Assigned Employee Filter (Admins only)
+    if (isAdmin && assignedFilter !== 'all') {
       if (assignedFilter === 'unassigned' && (c.assignedToId || c.assignedFieldEmployeeId)) return false;
       if (assignedFilter !== 'unassigned' && c.assignedToId !== assignedFilter && c.assignedFieldEmployeeId !== assignedFilter) return false;
     }
@@ -154,15 +209,15 @@ export const Complaints: React.FC = () => {
     return true;
   });
 
-  // Calculate Metrics
-  const totalCount = complaints.length;
-  const newCount = complaints.filter(c => c.status === 'New' || c.status === 'Complaint Registered').length;
-  const inProcessCount = complaints.filter(c => c.status === 'In Process' || c.status === 'Under Review' || c.status === 'Assigned').length;
-  const siteVisitCount = complaints.filter(c => c.status === 'Site Visit Required' || c.status === 'Field Work in Progress').length;
-  const waitingInventoryCount = complaints.filter(c => c.status === 'Waiting for Product / Inventory').length;
-  const overdueCount = complaints.filter(c => c.isOverdue && c.status !== 'Resolved' && c.status !== 'Closed').length;
-  const urgentCount = complaints.filter(c => (c.priority === 'Urgent' || c.priority === 'High') && c.status !== 'Closed').length;
-  const resolvedTodayCount = complaints.filter(c => c.status === 'Resolved' && c.resolvedAt && dayjs(c.resolvedAt).isSame(dayjs(), 'day')).length;
+  // Calculate Metrics strictly from accessibleComplaints
+  const totalCount = accessibleComplaints.length;
+  const newCount = accessibleComplaints.filter(c => c.status === 'New' || c.status === 'Complaint Registered').length;
+  const inProcessCount = accessibleComplaints.filter(c => c.status === 'In Process' || c.status === 'Under Review' || c.status === 'Assigned').length;
+  const siteVisitCount = accessibleComplaints.filter(c => c.status === 'Site Visit Required' || c.status === 'Field Work in Progress').length;
+  const waitingInventoryCount = accessibleComplaints.filter(c => c.status === 'Waiting for Product / Inventory').length;
+  const overdueCount = accessibleComplaints.filter(c => c.isOverdue && c.status !== 'Resolved' && c.status !== 'Closed').length;
+  const urgentCount = accessibleComplaints.filter(c => (c.priority === 'Urgent' || c.priority === 'High') && c.status !== 'Closed').length;
+  const resolvedTodayCount = accessibleComplaints.filter(c => c.status === 'Resolved' && c.resolvedAt && dayjs(c.resolvedAt).isSame(dayjs(), 'day')).length;
 
   // Priority Badge Color Helper
   const getPriorityBadge = (priority: ComplaintPriority) => {
@@ -220,13 +275,15 @@ export const Complaints: React.FC = () => {
             </div>
             <div>
               <h1 className="text-xl font-black text-slate-900 tracking-tight flex items-center gap-2">
-                Complaint & Service Box
+                {isAdmin ? 'Complaint & Service Box' : 'My Assigned Complaints'}
                 <span className="text-xs bg-emerald-100 text-emerald-800 font-extrabold px-2 py-0.5 rounded-full">
-                  {totalCount} Total
+                  {totalCount} {isAdmin ? 'Total' : 'Assigned to You'}
                 </span>
               </h1>
               <p className="text-xs text-slate-500 font-medium">
-                Track customer complaints, solar defects, field visits, inventory replacements & service requests
+                {isAdmin
+                  ? 'Track customer complaints, solar defects, field visits, inventory replacements & service requests'
+                  : `Showing complaints assigned to ${currentUser?.fullName || 'you'}. Complete service visits and mark resolutions.`}
               </p>
             </div>
           </div>
@@ -429,18 +486,25 @@ export const Complaints: React.FC = () => {
                 <option value="internal">Internal Complaint</option>
               </select>
 
-              {/* Assigned Employee Filter */}
-              <select
-                value={assignedFilter}
-                onChange={(e) => setAssignedFilter(e.target.value)}
-                className="px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-semibold text-slate-800 focus:bg-white focus:border-emerald-500 focus:outline-none"
-              >
-                <option value="all">All Assigned Staff</option>
-                <option value="unassigned">Unassigned</option>
-                {employees.map(emp => (
-                  <option key={emp.id} value={emp.id}>{emp.fullName}</option>
-                ))}
-              </select>
+              {/* Assigned Employee Filter - Admins see dropdown, Employees see assigned badge */}
+              {isAdmin ? (
+                <select
+                  value={assignedFilter}
+                  onChange={(e) => setAssignedFilter(e.target.value)}
+                  className="px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-semibold text-slate-800 focus:bg-white focus:border-emerald-500 focus:outline-none cursor-pointer"
+                >
+                  <option value="all">All Assigned Staff</option>
+                  <option value="unassigned">Unassigned</option>
+                  {employees.map(emp => (
+                    <option key={emp.id} value={emp.id}>{emp.fullName}</option>
+                  ))}
+                </select>
+              ) : (
+                <div className="px-3 py-2 bg-emerald-50 border border-emerald-200 rounded-xl text-xs font-bold text-emerald-800 flex items-center gap-1.5 shrink-0">
+                  <UserCheck className="w-3.5 h-3.5 text-emerald-600" />
+                  <span>Assigned to: {currentUser?.fullName || 'Me'}</span>
+                </div>
+              )}
             </div>
           </div>
 
@@ -534,9 +598,17 @@ export const Complaints: React.FC = () => {
 
                         {/* Status */}
                         <td className="py-3.5 px-4 text-center whitespace-nowrap">
-                          <span className={`px-2.5 py-1 rounded-full text-[10px] font-bold border ${getStatusBadge(c.status)}`}>
-                            {c.status}
-                          </span>
+                          <div className="flex flex-col items-center gap-1">
+                            <span className={`px-2.5 py-1 rounded-full text-[10px] font-bold border ${getStatusBadge(c.status)}`}>
+                              {c.status}
+                            </span>
+                            {c.resolutionProofImageUrl && (
+                              <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[9px] font-black bg-emerald-100 text-emerald-800 border border-emerald-300" title="Geotagged Resolution Proof Photo Attached">
+                                <Camera className="w-2.5 h-2.5 text-emerald-700" />
+                                <span>GPS Proof</span>
+                              </span>
+                            )}
+                          </div>
                         </td>
 
                         {/* Assigned To */}
@@ -600,7 +672,7 @@ export const Complaints: React.FC = () => {
         </>
       ) : (
         /* ── Super Admin Analytics View ── */
-        <ComplaintAnalyticsView complaints={complaints} />
+        <ComplaintAnalyticsView complaints={accessibleComplaints} />
       )}
 
       {/* ── Create Complaint Modal ── */}
@@ -1227,7 +1299,8 @@ const ComplaintDetailModal: React.FC<ComplaintDetailModalProps> = ({
   onClose,
   onUpdate
 }) => {
-  const { currentUser } = useAuthStore();
+  const { currentUser, currentRole } = useAuthStore();
+  const isModalAdmin = currentRole === 'super_admin' || currentRole === 'admin' || currentUser?.role === 'super_admin' || currentUser?.role === 'admin';
   const [activeSubTab, setActiveSubTab] = useState<
     'overview' | 'customer' | 'visits' | 'inventory' | 'notes' | 'timeline' | 'attachments' | 'resolution'
   >('overview');
@@ -1237,7 +1310,6 @@ const ComplaintDetailModal: React.FC<ComplaintDetailModalProps> = ({
   const [showFieldVisitModal, setShowFieldVisitModal] = useState(false);
   const [showInventoryReqModal, setShowInventoryReqModal] = useState(false);
   const [showResolveModal, setShowResolveModal] = useState(false);
-  const [showCloseModal, setShowCloseModal] = useState(false);
   const [showReopenModal, setShowReopenModal] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
 
@@ -1263,21 +1335,66 @@ const ComplaintDetailModal: React.FC<ComplaintDetailModalProps> = ({
   const [noteFollowUpDate, setNoteFollowUpDate] = useState('');
   const [noteInternalOnly, setNoteInternalOnly] = useState(false);
 
-  // Resolution Inputs
+  // Resolution Inputs & Mandatory Geotagged Proof States
   const [resolutionSummary, setResolutionSummary] = useState('');
   const [workPerformed, setWorkPerformed] = useState('');
-
-  // Close Inputs
-  const [customerFeedback, setCustomerFeedback] = useState('');
-  const [customerRating, setCustomerRating] = useState<1 | 2 | 3 | 4 | 5>(5);
+  const [resolutionImageBlob, setResolutionImageBlob] = useState<Blob | null>(null);
+  const [resolutionImageDataUrl, setResolutionImageDataUrl] = useState<string | null>(null);
+  const [resolutionGps, setResolutionGps] = useState<GpsWatermarkData | null>(null);
+  const [isProcessingResolutionGps, setIsProcessingResolutionGps] = useState(false);
+  const [resolutionGpsError, setResolutionGpsError] = useState<string | null>(null);
+  const [viewingProofImage, setViewingProofImage] = useState<{ url: string; title: string; location?: CashProofLocation } | null>(null);
 
   // Reopen Input
   const [reopenReason, setReopenReason] = useState('');
 
   const [saving, setSaving] = useState(false);
 
+  // Process resolution image with device GPS coordinates and canvas watermark
+  const handleProcessResolutionImage = async (file: File) => {
+    setIsProcessingResolutionGps(true);
+    setResolutionGpsError(null);
+    try {
+      let gps: GpsWatermarkData | null = null;
+      try {
+        gps = await acquireCurrentGpsLocation();
+      } catch (gpsErr: any) {
+        console.warn("GPS acquisition note:", gpsErr);
+        setResolutionGpsError(gpsErr.message || 'GPS location unavailable');
+      }
+
+      const detailLine = `👤 CUSTOMER: ${complaint.customerName} • TICKET: #${complaint.complaintNumber}${workPerformed ? ` • RESOLVED: ${workPerformed}` : ''}`;
+
+      const result = await applyGpsWatermark(file, {
+        gps,
+        title: '✓ COMPLAINT RESOLUTION VERIFIED PROOF',
+        subtitle: 'GREEN ENERGY SOLUTION • VERIFIED AUDIT',
+        customDetailLine: detailLine,
+        customerName: complaint.customerName,
+        locationFallback: 'On-Site Resolution Proof'
+      });
+
+      setResolutionImageBlob(result.watermarkedBlob);
+      setResolutionImageDataUrl(result.watermarkedDataUrl);
+      setResolutionGps(result.gps);
+    } catch (err: any) {
+      alert("Error processing resolution proof image: " + err.message);
+    } finally {
+      setIsProcessingResolutionGps(false);
+    }
+  };
+
   // Quick Status Update
   const handleQuickStatusChange = async (val: string) => {
+    if (val === 'Closed') {
+      return;
+    }
+    if (val === 'Resolved') {
+      // Must not bypass mandatory GPS resolution proof photo
+      setShowResolveModal(true);
+      setNewStatus(complaint.status);
+      return;
+    }
     setNewStatus(val);
     try {
       await complaintService.updateComplaint(
@@ -1394,40 +1511,50 @@ const ComplaintDetailModal: React.FC<ComplaintDetailModalProps> = ({
     }
   };
 
-  // Resolve Handler
+  // Resolve Handler (Requires mandatory GPS watermarked proof photo)
   const handleResolveSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!resolutionSummary.trim()) return;
+    if (!resolutionSummary.trim()) {
+      alert("Please enter a resolution summary.");
+      return;
+    }
+    if (!resolutionImageBlob) {
+      alert("Mandatory GPS Resolution Proof Photo is required to mark this complaint as resolved. Please upload or capture a photo of the completed work.");
+      return;
+    }
+
     setSaving(true);
     try {
+      // Upload to Backblaze B2 bucket
+      const proofUrl = await uploadImageToFirebase(
+        resolutionImageBlob,
+        `complaints/${complaint.id}/resolution_proof_${Date.now()}.jpg`
+      );
+
       await complaintService.resolveComplaint(
         complaint.id,
-        { resolutionSummary, workPerformed },
+        {
+          resolutionSummary,
+          workPerformed,
+          resolutionProofImageUrl: proofUrl,
+          resolutionProofLocation: resolutionGps ? {
+            latitude: resolutionGps.latitude,
+            longitude: resolutionGps.longitude,
+            address: resolutionGps.address,
+            timestamp: resolutionGps.timestamp,
+            accuracy: resolutionGps.accuracy
+          } : undefined
+        },
         { id: currentUser?.id || 'admin', fullName: currentUser?.fullName || 'Admin', role: currentUser?.role || 'admin' }
       );
       setShowResolveModal(false);
+      setResolutionImageBlob(null);
+      setResolutionImageDataUrl(null);
+      setResolutionGps(null);
+      setResolutionGpsError(null);
       onUpdate();
     } catch (err: any) {
-      alert(err.message);
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  // Close Handler
-  const handleCloseSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setSaving(true);
-    try {
-      await complaintService.closeComplaint(
-        complaint.id,
-        { customerFeedback, customerRating },
-        { id: currentUser?.id || 'admin', fullName: currentUser?.fullName || 'Admin', role: currentUser?.role || 'admin' }
-      );
-      setShowCloseModal(false);
-      onUpdate();
-    } catch (err: any) {
-      alert(err.message);
+      alert("Failed to resolve complaint: " + err.message);
     } finally {
       setSaving(false);
     }
@@ -1492,7 +1619,7 @@ const ComplaintDetailModal: React.FC<ComplaintDetailModalProps> = ({
               onChange={(e) => handleQuickStatusChange(e.target.value)}
               className="px-2.5 py-1 bg-white border border-slate-300 rounded-lg font-bold text-slate-800 text-xs focus:outline-none"
             >
-              {DEFAULT_COMPLAINT_STATUSES.map(s => (
+              {DEFAULT_COMPLAINT_STATUSES.filter(s => s !== 'Closed').map(s => (
                 <option key={s} value={s}>{s}</option>
               ))}
             </select>
@@ -1508,15 +1635,17 @@ const ComplaintDetailModal: React.FC<ComplaintDetailModalProps> = ({
               <span>Edit Info</span>
             </button>
 
-            {complaint.status !== 'Closed' && (
+            {complaint.status !== 'Resolved' && complaint.status !== 'Closed' && (
               <>
-                <button
-                  onClick={() => setShowAssignModal(true)}
-                  className="px-3 py-1.5 bg-white hover:bg-slate-50 border border-slate-300 text-slate-700 font-bold rounded-lg transition-colors cursor-pointer flex items-center space-x-1"
-                >
-                  <UserCheck className="w-3.5 h-3.5 text-blue-600" />
-                  <span>Assign</span>
-                </button>
+                {(isModalAdmin || complaint.createdByUserId === currentUser?.id) && (
+                  <button
+                    onClick={() => setShowAssignModal(true)}
+                    className="px-3 py-1.5 bg-white hover:bg-slate-50 border border-slate-300 text-slate-700 font-bold rounded-lg transition-colors cursor-pointer flex items-center space-x-1"
+                  >
+                    <UserCheck className="w-3.5 h-3.5 text-blue-600" />
+                    <span>Assign</span>
+                  </button>
+                )}
 
                 <button
                   onClick={() => setShowFieldVisitModal(true)}
@@ -1536,22 +1665,15 @@ const ComplaintDetailModal: React.FC<ComplaintDetailModalProps> = ({
 
                 <button
                   onClick={() => setShowResolveModal(true)}
-                  className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-lg transition-colors cursor-pointer flex items-center space-x-1"
+                  className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-lg transition-colors cursor-pointer flex items-center space-x-1 shadow-xs"
                 >
                   <CheckCircle2 className="w-3.5 h-3.5" />
                   <span>Resolve</span>
                 </button>
-
-                <button
-                  onClick={() => setShowCloseModal(true)}
-                  className="px-3 py-1.5 bg-slate-900 hover:bg-slate-800 text-white font-bold rounded-lg transition-colors cursor-pointer flex items-center space-x-1"
-                >
-                  <span>Close</span>
-                </button>
               </>
             )}
 
-            {complaint.status === 'Closed' && (
+            {(complaint.status === 'Resolved' || complaint.status === 'Closed') && (
               <button
                 onClick={() => setShowReopenModal(true)}
                 className="px-3 py-1.5 bg-amber-600 hover:bg-amber-700 text-white font-bold rounded-lg transition-colors cursor-pointer flex items-center space-x-1"
@@ -1997,14 +2119,98 @@ const ComplaintDetailModal: React.FC<ComplaintDetailModalProps> = ({
           {/* TAB 7: RESOLUTION & FEEDBACK */}
           {activeSubTab === 'resolution' && (
             <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs space-y-4 text-xs">
-              <h3 className="text-xs font-black text-slate-800 uppercase tracking-wider">Resolution Summary & Customer Feedback</h3>
+              <h3 className="text-xs font-black text-slate-800 uppercase tracking-wider">Resolution Summary & Verified Proof</h3>
 
               {complaint.resolvedAt ? (
-                <div className="bg-emerald-50 p-4 rounded-xl border border-emerald-200 space-y-2">
-                  <div className="font-extrabold text-emerald-900 text-sm">✅ Resolved by {complaint.resolvedByUserName}</div>
-                  <div className="text-emerald-800 font-semibold">{complaint.resolutionSummary}</div>
-                  {complaint.workPerformed && <div className="text-slate-700"><strong>Work Performed:</strong> {complaint.workPerformed}</div>}
-                  <div className="text-[10px] text-slate-500">Date: {dayjs(complaint.resolvedAt).format('DD MMM YYYY, hh:mm A')}</div>
+                <div className="bg-emerald-50 p-4 rounded-xl border border-emerald-200 space-y-3">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1 border-b border-emerald-200/60 pb-2.5">
+                    <div>
+                      <div className="font-extrabold text-emerald-900 text-sm flex items-center gap-1.5">
+                        <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                        <span>Resolved by {complaint.resolvedByUserName}</span>
+                      </div>
+                      <div className="text-[10px] text-slate-500 mt-0.5">
+                        Date: {dayjs(complaint.resolvedAt).format('DD MMM YYYY, hh:mm A')}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div>
+                    <div className="text-[11px] font-bold text-emerald-950 uppercase tracking-wider">Resolution Summary</div>
+                    <div className="text-emerald-900 font-semibold mt-0.5">{complaint.resolutionSummary}</div>
+                  </div>
+
+                  {complaint.workPerformed && (
+                    <div>
+                      <div className="text-[11px] font-bold text-emerald-950 uppercase tracking-wider">Work Performed (What Was Resolved)</div>
+                      <div className="text-slate-700 mt-0.5">{complaint.workPerformed}</div>
+                    </div>
+                  )}
+
+                  {/* Geotagged Resolution Proof Photo Card */}
+                  {complaint.resolutionProofImageUrl && (
+                    <div className="bg-white rounded-xl p-3.5 border border-emerald-300 shadow-2xs space-y-2.5">
+                      <div className="flex items-center justify-between flex-wrap gap-2">
+                        <div className="flex items-center gap-1.5 text-xs font-bold text-slate-900">
+                          <Camera className="w-3.5 h-3.5 text-emerald-600" />
+                          <span>Geotagged Resolution Proof Photo</span>
+                        </div>
+                        <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-blue-100 text-blue-800 border border-blue-200">
+                          ☁️ Stored in Backblaze B2
+                        </span>
+                      </div>
+
+                      <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3">
+                        <div
+                          onClick={() => setViewingProofImage({
+                            url: complaint.resolutionProofImageUrl!,
+                            title: `Complaint #${complaint.complaintNumber} - Resolution Proof`,
+                            location: complaint.resolutionProofLocation
+                          })}
+                          className="relative group cursor-pointer shrink-0 rounded-lg overflow-hidden border border-slate-200 bg-slate-900 w-32 h-24 flex items-center justify-center shadow-xs"
+                        >
+                          <img
+                            src={complaint.resolutionProofImageUrl}
+                            alt="Resolution Proof"
+                            className="w-full h-full object-cover group-hover:scale-105 transition-transform"
+                          />
+                          <div className="absolute inset-0 bg-slate-950/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-white">
+                            <Eye className="w-5 h-5" />
+                          </div>
+                        </div>
+
+                        <div className="space-y-1.5 text-xs">
+                          {complaint.resolutionProofLocation && typeof complaint.resolutionProofLocation.latitude === 'number' && (
+                            <div className="font-mono text-[11px] font-bold text-slate-800 flex items-center gap-1">
+                              <MapPin className="w-3.5 h-3.5 text-rose-600 shrink-0" />
+                              <span>
+                                {Math.abs(complaint.resolutionProofLocation.latitude).toFixed(6)}° {complaint.resolutionProofLocation.latitude >= 0 ? 'N' : 'S'}, {Math.abs(complaint.resolutionProofLocation.longitude).toFixed(6)}° {complaint.resolutionProofLocation.longitude >= 0 ? 'E' : 'W'}
+                              </span>
+                            </div>
+                          )}
+                          {complaint.resolutionProofLocation?.address && (
+                            <p className="text-[11px] text-slate-600 font-medium">
+                              📍 {complaint.resolutionProofLocation.address}
+                            </p>
+                          )}
+                          <div className="pt-0.5">
+                            <button
+                              type="button"
+                              onClick={() => setViewingProofImage({
+                                url: complaint.resolutionProofImageUrl!,
+                                title: `Complaint #${complaint.complaintNumber} - Resolution Proof`,
+                                location: complaint.resolutionProofLocation
+                              })}
+                              className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-[11px] font-bold inline-flex items-center gap-1 cursor-pointer transition-colors shadow-2xs"
+                            >
+                              <Eye className="w-3 h-3" />
+                              <span>Inspect Proof Photo</span>
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  )}
                 </div>
               ) : (
                 <div className="p-4 bg-amber-50 rounded-xl border border-amber-200 text-amber-900 font-bold">
@@ -2173,70 +2379,249 @@ const ComplaintDetailModal: React.FC<ComplaintDetailModalProps> = ({
       )}
 
       {showResolveModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs">
-          <form onSubmit={handleResolveSubmit} className="bg-white rounded-2xl p-6 max-w-md w-full space-y-4 border border-slate-200 shadow-2xl">
-            <h3 className="text-sm font-black text-slate-900">Mark Complaint as Resolved</h3>
-            <div>
-              <label className="block text-xs font-bold text-slate-600 mb-1">Resolution Summary *</label>
-              <textarea
-                rows={3}
-                required
-                placeholder="Describe how the issue was resolved..."
-                value={resolutionSummary}
-                onChange={(e) => setResolutionSummary(e.target.value)}
-                className="w-full p-2 bg-slate-50 border border-slate-300 rounded-xl text-xs font-medium"
-              />
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-950/70 backdrop-blur-xs animate-in fade-in duration-200">
+          <form onSubmit={handleResolveSubmit} className="bg-white rounded-2xl p-5 sm:p-6 max-w-lg w-full space-y-4 border border-slate-200 shadow-2xl max-h-[92vh] flex flex-col overflow-hidden">
+            {/* Modal Header */}
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3 shrink-0">
+              <div className="flex items-center gap-2.5">
+                <div className="w-9 h-9 rounded-xl bg-emerald-100 text-emerald-700 flex items-center justify-center border border-emerald-200">
+                  <CheckCircle2 className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-black text-slate-900">Resolve Complaint #{complaint.complaintNumber}</h3>
+                  <p className="text-[11px] text-slate-500 font-medium">Capture or upload GPS-watermarked resolution proof</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowResolveModal(false);
+                  setResolutionImageBlob(null);
+                  setResolutionImageDataUrl(null);
+                  setResolutionGps(null);
+                  setResolutionGpsError(null);
+                }}
+                className="p-1.5 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-lg transition-colors cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
             </div>
-            <div>
-              <label className="block text-xs font-bold text-slate-600 mb-1">Work Performed Details</label>
-              <input
-                type="text"
-                placeholder="e.g. Replaced faulty MC4 connector and reset inverter"
-                value={workPerformed}
-                onChange={(e) => setWorkPerformed(e.target.value)}
-                className="w-full p-2 bg-slate-50 border border-slate-300 rounded-xl text-xs font-semibold"
-              />
-            </div>
-            <div className="flex justify-end space-x-2 pt-2">
-              <button type="button" onClick={() => setShowResolveModal(false)} className="px-3 py-2 bg-slate-100 text-slate-700 font-bold rounded-xl text-xs">Cancel</button>
-              <button type="submit" disabled={saving} className="px-4 py-2 bg-emerald-600 text-white font-bold rounded-xl text-xs">Confirm Resolution</button>
-            </div>
-          </form>
-        </div>
-      )}
 
-      {showCloseModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs">
-          <form onSubmit={handleCloseSubmit} className="bg-white rounded-2xl p-6 max-w-md w-full space-y-4 border border-slate-200 shadow-2xl">
-            <h3 className="text-sm font-black text-slate-900">Close Complaint</h3>
-            <div>
-              <label className="block text-xs font-bold text-slate-600 mb-1">Customer Rating (1 - 5 Stars)</label>
-              <div className="flex space-x-1 pt-1">
-                {[1, 2, 3, 4, 5].map(star => (
-                  <button
-                    key={star}
-                    type="button"
-                    onClick={() => setCustomerRating(star as any)}
-                    className="p-1 cursor-pointer"
-                  >
-                    <Star className={`w-6 h-6 ${star <= customerRating ? 'fill-amber-400 text-amber-400' : 'text-slate-300'}`} />
-                  </button>
-                ))}
+            <div className="flex-1 overflow-y-auto space-y-4 pr-1">
+              {/* Mandatory Notice */}
+              <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 flex items-start gap-2.5">
+                <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                <div className="text-[11px] text-amber-900 leading-relaxed font-medium">
+                  <strong className="font-bold">Mandatory Verification:</strong> A photo of what was resolved must be provided with verified real-time GPS coordinates. The photo will be permanently stamped and securely stored in Backblaze B2.
+                </div>
+              </div>
+
+              {/* Resolution Summary */}
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">
+                  Resolution Summary *
+                </label>
+                <textarea
+                  rows={2}
+                  required
+                  placeholder="Describe how the complaint was resolved..."
+                  value={resolutionSummary}
+                  onChange={(e) => setResolutionSummary(e.target.value)}
+                  className="w-full p-2.5 bg-slate-50 border border-slate-300 rounded-xl text-xs font-medium focus:ring-2 focus:ring-emerald-500 focus:outline-none"
+                />
+              </div>
+
+              {/* Work Performed */}
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">
+                  Work Performed (What was resolved) *
+                </label>
+                <input
+                  type="text"
+                  required
+                  placeholder="e.g. Replaced MC4 connector and rebooted solar inverter"
+                  value={workPerformed}
+                  onChange={(e) => setWorkPerformed(e.target.value)}
+                  className="w-full p-2.5 bg-slate-50 border border-slate-300 rounded-xl text-xs font-semibold focus:ring-2 focus:ring-emerald-500 focus:outline-none"
+                />
+              </div>
+
+              {/* Mandatory Geotagged Resolution Photo Section */}
+              <div className="bg-slate-50 border border-slate-200 rounded-xl p-3.5 space-y-3">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <span className="p-1 rounded-md bg-emerald-600 text-white shadow-2xs">
+                      <Camera className="w-3.5 h-3.5" />
+                    </span>
+                    <label className="text-xs font-black text-slate-800 uppercase tracking-wider">
+                      Resolution Proof Photo *
+                    </label>
+                  </div>
+                  <span className="text-[10px] font-bold text-rose-600 bg-rose-50 px-2 py-0.5 rounded-full border border-rose-200">
+                    Required for Resolution
+                  </span>
+                </div>
+
+                {isProcessingResolutionGps ? (
+                  <div className="py-6 flex flex-col items-center justify-center space-y-2 bg-white rounded-xl border border-dashed border-emerald-300">
+                    <Loader2 className="w-6 h-6 text-emerald-600 animate-spin" />
+                    <span className="text-xs font-bold text-emerald-800">Acquiring GPS coordinates & stamping watermark...</span>
+                    <span className="text-[10px] text-slate-500">Please allow location access if prompted by your browser.</span>
+                  </div>
+                ) : !resolutionImageDataUrl ? (
+                  <label className="flex flex-col items-center justify-center py-6 px-4 bg-white hover:bg-emerald-50/50 border-2 border-dashed border-emerald-300 hover:border-emerald-500 rounded-xl cursor-pointer transition-all group">
+                    <div className="w-10 h-10 rounded-full bg-emerald-100 text-emerald-700 flex items-center justify-center group-hover:scale-110 transition-transform mb-2">
+                      <Camera className="w-5 h-5" />
+                    </div>
+                    <span className="text-xs font-bold text-emerald-800">
+                      Take Photo or Upload Proof
+                    </span>
+                    <span className="text-[10px] text-slate-500 text-center mt-1">
+                      Camera capture supported on mobile. GPS coordinates (Lat/Lng) will be automatically fetched & stamped.
+                    </span>
+                    <input
+                      type="file"
+                      accept="image/*"
+                      capture="environment"
+                      onChange={(e) => {
+                        const file = e.target.files?.[0];
+                        if (file) {
+                          handleProcessResolutionImage(file);
+                          e.target.value = '';
+                        }
+                      }}
+                      className="hidden"
+                    />
+                  </label>
+                ) : (
+                  <div className="bg-white rounded-xl p-3 border border-emerald-300 shadow-2xs space-y-2.5">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-1.5">
+                        <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-emerald-100 text-emerald-800 border border-emerald-300 flex items-center gap-1">
+                          <CheckCircle2 className="w-3 h-3 text-emerald-600" />
+                          <span>GPS Watermark Stamped</span>
+                        </span>
+                        <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-blue-100 text-blue-800 border border-blue-200">
+                          ☁️ Backblaze B2 Ready
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-1.5">
+                        <button
+                          type="button"
+                          onClick={() => setViewingProofImage({
+                            url: resolutionImageDataUrl,
+                            title: `Resolution Proof - Complaint #${complaint.complaintNumber}`,
+                            location: resolutionGps || undefined
+                          })}
+                          className="px-2 py-1 bg-slate-100 hover:bg-slate-200 text-slate-800 rounded-lg text-[11px] font-bold transition-all flex items-center gap-1 cursor-pointer border border-slate-200"
+                        >
+                          <Eye className="w-3 h-3 text-slate-600" />
+                          <span>Inspect</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setResolutionImageBlob(null);
+                            setResolutionImageDataUrl(null);
+                            setResolutionGps(null);
+                            setResolutionGpsError(null);
+                          }}
+                          className="p-1 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer"
+                          title="Remove photo"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-3">
+                      <img
+                        src={resolutionImageDataUrl}
+                        alt="Watermarked Resolution Preview"
+                        onClick={() => setViewingProofImage({
+                          url: resolutionImageDataUrl,
+                          title: `Resolution Proof - Complaint #${complaint.complaintNumber}`,
+                          location: resolutionGps || undefined
+                        })}
+                        className="w-24 h-16 object-cover rounded-lg border border-slate-200 cursor-pointer shadow-2xs hover:opacity-95"
+                      />
+                      <div className="space-y-1 text-xs">
+                        {resolutionGps && typeof resolutionGps.latitude === 'number' && resolutionGps.latitude !== 0 && (
+                          <div className="font-mono text-[11px] font-bold text-slate-800 flex items-center gap-1">
+                            <MapPin className="w-3.5 h-3.5 text-rose-600 shrink-0" />
+                            <span>
+                              {Math.abs(resolutionGps.latitude).toFixed(6)}° {resolutionGps.latitude >= 0 ? 'N' : 'S'}, {Math.abs(resolutionGps.longitude).toFixed(6)}° {resolutionGps.longitude >= 0 ? 'E' : 'W'}
+                            </span>
+                          </div>
+                        )}
+                        {resolutionGps?.address && (
+                          <p className="text-[10px] text-slate-500 font-medium line-clamp-1 max-w-xs">
+                            📍 {resolutionGps.address}
+                          </p>
+                        )}
+                        <label className="text-[10px] font-bold text-emerald-700 hover:text-emerald-800 cursor-pointer underline inline-block">
+                          Retake photo
+                          <input
+                            type="file"
+                            accept="image/*"
+                            capture="environment"
+                            onChange={(e) => {
+                              const file = e.target.files?.[0];
+                              if (file) {
+                                handleProcessResolutionImage(file);
+                                e.target.value = '';
+                              }
+                            }}
+                            className="hidden"
+                          />
+                        </label>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {resolutionGpsError && (
+                  <p className="text-[10px] text-amber-700 font-medium">
+                    ⚠️ {resolutionGpsError} (Timestamp stamp applied)
+                  </p>
+                )}
               </div>
             </div>
-            <div>
-              <label className="block text-xs font-bold text-slate-600 mb-1">Customer Feedback Notes</label>
-              <textarea
-                rows={2}
-                placeholder="Feedback from customer..."
-                value={customerFeedback}
-                onChange={(e) => setCustomerFeedback(e.target.value)}
-                className="w-full p-2 bg-slate-50 border border-slate-300 rounded-xl text-xs font-medium"
-              />
-            </div>
-            <div className="flex justify-end space-x-2 pt-2">
-              <button type="button" onClick={() => setShowCloseModal(false)} className="px-3 py-2 bg-slate-100 text-slate-700 font-bold rounded-xl text-xs">Cancel</button>
-              <button type="submit" disabled={saving} className="px-4 py-2 bg-slate-900 text-white font-bold rounded-xl text-xs">Permanently Close</button>
+
+            {/* Modal Actions */}
+            <div className="flex items-center justify-between pt-3 border-t border-slate-100 shrink-0">
+              <button
+                type="button"
+                onClick={() => {
+                  setShowResolveModal(false);
+                  setResolutionImageBlob(null);
+                  setResolutionImageDataUrl(null);
+                  setResolutionGps(null);
+                  setResolutionGpsError(null);
+                }}
+                className="px-3.5 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-xl text-xs transition-colors cursor-pointer"
+              >
+                Cancel
+              </button>
+
+              <button
+                type="submit"
+                disabled={saving || isProcessingResolutionGps || !resolutionImageBlob || !resolutionSummary.trim() || !workPerformed.trim()}
+                title={!resolutionImageBlob ? 'Please take or upload a resolution photo first' : 'Confirm and resolve complaint'}
+                className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-300 disabled:cursor-not-allowed text-white font-bold rounded-xl text-xs transition-all flex items-center gap-1.5 shadow-xs cursor-pointer"
+              >
+                {saving ? (
+                  <>
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    <span>Uploading & Resolving...</span>
+                  </>
+                ) : (
+                  <>
+                    <CheckCircle2 className="w-3.5 h-3.5" />
+                    <span>Confirm & Mark as Resolved</span>
+                  </>
+                )}
+              </button>
             </div>
           </form>
         </div>
@@ -2262,6 +2647,77 @@ const ComplaintDetailModal: React.FC<ComplaintDetailModalProps> = ({
               <button type="submit" disabled={saving} className="px-4 py-2 bg-amber-600 text-white font-bold rounded-xl text-xs">Reopen Complaint</button>
             </div>
           </form>
+        </div>
+      )}
+
+      {/* Geotagged Resolution Proof Fullscreen Modal */}
+      {viewingProofImage && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-950/85 backdrop-blur-xs animate-in fade-in duration-200">
+          <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-3xl max-h-[92vh] flex flex-col overflow-hidden">
+            {/* Header */}
+            <div className="px-5 py-3.5 bg-slate-900 text-white flex items-center justify-between border-b border-slate-800 shrink-0">
+              <div className="flex items-center gap-2.5">
+                <div className="w-8 h-8 rounded-lg bg-emerald-500/20 text-emerald-400 flex items-center justify-center border border-emerald-500/30">
+                  <Camera className="w-4 h-4" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-white">{viewingProofImage.title}</h3>
+                  <p className="text-[10px] text-slate-400">Geotagged Resolution Proof (Stored in Backblaze B2)</p>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <a
+                  href={viewingProofImage.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  download={`complaint_resolution_proof_${Date.now()}.jpg`}
+                  className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-bold flex items-center gap-1.5 transition-colors cursor-pointer shadow-xs"
+                  title="Download Geotagged Photo"
+                >
+                  <Download className="w-3.5 h-3.5" />
+                  <span className="hidden sm:inline">Download</span>
+                </a>
+                <button
+                  type="button"
+                  onClick={() => setViewingProofImage(null)}
+                  className="p-1.5 text-slate-400 hover:text-white hover:bg-slate-800 rounded-lg transition-colors cursor-pointer"
+                  title="Close"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+            </div>
+
+            {/* Photo Viewer */}
+            <div className="flex-1 bg-slate-950 p-2 sm:p-4 overflow-auto flex items-center justify-center min-h-[360px]">
+              <img
+                src={viewingProofImage.url}
+                alt="Geotagged Resolution Proof"
+                className="max-w-full max-h-[64vh] object-contain rounded-xl border border-slate-800 shadow-2xl"
+              />
+            </div>
+
+            {/* Location Footer */}
+            {viewingProofImage.location && (
+              <div className="px-5 py-2.5 bg-slate-50 border-t border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-1.5 text-xs">
+                <div className="flex items-center gap-2 text-slate-700">
+                  <MapPin className="w-4 h-4 text-rose-600 shrink-0" />
+                  <span className="font-mono font-bold">
+                    {Math.abs(viewingProofImage.location.latitude).toFixed(6)}° {viewingProofImage.location.latitude >= 0 ? 'N' : 'S'}, {Math.abs(viewingProofImage.location.longitude).toFixed(6)}° {viewingProofImage.location.longitude >= 0 ? 'E' : 'W'}
+                  </span>
+                  {viewingProofImage.location.address && (
+                    <span className="text-slate-500 font-medium truncate max-w-sm">
+                      • {viewingProofImage.location.address}
+                    </span>
+                  )}
+                </div>
+                <span className="text-[11px] text-slate-400 font-medium">
+                  Recorded: {viewingProofImage.location.timestamp}
+                </span>
+              </div>
+            )}
+          </div>
         </div>
       )}
 

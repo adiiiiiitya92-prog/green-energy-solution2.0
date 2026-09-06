@@ -79,6 +79,49 @@ export const employeeService = {
     return id;
   },
 
+  async updateEmployee(id: string, updates: Partial<Profile>): Promise<Profile> {
+    const profile = await db.profiles.get(id);
+    if (!profile) {
+      throw new Error(`Employee profile with id "${id}" was not found.`);
+    }
+    const updatedProfile: Profile = {
+      ...profile,
+      ...updates,
+      id // preserve existing id
+    };
+    await db.profiles.put(updatedProfile);
+    saveRecordToFirestore('profiles', id, updatedProfile);
+
+    // Sync session storage if this user is currently authenticated
+    try {
+      const storedUserId = localStorage.getItem('ges_user_id');
+      if (storedUserId === id) {
+        localStorage.setItem('ges_user_profile', JSON.stringify(updatedProfile));
+        if (updatedProfile.email) {
+          localStorage.setItem('ges_user_email', updatedProfile.email.toLowerCase());
+        }
+      }
+      const { useAuthStore } = await import('../store/authStore');
+      const auth = useAuthStore.getState();
+      if (auth.currentUser?.id === id) {
+        useAuthStore.setState({
+          currentUser: updatedProfile,
+          currentRole: updatedProfile.role
+        });
+      }
+      if (auth.originalUser?.id === id) {
+        useAuthStore.setState({
+          originalUser: updatedProfile
+        });
+      }
+    } catch (err) {
+      console.warn('Session sync note:', err);
+    }
+
+    window.dispatchEvent(new CustomEvent('app-realtime-update'));
+    return updatedProfile;
+  },
+
   async toggleEmployeeStatus(id: string): Promise<void> {
     const profile = await db.profiles.get(id);
     if (profile) {

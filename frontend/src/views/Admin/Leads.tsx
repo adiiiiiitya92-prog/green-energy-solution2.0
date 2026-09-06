@@ -12,12 +12,13 @@ import { pdfService } from '../../services/pdfService';
 import { productService } from '../../services/productService';
 import { computeAllLeadsDispatchMap, computeLeadDispatchSummary } from '../../services/dispatchHelper';
 import type { LeadDispatchSummary } from '../../services/dispatchHelper';
-import type { Lead, Quotation, OrderConfirmation, Profile, ClientDocument, ClientRegistration, InstallationPhoto, ReleaseDocument, QuotationItem, PaymentInstallment, Product, Challan } from '../../types';
+import type { Lead, Quotation, OrderConfirmation, Profile, ClientDocument, ClientRegistration, InstallationPhoto, ReleaseDocument, QuotationItem, PaymentInstallment, Product, Challan, CashProofLocation } from '../../types';
 import { Timeline } from '../../components/Pipeline/Timeline';
 import { SignatureCapture } from '../../components/Signature/SignatureCapture';
 import { LeadDispatchModal } from '../../components/Common/LeadDispatchModal';
 import { compressImage } from '../../services/imageCompressionService';
 import { uploadImageToFirebase, uploadPdfToFirebase, getFreshB2SignedUrl, getQuickB2Url } from '../../services/firebase';
+import { acquireCurrentGpsLocation, applyGpsWatermark, type GpsWatermarkData } from '../../services/watermarkService';
 import { DcrDocument } from './DcrDocument';
 import { WcrDocument } from './WcrDocument';
 import { ModelAgreementDocument } from './ModelAgreementDocument';
@@ -31,7 +32,7 @@ import {
   ChevronLeft, Trash2, Send, Star, FileCheck, CheckCircle, Compass, X, Eye, Download,
   CreditCard, Wallet, Edit3, MessageSquare, Bell, Flame, FileText,
   BarChart3, FileSpreadsheet, Printer, Calendar, RotateCcw, Sparkles, Truck, AlertCircle,
-  Layers, Sun, Zap, Landmark
+  Layers, Sun, Zap, Landmark, MapPin, Loader2
 } from 'lucide-react';
 import dayjs from 'dayjs';
 
@@ -350,6 +351,28 @@ export const Leads: React.FC = () => {
   const [subsequentReference, setSubsequentReference] = useState<string>('');
   const [subsequentNotes, setSubsequentNotes] = useState<string>('');
   const [isRecordingPayment, setIsRecordingPayment] = useState<boolean>(false);
+
+  // Geotagged Cash Proof States for Initial Advance Booking
+  const [advanceCashImageBlob, setAdvanceCashImageBlob] = useState<Blob | null>(null);
+  const [advanceCashImageDataUrl, setAdvanceCashImageDataUrl] = useState<string | null>(null);
+  const [advanceCashGps, setAdvanceCashGps] = useState<GpsWatermarkData | null>(null);
+  const [isProcessingAdvanceCashGps, setIsProcessingAdvanceCashGps] = useState<boolean>(false);
+  const [advanceCashGpsError, setAdvanceCashGpsError] = useState<string | null>(null);
+
+  // Geotagged Cash Proof States for Subsequent Installment Payment
+  const [subsequentCashImageBlob, setSubsequentCashImageBlob] = useState<Blob | null>(null);
+  const [subsequentCashImageDataUrl, setSubsequentCashImageDataUrl] = useState<string | null>(null);
+  const [subsequentCashGps, setSubsequentCashGps] = useState<GpsWatermarkData | null>(null);
+  const [isProcessingSubsequentCashGps, setIsProcessingSubsequentCashGps] = useState<boolean>(false);
+  const [subsequentCashGpsError, setSubsequentCashGpsError] = useState<string | null>(null);
+
+  // Viewing Geotagged Cash Proof Fullscreen Modal State
+  const [viewingCashProof, setViewingCashProof] = useState<{
+    url: string;
+    title: string;
+    location?: CashProofLocation;
+  } | null>(null);
+
   const [receiptPreviewState, setReceiptPreviewState] = useState<{
     isOpen: boolean;
     title: string;
@@ -790,7 +813,12 @@ export const Leads: React.FC = () => {
   // Helper to normalize payments list for backward compatibility
   const getPaymentsList = (oc: OrderConfirmation | null): PaymentInstallment[] => {
     if (!oc) return [];
-    if (oc.payments && oc.payments.length > 0) return oc.payments;
+    if (oc.payments && oc.payments.length > 0) {
+      if (oc.cashProofImageUrl && !oc.payments[0].cashProofImageUrl) {
+        return oc.payments.map((p, idx) => idx === 0 ? { ...p, cashProofImageUrl: oc.cashProofImageUrl, cashProofLocation: oc.cashProofLocation } : p);
+      }
+      return oc.payments;
+    }
     if (oc.advanceAmount && oc.advanceAmount > 0) {
       return [
         {
@@ -800,7 +828,9 @@ export const Leads: React.FC = () => {
           amount: oc.advanceAmount,
           paymentMode: oc.paymentMode || 'utr',
           paymentReference: oc.paymentReference,
-          paidAt: oc.createdAt
+          paidAt: oc.createdAt,
+          cashProofImageUrl: oc.cashProofImageUrl,
+          cashProofLocation: oc.cashProofLocation
         }
       ];
     }
@@ -816,6 +846,14 @@ export const Leads: React.FC = () => {
     setIsLoanCase(Boolean(lead.isLoan));
     setLoanBankName(lead.loanBankName || '');
     setLoanSaveSuccess(false);
+    setAdvanceCashImageBlob(null);
+    setAdvanceCashImageDataUrl(null);
+    setAdvanceCashGps(null);
+    setAdvanceCashGpsError(null);
+    setSubsequentCashImageBlob(null);
+    setSubsequentCashImageDataUrl(null);
+    setSubsequentCashGps(null);
+    setSubsequentCashGpsError(null);
     // Persist to sessionStorage so refresh restores same lead + tab
     sessionStorage.setItem('leads_selectedLeadId', lead.id);
     if (!shouldPreserveTab) {
@@ -1168,6 +1206,75 @@ export const Leads: React.FC = () => {
     });
   };
 
+  // Geotagged Cash Proof Image processor
+  const handleProcessCashImage = async (
+    file: File,
+    isSubsequent: boolean,
+    amount: number,
+    label: string
+  ) => {
+    if (isSubsequent) {
+      setIsProcessingSubsequentCashGps(true);
+      setSubsequentCashGpsError(null);
+    } else {
+      setIsProcessingAdvanceCashGps(true);
+      setAdvanceCashGpsError(null);
+    }
+
+    try {
+      let gps: GpsWatermarkData | null = null;
+      try {
+        gps = await acquireCurrentGpsLocation();
+      } catch (gpsErr: any) {
+        console.warn("GPS acquire note:", gpsErr);
+        const errMsg = gpsErr?.message || 'GPS location could not be fetched automatically.';
+        if (isSubsequent) {
+          setSubsequentCashGpsError(`${errMsg} Stamped with current system timestamp.`);
+        } else {
+          setAdvanceCashGpsError(`${errMsg} Stamped with current system timestamp.`);
+        }
+        gps = {
+          latitude: 0,
+          longitude: 0,
+          address: 'Location permission unavailable / pending',
+          timestamp: dayjs().format('DD MMM YYYY, hh:mm:ss A')
+        };
+      }
+
+      const result = await applyGpsWatermark(file, {
+        gps,
+        customerName: selectedLead?.name,
+        amount,
+        paymentLabel: label,
+        leadId: selectedLead?.id
+      });
+
+      if (isSubsequent) {
+        setSubsequentCashImageBlob(result.watermarkedBlob);
+        setSubsequentCashImageDataUrl(result.watermarkedDataUrl);
+        setSubsequentCashGps(result.gps);
+      } else {
+        setAdvanceCashImageBlob(result.watermarkedBlob);
+        setAdvanceCashImageDataUrl(result.watermarkedDataUrl);
+        setAdvanceCashGps(result.gps);
+      }
+    } catch (err: any) {
+      console.error("Cash image watermarking error:", err);
+      const errMsg = err?.message || 'Failed to process image watermark.';
+      if (isSubsequent) {
+        setSubsequentCashGpsError(errMsg);
+      } else {
+        setAdvanceCashGpsError(errMsg);
+      }
+    } finally {
+      if (isSubsequent) {
+        setIsProcessingSubsequentCashGps(false);
+      } else {
+        setIsProcessingAdvanceCashGps(false);
+      }
+    }
+  };
+
   // 2. Booking order confirmation
   const handleConfirmOrder = async () => {
     if (!selectedLead) return;
@@ -1188,6 +1295,19 @@ export const Leads: React.FC = () => {
 
       const subtotal = itemsToConfirm.reduce((sum, item) => sum + (item.amount || 0), 0) || advanceAmount;
 
+      // Upload Geotagged Cash Proof to Backblaze B2 if payment mode is cash and proof image exists
+      let advanceCashB2Url = '';
+      if (paymentMode === 'cash' && advanceCashImageBlob) {
+        try {
+          advanceCashB2Url = await uploadImageToFirebase(
+            advanceCashImageBlob,
+            `orders/${selectedLead.id}/cash_proof_pay_1_${Date.now()}.jpg`
+          );
+        } catch (cErr) {
+          console.warn("Advance cash proof upload note:", cErr);
+        }
+      }
+
       const initialPayment: PaymentInstallment = {
         id: `pay_${Date.now()}`,
         installmentNo: 1,
@@ -1195,7 +1315,15 @@ export const Leads: React.FC = () => {
         amount: advanceAmount,
         paymentMode,
         paymentReference: paymentReference || undefined,
-        paidAt: new Date().toISOString()
+        paidAt: new Date().toISOString(),
+        cashProofImageUrl: advanceCashB2Url || undefined,
+        cashProofLocation: advanceCashGps ? {
+          latitude: advanceCashGps.latitude,
+          longitude: advanceCashGps.longitude,
+          address: advanceCashGps.address,
+          timestamp: advanceCashGps.timestamp,
+          accuracy: advanceCashGps.accuracy
+        } : undefined
       };
 
       const ocDraft: Omit<OrderConfirmation, 'id' | 'createdAt'> = {
@@ -1208,6 +1336,14 @@ export const Leads: React.FC = () => {
         paymentReference: paymentReference || undefined,
         clientSignatureBlob: signatureBlob || '',
         payments: [initialPayment],
+        cashProofImageUrl: advanceCashB2Url || undefined,
+        cashProofLocation: advanceCashGps ? {
+          latitude: advanceCashGps.latitude,
+          longitude: advanceCashGps.longitude,
+          address: advanceCashGps.address,
+          timestamp: advanceCashGps.timestamp,
+          accuracy: advanceCashGps.accuracy
+        } : undefined,
         createdBy: currentUser?.id || 'mock_emp'
       };
 
@@ -1261,7 +1397,15 @@ export const Leads: React.FC = () => {
           paymentReference: paymentReference || undefined,
           clientSignatureBlob: sigUrl || signatureUrl || existingOc.clientSignatureBlob || '',
           confirmationPdfBlob: localPdfUrl,
-          payments: [initialPayment]
+          payments: [initialPayment],
+          cashProofImageUrl: advanceCashB2Url || existingOc.cashProofImageUrl || undefined,
+          cashProofLocation: advanceCashGps ? {
+            latitude: advanceCashGps.latitude,
+            longitude: advanceCashGps.longitude,
+            address: advanceCashGps.address,
+            timestamp: advanceCashGps.timestamp,
+            accuracy: advanceCashGps.accuracy
+          } : existingOc.cashProofLocation
         };
         await orderService.updateOrderConfirmation(updatedOc);
         setExistingOc(updatedOc);
@@ -1292,6 +1436,12 @@ export const Leads: React.FC = () => {
       }
 
       await leadService.updateLeadStatus(selectedLead.id, 'confirmed');
+
+      // Clear cash proof temporary state
+      setAdvanceCashImageBlob(null);
+      setAdvanceCashImageDataUrl(null);
+      setAdvanceCashGps(null);
+      setAdvanceCashGpsError(null);
 
       alert('Order booking confirmed! Booking receipt generated and saved.');
       
@@ -1349,6 +1499,19 @@ export const Leads: React.FC = () => {
       const totalPaidAfterThis = totalPaidSoFar + subsequentAmount;
       const isFullyPaidNow = totalPaidAfterThis >= subtotal;
 
+      // Upload Geotagged Cash Proof to Backblaze B2 if subsequent payment mode is cash and proof image exists
+      let subsequentCashB2Url = '';
+      if (subsequentPaymentMode === 'cash' && subsequentCashImageBlob) {
+        try {
+          subsequentCashB2Url = await uploadImageToFirebase(
+            subsequentCashImageBlob,
+            `orders/${selectedLead.id}/cash_proof_pay_${nextNo}_${Date.now()}.jpg`
+          );
+        } catch (cErr) {
+          console.warn("Subsequent cash proof B2 upload error:", cErr);
+        }
+      }
+
       const newPayment: PaymentInstallment = {
         id: `pay_${Date.now()}`,
         installmentNo: nextNo,
@@ -1357,7 +1520,15 @@ export const Leads: React.FC = () => {
         paymentMode: subsequentPaymentMode,
         paymentReference: subsequentReference || undefined,
         paidAt: new Date().toISOString(),
-        notes: subsequentNotes || undefined
+        notes: subsequentNotes || undefined,
+        cashProofImageUrl: subsequentCashB2Url || undefined,
+        cashProofLocation: subsequentCashGps ? {
+          latitude: subsequentCashGps.latitude,
+          longitude: subsequentCashGps.longitude,
+          address: subsequentCashGps.address,
+          timestamp: subsequentCashGps.timestamp,
+          accuracy: subsequentCashGps.accuracy
+        } : undefined
       };
 
       const updatedPayments = [...currentPayments, newPayment];
@@ -1432,10 +1603,14 @@ export const Leads: React.FC = () => {
       await leadService.updateLeadStatus(selectedLead.id, targetStatus);
       selectedLead.status = targetStatus;
 
-      // Reset form
+      // Reset form & cash proof state
       setSubsequentAmount(0);
       setSubsequentReference('');
       setSubsequentNotes('');
+      setSubsequentCashImageBlob(null);
+      setSubsequentCashImageDataUrl(null);
+      setSubsequentCashGps(null);
+      setSubsequentCashGpsError(null);
 
       alert(`✅ ${label} of ₹${subsequentAmount.toLocaleString('en-IN')} recorded successfully! ${isFullyPaidNow ? '🎉 Full Payment Completed! All dues for this order have been settled.' : ''}`);
 
@@ -2447,6 +2622,22 @@ export const Leads: React.FC = () => {
 
                                     {/* Action Buttons for this specific installment receipt */}
                                     <div className="flex items-center gap-1.5 shrink-0">
+                                      {pay.cashProofImageUrl && (
+                                        <button
+                                          type="button"
+                                          onClick={() => setViewingCashProof({
+                                            url: pay.cashProofImageUrl!,
+                                            title: `${pay.label || `Payment #${idx + 1}`} - Geotagged Cash Proof`,
+                                            location: pay.cashProofLocation
+                                          })}
+                                          className="px-2.5 py-1.5 bg-amber-50 hover:bg-amber-100 text-amber-900 rounded-lg text-[10px] font-extrabold flex items-center gap-1 transition-all cursor-pointer border border-amber-300 shadow-2xs"
+                                          title="View Geotagged Cash Handover Photo (Stored in Backblaze B2)"
+                                        >
+                                          <Camera className="w-3 h-3 text-amber-600" />
+                                          <span>Cash Proof</span>
+                                        </button>
+                                      )}
+
                                       <button
                                         type="button"
                                         onClick={() => handlePreviewInstallmentReceipt(pay)}
@@ -2557,6 +2748,136 @@ export const Leads: React.FC = () => {
                                 </div>
                               </div>
 
+                              {/* Geotagged Cash Proof Upload (Only for Cash Payment Mode) */}
+                              {subsequentPaymentMode === 'cash' && (
+                                <div className="bg-amber-50/90 border border-amber-300 rounded-xl p-3.5 space-y-3 shadow-2xs">
+                                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
+                                    <div className="space-y-0.5">
+                                      <div className="flex items-center gap-2">
+                                        <span className="p-1 rounded-md bg-amber-600 text-white shadow-2xs">
+                                          <Camera className="w-3.5 h-3.5" />
+                                        </span>
+                                        <h5 className="text-xs font-black text-amber-950 uppercase tracking-wider">
+                                          Cash Handover Proof & GPS Watermark
+                                        </h5>
+                                      </div>
+                                      <p className="text-[11px] text-amber-900/80 font-medium">
+                                        Upload or capture a photo of the cash receipt or notes. Device GPS coordinates (Lat/Lng) will be automatically stamped onto the photo and saved to Backblaze B2.
+                                      </p>
+                                    </div>
+
+                                    <label className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-amber-600 hover:bg-amber-700 text-white rounded-lg text-xs font-bold transition-all cursor-pointer shadow-xs shrink-0 select-none">
+                                      <Camera className="w-3.5 h-3.5" />
+                                      <span>{subsequentCashImageDataUrl ? 'Retake Photo' : 'Upload / Capture Photo'}</span>
+                                      <input
+                                        type="file"
+                                        accept="image/*"
+                                        capture="environment"
+                                        onChange={(e) => {
+                                          const file = e.target.files?.[0];
+                                          if (file) {
+                                            handleProcessCashImage(file, true, subsequentAmount, nextLabel);
+                                            e.target.value = '';
+                                          }
+                                        }}
+                                        className="hidden"
+                                      />
+                                    </label>
+                                  </div>
+
+                                  {isProcessingSubsequentCashGps && (
+                                    <div className="p-2.5 bg-amber-100/80 border border-amber-300 rounded-lg flex items-center gap-2.5 animate-pulse text-xs font-bold text-amber-900">
+                                      <Loader2 className="w-4 h-4 text-amber-700 animate-spin shrink-0" />
+                                      <span>Acquiring high-accuracy GPS coordinates and stamping watermark...</span>
+                                    </div>
+                                  )}
+
+                                  {subsequentCashGpsError && !isProcessingSubsequentCashGps && (
+                                    <div className="p-2 bg-amber-100/90 border border-amber-300 rounded-lg flex items-center gap-2 text-xs text-amber-900 font-medium">
+                                      <AlertCircle className="w-4 h-4 text-amber-700 shrink-0" />
+                                      <span>{subsequentCashGpsError}</span>
+                                    </div>
+                                  )}
+
+                                  {subsequentCashImageDataUrl && !isProcessingSubsequentCashGps && (
+                                    <div className="bg-white border border-amber-200 rounded-xl p-2.5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-2xs">
+                                      <div className="flex items-center gap-3">
+                                        <div
+                                          className="relative group cursor-pointer shrink-0"
+                                          onClick={() => setViewingCashProof({
+                                            url: subsequentCashImageDataUrl!,
+                                            title: `${nextLabel} - Cash Handover Proof`,
+                                            location: subsequentCashGps || undefined
+                                          })}
+                                        >
+                                          <img
+                                            src={subsequentCashImageDataUrl}
+                                            alt="Watermarked Cash Proof"
+                                            className="w-16 h-16 object-cover rounded-lg border border-amber-300 shadow-xs"
+                                          />
+                                          <div className="absolute inset-0 bg-black/40 rounded-lg flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
+                                            <Eye className="w-4 h-4 text-white" />
+                                          </div>
+                                        </div>
+
+                                        <div className="space-y-0.5 text-xs">
+                                          <div className="flex items-center gap-1.5 flex-wrap">
+                                            <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-emerald-100 text-emerald-800 border border-emerald-300 flex items-center gap-1">
+                                              <CheckCircle className="w-3 h-3 text-emerald-600" />
+                                              <span>GPS Watermark Stamped</span>
+                                            </span>
+                                            <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-blue-100 text-blue-800 border border-blue-200">
+                                              ☁️ Backblaze B2 Upload Ready
+                                            </span>
+                                          </div>
+
+                                          {subsequentCashGps && typeof subsequentCashGps.latitude === 'number' && subsequentCashGps.latitude !== 0 && (
+                                            <div className="font-mono text-[11px] font-bold text-slate-800 flex items-center gap-1">
+                                              <MapPin className="w-3.5 h-3.5 text-rose-600 shrink-0" />
+                                              <span>{Math.abs(subsequentCashGps.latitude).toFixed(6)}° {subsequentCashGps.latitude >= 0 ? 'N' : 'S'}, {Math.abs(subsequentCashGps.longitude).toFixed(6)}° {subsequentCashGps.longitude >= 0 ? 'E' : 'W'}</span>
+                                            </div>
+                                          )}
+
+                                          {subsequentCashGps?.address && (
+                                            <p className="text-[10px] text-slate-500 font-medium line-clamp-1 max-w-sm">
+                                              📍 {subsequentCashGps.address}
+                                            </p>
+                                          )}
+                                        </div>
+                                      </div>
+
+                                      <div className="flex items-center gap-2 self-end sm:self-center shrink-0">
+                                        <button
+                                          type="button"
+                                          onClick={() => setViewingCashProof({
+                                            url: subsequentCashImageDataUrl!,
+                                            title: `${nextLabel} - Cash Handover Proof`,
+                                            location: subsequentCashGps || undefined
+                                          })}
+                                          className="px-2.5 py-1 bg-slate-100 hover:bg-slate-200 text-slate-800 rounded-lg text-[11px] font-bold transition-all flex items-center gap-1 cursor-pointer border border-slate-200"
+                                        >
+                                          <Eye className="w-3 h-3 text-slate-600" />
+                                          <span>Inspect</span>
+                                        </button>
+                                        <button
+                                          type="button"
+                                          onClick={() => {
+                                            setSubsequentCashImageBlob(null);
+                                            setSubsequentCashImageDataUrl(null);
+                                            setSubsequentCashGps(null);
+                                            setSubsequentCashGpsError(null);
+                                          }}
+                                          className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer"
+                                          title="Remove photo"
+                                        >
+                                          <Trash2 className="w-3.5 h-3.5" />
+                                        </button>
+                                      </div>
+                                    </div>
+                                  )}
+                                </div>
+                              )}
+
                               <div>
                                 <input
                                   type="text"
@@ -2646,6 +2967,136 @@ export const Leads: React.FC = () => {
                             />
                           </div>
                         </div>
+
+                        {/* Geotagged Cash Proof Upload (Only for Cash Payment Mode) */}
+                        {paymentMode === 'cash' && (
+                          <div className="bg-amber-50/90 border border-amber-300 rounded-xl p-3.5 space-y-3 shadow-2xs">
+                            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
+                              <div className="space-y-0.5">
+                                <div className="flex items-center gap-2">
+                                  <span className="p-1 rounded-md bg-amber-600 text-white shadow-2xs">
+                                    <Camera className="w-3.5 h-3.5" />
+                                  </span>
+                                  <h5 className="text-xs font-black text-amber-950 uppercase tracking-wider">
+                                    1st Advance Cash Handover Proof & GPS Watermark
+                                  </h5>
+                                </div>
+                                <p className="text-[11px] text-amber-900/80 font-medium">
+                                  Upload or take a photo of the cash receipt or notes. Device GPS coordinates (Lat/Lng) will be automatically stamped onto the photo and saved to Backblaze B2.
+                                </p>
+                              </div>
+
+                              <label className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-amber-600 hover:bg-amber-700 text-white rounded-lg text-xs font-bold transition-all cursor-pointer shadow-xs shrink-0 select-none">
+                                <Camera className="w-3.5 h-3.5" />
+                                <span>{advanceCashImageDataUrl ? 'Retake Photo' : 'Upload / Capture Photo'}</span>
+                                <input
+                                  type="file"
+                                  accept="image/*"
+                                  capture="environment"
+                                  onChange={(e) => {
+                                    const file = e.target.files?.[0];
+                                    if (file) {
+                                      handleProcessCashImage(file, false, advanceAmount, '1st Advance Payment');
+                                      e.target.value = '';
+                                    }
+                                  }}
+                                  className="hidden"
+                                />
+                              </label>
+                            </div>
+
+                            {isProcessingAdvanceCashGps && (
+                              <div className="p-2.5 bg-amber-100/80 border border-amber-300 rounded-lg flex items-center gap-2.5 animate-pulse text-xs font-bold text-amber-900">
+                                <Loader2 className="w-4 h-4 text-amber-700 animate-spin shrink-0" />
+                                <span>Acquiring high-accuracy GPS coordinates and stamping watermark...</span>
+                              </div>
+                            )}
+
+                            {advanceCashGpsError && !isProcessingAdvanceCashGps && (
+                              <div className="p-2 bg-amber-100/90 border border-amber-300 rounded-lg flex items-center gap-2 text-xs text-amber-900 font-medium">
+                                <AlertCircle className="w-4 h-4 text-amber-700 shrink-0" />
+                                <span>{advanceCashGpsError}</span>
+                              </div>
+                            )}
+
+                            {advanceCashImageDataUrl && !isProcessingAdvanceCashGps && (
+                              <div className="bg-white border border-amber-200 rounded-xl p-2.5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-2xs">
+                                <div className="flex items-center gap-3">
+                                  <div
+                                    className="relative group cursor-pointer shrink-0"
+                                    onClick={() => setViewingCashProof({
+                                      url: advanceCashImageDataUrl!,
+                                      title: '1st Advance Payment - Cash Handover Proof',
+                                      location: advanceCashGps || undefined
+                                    })}
+                                  >
+                                    <img
+                                      src={advanceCashImageDataUrl}
+                                      alt="Watermarked Cash Proof"
+                                      className="w-16 h-16 object-cover rounded-lg border border-amber-300 shadow-xs"
+                                    />
+                                    <div className="absolute inset-0 bg-black/40 rounded-lg flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
+                                      <Eye className="w-4 h-4 text-white" />
+                                    </div>
+                                  </div>
+
+                                  <div className="space-y-0.5 text-xs">
+                                    <div className="flex items-center gap-1.5 flex-wrap">
+                                      <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-emerald-100 text-emerald-800 border border-emerald-300 flex items-center gap-1">
+                                        <CheckCircle className="w-3 h-3 text-emerald-600" />
+                                        <span>GPS Watermark Stamped</span>
+                                      </span>
+                                      <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-blue-100 text-blue-800 border border-blue-200">
+                                        ☁️ Backblaze B2 Upload Ready
+                                      </span>
+                                    </div>
+
+                                    {advanceCashGps && typeof advanceCashGps.latitude === 'number' && advanceCashGps.latitude !== 0 && (
+                                      <div className="font-mono text-[11px] font-bold text-slate-800 flex items-center gap-1">
+                                        <MapPin className="w-3.5 h-3.5 text-rose-600 shrink-0" />
+                                        <span>{Math.abs(advanceCashGps.latitude).toFixed(6)}° {advanceCashGps.latitude >= 0 ? 'N' : 'S'}, {Math.abs(advanceCashGps.longitude).toFixed(6)}° {advanceCashGps.longitude >= 0 ? 'E' : 'W'}</span>
+                                      </div>
+                                    )}
+
+                                    {advanceCashGps?.address && (
+                                      <p className="text-[10px] text-slate-500 font-medium line-clamp-1 max-w-sm">
+                                        📍 {advanceCashGps.address}
+                                      </p>
+                                    )}
+                                  </div>
+                                </div>
+
+                                <div className="flex items-center gap-2 self-end sm:self-center shrink-0">
+                                  <button
+                                    type="button"
+                                    onClick={() => setViewingCashProof({
+                                      url: advanceCashImageDataUrl!,
+                                      title: '1st Advance Payment - Cash Handover Proof',
+                                      location: advanceCashGps || undefined
+                                    })}
+                                    className="px-2.5 py-1 bg-slate-100 hover:bg-slate-200 text-slate-800 rounded-lg text-[11px] font-bold transition-all flex items-center gap-1 cursor-pointer border border-slate-200"
+                                  >
+                                    <Eye className="w-3 h-3 text-slate-600" />
+                                    <span>Inspect</span>
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setAdvanceCashImageBlob(null);
+                                      setAdvanceCashImageDataUrl(null);
+                                      setAdvanceCashGps(null);
+                                      setAdvanceCashGpsError(null);
+                                    }}
+                                    className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer"
+                                    title="Remove photo"
+                                  >
+                                    <Trash2 className="w-3.5 h-3.5" />
+                                  </button>
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        )}
 
                         {/* Signature Capture component */}
                         <div className="max-w-md">
@@ -5728,6 +6179,77 @@ export const Leads: React.FC = () => {
                 </div>
               )}
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Geotagged Cash Proof Fullscreen Preview Modal */}
+      {viewingCashProof && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-950/85 backdrop-blur-xs animate-in fade-in duration-200">
+          <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-3xl max-h-[92vh] flex flex-col overflow-hidden">
+            {/* Modal Header */}
+            <div className="px-5 py-3.5 bg-slate-900 text-white flex items-center justify-between border-b border-slate-800 shrink-0">
+              <div className="flex items-center gap-2.5">
+                <div className="w-8 h-8 rounded-lg bg-amber-500/20 text-amber-400 flex items-center justify-center border border-amber-500/30">
+                  <Camera className="w-4 h-4" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-white">{viewingCashProof.title}</h3>
+                  <p className="text-[10px] text-slate-400">Geotagged Cash Handover / Receipt Proof (Stored in Backblaze B2)</p>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <a
+                  href={viewingCashProof.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  download={`cash_proof_${Date.now()}.jpg`}
+                  className="px-3 py-1.5 bg-amber-600 hover:bg-amber-500 text-white rounded-lg text-xs font-bold flex items-center gap-1.5 transition-colors cursor-pointer shadow-xs"
+                  title="Download Geotagged Photo"
+                >
+                  <Download className="w-3.5 h-3.5" />
+                  <span className="hidden sm:inline">Download</span>
+                </a>
+                <button
+                  type="button"
+                  onClick={() => setViewingCashProof(null)}
+                  className="p-1.5 text-slate-400 hover:text-white hover:bg-slate-800 rounded-lg transition-colors cursor-pointer"
+                  title="Close"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+            </div>
+
+            {/* Modal Body / Image Viewer */}
+            <div className="flex-1 bg-slate-950 p-2 sm:p-4 overflow-auto flex items-center justify-center min-h-[360px]">
+              <img
+                src={viewingCashProof.url}
+                alt="Geotagged Cash Receipt"
+                className="max-w-full max-h-[64vh] object-contain rounded-xl border border-slate-800 shadow-2xl"
+              />
+            </div>
+
+            {/* Modal Footer / Location Details */}
+            {viewingCashProof.location && (
+              <div className="px-5 py-2.5 bg-slate-50 border-t border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-1.5 text-xs">
+                <div className="flex items-center gap-2 text-slate-700">
+                  <MapPin className="w-4 h-4 text-rose-600 shrink-0" />
+                  <span className="font-mono font-bold">
+                    {Math.abs(viewingCashProof.location.latitude).toFixed(6)}° {viewingCashProof.location.latitude >= 0 ? 'N' : 'S'}, {Math.abs(viewingCashProof.location.longitude).toFixed(6)}° {viewingCashProof.location.longitude >= 0 ? 'E' : 'W'}
+                  </span>
+                  {viewingCashProof.location.address && (
+                    <span className="text-slate-500 font-medium truncate max-w-sm">
+                      • {viewingCashProof.location.address}
+                    </span>
+                  )}
+                </div>
+                <span className="text-[11px] text-slate-400 font-medium">
+                  Recorded: {viewingCashProof.location.timestamp}
+                </span>
+              </div>
+            )}
           </div>
         </div>
       )}

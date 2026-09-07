@@ -4,6 +4,9 @@ import { saveRecordToFirestore, fetchCollectionFromFirestore } from './firebase'
 import { b2bBusinessService } from './b2bBusinessService';
 import { stockTransactionService } from './stockTransactionService';
 
+let lastChallanRemoteSync = 0;
+const CHALLAN_SYNC_INTERVAL = 15 * 60 * 1000;
+
 export const challanService = {
   async getChallans(): Promise<Challan[]> {
     const deletedIds = await getDeletedRecordIdsSet();
@@ -12,6 +15,7 @@ export const challanService = {
 
     const syncRemote = async () => {
       try {
+        lastChallanRemoteSync = Date.now();
         const remoteChallans = await fetchCollectionFromFirestore<Challan>('challans');
         if (remoteChallans && remoteChallans.length > 0) {
           const freshDeleted = await getDeletedRecordIdsSet();
@@ -25,15 +29,18 @@ export const challanService = {
       }
     };
 
-    if (validLocal.length > 0) {
-      syncRemote();
-      return validLocal;
+    if (validLocal.length === 0) {
+      await syncRemote();
+      const freshDeleted = await getDeletedRecordIdsSet();
+      const refreshed = await db.challans.orderBy('createdAt').reverse().toArray();
+      return refreshed.filter(c => !freshDeleted.has(c.id) && (!c.leadId || !freshDeleted.has(c.leadId)));
     }
 
-    await syncRemote();
-    const freshDeleted = await getDeletedRecordIdsSet();
-    const refreshed = await db.challans.orderBy('createdAt').reverse().toArray();
-    return refreshed.filter(c => !freshDeleted.has(c.id) && (!c.leadId || !freshDeleted.has(c.leadId)));
+    if (Date.now() - lastChallanRemoteSync > CHALLAN_SYNC_INTERVAL) {
+      syncRemote().catch(() => {});
+    }
+
+    return validLocal;
   },
 
   async createChallan(cData: Omit<Challan, 'id' | 'createdAt' | 'challanNumber'>): Promise<string> {

@@ -3,6 +3,9 @@ import type { OrderConfirmation, ClientDocument, ClientRegistration, Installatio
 import { saveRecordToFirestore, deleteRecordFromFirestore, fetchCollectionFromFirestore } from './firebase';
 import { getQuotationTotalAmount } from './quotationService';
 
+let lastOrderRemoteSync = 0;
+const ORDER_SYNC_INTERVAL = 15 * 60 * 1000;
+
 export const orderService = {
   // Order Confirmations
   async getOrderConfirmationByLeadId(leadId: string): Promise<OrderConfirmation | undefined> {
@@ -26,16 +29,6 @@ export const orderService = {
       } catch (err) {
         console.warn("Firestore orderConfirmations sync note:", err);
       }
-    } else {
-      fetchCollectionFromFirestore<OrderConfirmation>('orderConfirmations').then(async (remoteOcs) => {
-        if (Array.isArray(remoteOcs) && remoteOcs.length > 0) {
-          const freshDeleted = await getDeletedRecordIdsSet();
-          const validRemote = remoteOcs.filter(o => !freshDeleted.has(o.id) && !freshDeleted.has(o.leadId));
-          if (validRemote.length > 0) {
-            db.orderConfirmations.bulkPut(validRemote).catch(() => {});
-          }
-        }
-      }).catch(() => {});
     }
 
     if (oc && deletedIds.has(oc.id)) return undefined;
@@ -49,6 +42,7 @@ export const orderService = {
 
     const syncRemote = async () => {
       try {
+        lastOrderRemoteSync = Date.now();
         const remoteOcs = await fetchCollectionFromFirestore<OrderConfirmation>('orderConfirmations');
         if (Array.isArray(remoteOcs) && remoteOcs.length > 0) {
           const freshDeleted = await getDeletedRecordIdsSet();
@@ -62,15 +56,18 @@ export const orderService = {
       }
     };
 
-    if (validLocal.length > 0) {
-      syncRemote();
-      return validLocal;
+    if (validLocal.length === 0) {
+      await syncRemote();
+      const refreshed = await db.orderConfirmations.toArray();
+      const freshDeleted = await getDeletedRecordIdsSet();
+      return refreshed.filter(o => !freshDeleted.has(o.id) && !freshDeleted.has(o.leadId));
     }
 
-    await syncRemote();
-    const refreshed = await db.orderConfirmations.toArray();
-    const freshDeleted = await getDeletedRecordIdsSet();
-    return refreshed.filter(o => !freshDeleted.has(o.id) && !freshDeleted.has(o.leadId));
+    if (Date.now() - lastOrderRemoteSync > ORDER_SYNC_INTERVAL) {
+      syncRemote().catch(() => {});
+    }
+
+    return validLocal;
   },
 
   async createOrderConfirmation(ocData: Omit<OrderConfirmation, 'id' | 'createdAt'>): Promise<string> {
@@ -146,16 +143,6 @@ export const orderService = {
       } catch (err) {
         console.warn("Firestore clientRegistrations sync note:", err);
       }
-    } else {
-      fetchCollectionFromFirestore<ClientRegistration>('clientRegistrations').then(async (remoteRegs) => {
-        if (Array.isArray(remoteRegs) && remoteRegs.length > 0) {
-          const freshDeleted = await getDeletedRecordIdsSet();
-          const validRemote = remoteRegs.filter(r => !freshDeleted.has(r.leadId));
-          if (validRemote.length > 0) {
-            db.clientRegistrations.bulkPut(validRemote).catch(() => {});
-          }
-        }
-      }).catch(() => {});
     }
 
     return reg;
@@ -203,16 +190,6 @@ export const orderService = {
       } catch (err) {
         console.warn("Firestore documents sync note:", err);
       }
-    } else {
-      fetchCollectionFromFirestore<ClientDocument>('clientDocuments').then(async (remoteDocs) => {
-        if (Array.isArray(remoteDocs) && remoteDocs.length > 0) {
-          const freshDeleted = await getDeletedRecordIdsSet();
-          const validRemote = remoteDocs.filter(d => !freshDeleted.has(d.id) && !freshDeleted.has(d.leadId));
-          if (validRemote.length > 0) {
-            db.clientDocuments.bulkPut(validRemote).catch(() => {});
-          }
-        }
-      }).catch(() => {});
     }
 
     return validLocal;
@@ -293,16 +270,6 @@ export const orderService = {
       } catch (err) {
         console.warn("Firestore installation photos sync note:", err);
       }
-    } else {
-      fetchCollectionFromFirestore<InstallationPhoto>('installationPhotos').then(async (remotePhotos) => {
-        if (Array.isArray(remotePhotos) && remotePhotos.length > 0) {
-          const freshDeleted = await getDeletedRecordIdsSet();
-          const validRemote = remotePhotos.filter(p => !freshDeleted.has(p.id) && !freshDeleted.has(p.leadId));
-          if (validRemote.length > 0) {
-            db.installationPhotos.bulkPut(validRemote).catch(() => {});
-          }
-        }
-      }).catch(() => {});
     }
 
     return validLocal;
@@ -363,16 +330,6 @@ export const orderService = {
       } catch (err) {
         console.warn("Firestore release documents sync note:", err);
       }
-    } else {
-      fetchCollectionFromFirestore<ReleaseDocument>('releaseDocuments').then(async (remoteReleases) => {
-        if (Array.isArray(remoteReleases) && remoteReleases.length > 0) {
-          const freshDeleted = await getDeletedRecordIdsSet();
-          const validRemote = remoteReleases.filter(r => !freshDeleted.has(r.id) && !freshDeleted.has(r.leadId));
-          if (validRemote.length > 0) {
-            db.releaseDocuments.bulkPut(validRemote).catch(() => {});
-          }
-        }
-      }).catch(() => {});
     }
 
     return validLocal;

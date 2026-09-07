@@ -4,6 +4,9 @@ import { saveRecordToFirestore, deleteRecordFromFirestore, fetchCollectionFromFi
 
 const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || '';
 
+let lastProductRemoteSync = 0;
+const PRODUCT_SYNC_INTERVAL = 15 * 60 * 1000;
+
 export const productService = {
   async getProducts(): Promise<Product[]> {
     const deletedIds = await getDeletedRecordIdsSet();
@@ -12,6 +15,7 @@ export const productService = {
 
     const syncRemote = async () => {
       try {
+        lastProductRemoteSync = Date.now();
         let remoteProds = await fetchCollectionFromFirestore<Product>('products');
         if (!Array.isArray(remoteProds) || remoteProds.length === 0) {
           try {
@@ -40,15 +44,18 @@ export const productService = {
       }
     };
 
-    if (validLocal.length > 0) {
-      syncRemote();
-      return validLocal;
+    if (validLocal.length === 0) {
+      await syncRemote();
+      const freshDeleted = await getDeletedRecordIdsSet();
+      const refreshed = await db.products.orderBy('name').toArray();
+      return refreshed.filter(p => !freshDeleted.has(p.id));
     }
 
-    await syncRemote();
-    const freshDeleted = await getDeletedRecordIdsSet();
-    const refreshed = await db.products.orderBy('name').toArray();
-    return refreshed.filter(p => !freshDeleted.has(p.id));
+    if (Date.now() - lastProductRemoteSync > PRODUCT_SYNC_INTERVAL) {
+      syncRemote().catch(() => {});
+    }
+
+    return validLocal;
   },
 
   async createProduct(pData: Omit<Product, 'id' | 'createdAt'>): Promise<string> {

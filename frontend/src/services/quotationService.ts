@@ -144,6 +144,9 @@ export function sanitizeQuotationRecord(q: Quotation): Quotation {
   };
 }
 
+let lastQuotationRemoteSync = 0;
+const QUOTE_SYNC_INTERVAL = 15 * 60 * 1000;
+
 export const quotationService = {
   async getAllQuotations(): Promise<Quotation[]> {
     // Auto-heal any active quotations mistakenly marked as deleted by previous background sync bugs
@@ -163,6 +166,7 @@ export const quotationService = {
 
     const syncRemote = async () => {
       try {
+        lastQuotationRemoteSync = Date.now();
         const remoteQuotes = await fetchCollectionFromFirestore<Quotation>('quotations');
         if (Array.isArray(remoteQuotes)) {
           const freshDeleted = await getDeletedRecordIdsSet();
@@ -186,15 +190,19 @@ export const quotationService = {
       }
     };
 
-    if (validLocal.length > 0) {
-      syncRemote();
-      return validLocal;
+    if (validLocal.length === 0) {
+      await syncRemote();
+      const refreshed = await db.quotations.orderBy('createdAt').reverse().toArray();
+      const freshDeleted = await getDeletedRecordIdsSet();
+      return refreshed.filter(q => !freshDeleted.has(q.id) && q.items && q.items.length > 0 && getQuotationTotalAmount(q) > 0).map(sanitizeQuotationRecord);
     }
 
-    await syncRemote();
-    const refreshed = await db.quotations.orderBy('createdAt').reverse().toArray();
-    const freshDeleted = await getDeletedRecordIdsSet();
-    return refreshed.filter(q => !freshDeleted.has(q.id) && q.items && q.items.length > 0 && getQuotationTotalAmount(q) > 0).map(sanitizeQuotationRecord);
+    // If cache is populated, return immediately and sync in background only if cooldown expired
+    if (Date.now() - lastQuotationRemoteSync > QUOTE_SYNC_INTERVAL) {
+      syncRemote().catch(() => {});
+    }
+
+    return validLocal;
   },
 
   async getQuotationById(id: string): Promise<Quotation | undefined> {
@@ -214,13 +222,11 @@ export const quotationService = {
           q = await db.quotations.get(id);
         }
       } catch (err) {
-        console.warn("Firestore quotation fetch by ID note:", err);
+        console.warn("Firestore quotation fetch note:", err);
       }
     }
 
-    if (q && (!q.items || q.items.length === 0 || getQuotationTotalAmount(q) <= 0)) {
-      return undefined;
-    }
+    if (q && (deletedRecordIds.has(q.id) || (q.leadId && deletedRecordIds.has(q.leadId)))) return undefined;
     return q ? sanitizeQuotationRecord(q) : undefined;
   },
 
@@ -231,7 +237,7 @@ export const quotationService = {
     let quotes = await db.quotations.where({ leadId }).reverse().sortBy('createdAt');
     let validQuotes = quotes.filter(q => !deletedRecordIds.has(q.id) && q.items && q.items.length > 0 && getQuotationTotalAmount(q) > 0);
 
-    // If local cache is empty, sync from Firestore first (handles reload/signout scenarios)
+    // If local cache is empty, sync from Firestore first (handles fresh device scenarios)
     if (validQuotes.length === 0) {
       try {
         const remoteQuotes = await fetchCollectionFromFirestore<Quotation>('quotations');
@@ -248,17 +254,6 @@ export const quotationService = {
       } catch (err) {
         console.warn("Firestore quotation sync for lead note:", err);
       }
-    } else {
-      // Background sync for freshness (don't block)
-      fetchCollectionFromFirestore<Quotation>('quotations').then(async (remoteQuotes) => {
-        if (Array.isArray(remoteQuotes) && remoteQuotes.length > 0) {
-          const freshDeleted = await getDeletedRecordIdsSet();
-          const forThisLead = remoteQuotes.filter(q => !freshDeleted.has(q.id) && q.leadId === leadId && q.items && q.items.length > 0 && getQuotationTotalAmount(q) > 0);
-          if (forThisLead.length > 0) {
-            db.quotations.bulkPut(forThisLead.map(sanitizeQuotationRecord)).catch(() => {});
-          }
-        }
-      }).catch(() => {});
     }
 
     // Purge any orphan zero-total / zero-item quotations from local & remote DB

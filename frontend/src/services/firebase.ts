@@ -707,16 +707,23 @@ export async function deleteRecordFromFirestore(collectionName: string, id: stri
   }
 }
 
+let lastSyncTimestamp = 0;
+const SYNC_COOLDOWN_MS = 15 * 60 * 1000; // 15 minutes throttle
+
 /**
- * Background sync function to push all local Dexie records to Firestore Cloud Database.
- * Reconciles local Dexie database against remote Firestore collections to prevent console-deleted items from resurrecting.
+ * Background sync function to push unsynced local Dexie records to Firestore Cloud Database.
+ * Only uploads records that are genuinely new or newer locally to prevent exhausting write quotas.
  */
-export async function syncAllLocalDataToFirestore(): Promise<void> {
+export async function syncAllLocalDataToFirestore(force: boolean = false): Promise<void> {
+  const now = Date.now();
+  if (!force && now - lastSyncTimestamp < SYNC_COOLDOWN_MS) {
+    return;
+  }
+  lastSyncTimestamp = now;
+
   try {
     const { db, getDeletedRecordIdsSet, markRecordAsDeleted } = await import('./db');
     const deletedIds = await getDeletedRecordIdsSet();
-    const FIVE_MINUTES_MS = 5 * 60 * 1000;
-    const now = Date.now();
 
     // 1. Fetch remote deletedRecords tombstones first
     try {
@@ -731,10 +738,10 @@ export async function syncAllLocalDataToFirestore(): Promise<void> {
       }
     } catch (_) {}
 
-    // 2. Reconcile & Sync Leads
+    // 2. Reconcile & Sync Leads (Smart: Only push if missing remotely or newer locally)
     try {
       const remoteLeads = await fetchCollectionFromFirestore<any>('leads', 3000);
-      const remoteLeadIdsSet = new Set(Array.isArray(remoteLeads) ? remoteLeads.map(r => r.id) : []);
+      const remoteLeadMap = new Map<string, any>((Array.isArray(remoteLeads) ? remoteLeads : []).map(r => [r.id, r]));
       const localLeads = await db.leads.toArray();
 
       for (const l of localLeads) {
@@ -742,11 +749,17 @@ export async function syncAllLocalDataToFirestore(): Promise<void> {
           await db.leads.delete(l.id);
           continue;
         }
-        // Always ensure local leads are pushed to Firestore Cloud
-        await saveRecordToFirestore('leads', l.id, l);
+        const remoteLead = remoteLeadMap.get(l.id);
+        if (!remoteLead) {
+          // Genuinely missing in Firestore -> upload
+          await saveRecordToFirestore('leads', l.id, l);
+        } else if (l.updatedAt && remoteLead.updatedAt && new Date(l.updatedAt).getTime() > new Date(remoteLead.updatedAt).getTime()) {
+          // Locally updated -> upload
+          await saveRecordToFirestore('leads', l.id, l);
+        }
       }
 
-      // Merge remote leads to local database
+      // Merge any remote leads to local database that we don't have locally
       if (Array.isArray(remoteLeads)) {
         for (const rl of remoteLeads) {
           if (rl && rl.id && !deletedIds.has(rl.id)) {
@@ -758,10 +771,10 @@ export async function syncAllLocalDataToFirestore(): Promise<void> {
       console.warn("Lead sync note:", err);
     }
 
-    // 3. Reconcile & Sync Quotations
+    // 3. Reconcile & Sync Quotations (Smart: Only push if missing remotely or newer locally)
     try {
       const remoteQuotes = await fetchCollectionFromFirestore<any>('quotations', 3000);
-      const remoteQuoteIdsSet = new Set(Array.isArray(remoteQuotes) ? remoteQuotes.map(r => r.id) : []);
+      const remoteQuoteMap = new Map<string, any>((Array.isArray(remoteQuotes) ? remoteQuotes : []).map(r => [r.id, r]));
       const localQuotes = await db.quotations.toArray();
 
       for (const q of localQuotes) {
@@ -769,8 +782,12 @@ export async function syncAllLocalDataToFirestore(): Promise<void> {
           await db.quotations.delete(q.id);
           continue;
         }
-        // Always ensure local quotations are pushed to Firestore Cloud
-        await saveRecordToFirestore('quotations', q.id, q);
+        const remoteQuote = remoteQuoteMap.get(q.id);
+        if (!remoteQuote) {
+          await saveRecordToFirestore('quotations', q.id, q);
+        } else if (q.updatedAt && remoteQuote.updatedAt && new Date(q.updatedAt).getTime() > new Date(remoteQuote.updatedAt).getTime()) {
+          await saveRecordToFirestore('quotations', q.id, q);
+        }
       }
 
       // Merge remote quotations to local database
@@ -785,10 +802,10 @@ export async function syncAllLocalDataToFirestore(): Promise<void> {
       console.warn("Quotation sync note:", err);
     }
 
-    // 4. Reconcile & Sync Client Documents
+    // 4. Reconcile & Sync Client Documents (Smart)
     try {
       const remoteClientDocs = await fetchCollectionFromFirestore<any>('clientDocuments', 3000);
-      const remoteDocIdsSet = new Set(Array.isArray(remoteClientDocs) ? remoteClientDocs.map(r => r.id) : []);
+      const remoteDocMap = new Map<string, any>((Array.isArray(remoteClientDocs) ? remoteClientDocs : []).map(r => [r.id, r]));
       const localClientDocs = await db.clientDocuments.toArray();
 
       for (const cd of localClientDocs) {
@@ -796,8 +813,10 @@ export async function syncAllLocalDataToFirestore(): Promise<void> {
           await db.clientDocuments.delete(cd.id);
           continue;
         }
-        // Always ensure local client documents are pushed to Firestore Cloud
-        await saveRecordToFirestore('clientDocuments', cd.id, cd);
+        const remoteDoc = remoteDocMap.get(cd.id);
+        if (!remoteDoc) {
+          await saveRecordToFirestore('clientDocuments', cd.id, cd);
+        }
       }
 
       // Merge remote client docs to local database
@@ -812,35 +831,45 @@ export async function syncAllLocalDataToFirestore(): Promise<void> {
       console.warn("Client document sync note:", err);
     }
 
-    // 5. Reconcile & Sync Complaints
+    // 5. Reconcile & Sync Complaints (Smart)
     try {
+      const remoteComplaints = await fetchCollectionFromFirestore<any>('complaints', 3000).catch(() => []);
+      const remoteCompMap = new Map<string, any>((Array.isArray(remoteComplaints) ? remoteComplaints : []).map(r => [r.id, r]));
       const localComplaints = await db.complaints.toArray();
+
       for (const cmp of localComplaints) {
         if (deletedIds.has(cmp.id)) {
           await db.complaints.delete(cmp.id);
           continue;
         }
-        await saveRecordToFirestore('complaints', cmp.id, cmp);
+        if (!remoteCompMap.has(cmp.id)) {
+          await saveRecordToFirestore('complaints', cmp.id, cmp);
+        }
       }
     } catch (err) {
       console.warn("Complaint sync note:", err);
     }
 
-    // 6. Reconcile & Sync Release Documents
+    // 6. Reconcile & Sync Release Documents (Smart)
     try {
+      const remoteReleases = await fetchCollectionFromFirestore<any>('releaseDocuments', 3000).catch(() => []);
+      const remoteRelMap = new Map<string, any>((Array.isArray(remoteReleases) ? remoteReleases : []).map(r => [r.id, r]));
       const localReleases = await db.releaseDocuments.toArray();
+
       for (const rel of localReleases) {
         if (deletedIds.has(rel.id) || (rel.leadId && deletedIds.has(rel.leadId))) {
           await db.releaseDocuments.delete(rel.id);
           continue;
         }
-        await saveRecordToFirestore('releaseDocuments', rel.id, rel);
+        if (!remoteRelMap.has(rel.id)) {
+          await saveRecordToFirestore('releaseDocuments', rel.id, rel);
+        }
       }
     } catch (err) {
       console.warn("Release document sync note:", err);
     }
 
-    console.log("🔥 Initialized background dual-sync & reconciliation of all local data to Firestore!");
+    console.log("🔥 Smart reconciliation completed with minimal writes!");
   } catch (err) {
     console.warn("syncAllLocalDataToFirestore note:", err);
   }
@@ -867,14 +896,13 @@ export function initializeRealtimeFirestoreSync(): void {
 
   let dispatchTimer: any = null;
   const dispatchRealtimeUpdate = () => {
-    window.dispatchEvent(new CustomEvent('app-realtime-update'));
-    if (realtimeChannel) {
-      try { realtimeChannel.postMessage({ type: 'REALTIME_UPDATE' }); } catch (e) {}
-    }
     if (dispatchTimer) clearTimeout(dispatchTimer);
     dispatchTimer = setTimeout(() => {
       window.dispatchEvent(new CustomEvent('app-realtime-update'));
-    }, 100);
+      if (realtimeChannel) {
+        try { realtimeChannel.postMessage({ type: 'REALTIME_UPDATE' }); } catch (e) {}
+      }
+    }, 300);
   };
 
   // 1. Subscribe to deletedRecords tombstones collection

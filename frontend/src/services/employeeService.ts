@@ -2,6 +2,9 @@ import { db, markRecordAsDeleted, getDeletedRecordIdsSet } from './db';
 import type { Profile } from '../types';
 import { saveRecordToFirestore, fetchCollectionFromFirestore } from './firebase';
 
+let lastProfileRemoteSync = 0;
+const PROFILE_SYNC_INTERVAL = 15 * 60 * 1000;
+
 export const employeeService = {
   async getEmployees(): Promise<Profile[]> {
     const deletedIds = await getDeletedRecordIdsSet();
@@ -10,6 +13,7 @@ export const employeeService = {
 
     const syncRemote = async () => {
       try {
+        lastProfileRemoteSync = Date.now();
         const remoteProfiles = await fetchCollectionFromFirestore<Profile>('profiles');
         if (Array.isArray(remoteProfiles) && remoteProfiles.length > 0) {
           const freshDeleted = await getDeletedRecordIdsSet();
@@ -23,15 +27,18 @@ export const employeeService = {
       }
     };
 
-    if (validLocal.length > 0) {
-      syncRemote();
-      return validLocal;
+    if (validLocal.length === 0) {
+      await syncRemote();
+      const freshDeleted = await getDeletedRecordIdsSet();
+      const refreshed = await db.profiles.where('role').anyOf(['admin', 'field_employee', 'inventory_manager', 'dealer']).toArray();
+      return refreshed.filter(p => !freshDeleted.has(p.id));
     }
 
-    await syncRemote();
-    const freshDeleted = await getDeletedRecordIdsSet();
-    const refreshed = await db.profiles.where('role').anyOf(['admin', 'field_employee', 'inventory_manager', 'dealer']).toArray();
-    return refreshed.filter(p => !freshDeleted.has(p.id));
+    if (Date.now() - lastProfileRemoteSync > PROFILE_SYNC_INTERVAL) {
+      syncRemote().catch(() => {});
+    }
+
+    return validLocal;
   },
 
   async getAllProfiles(): Promise<Profile[]> {
@@ -41,6 +48,7 @@ export const employeeService = {
 
     const syncRemote = async () => {
       try {
+        lastProfileRemoteSync = Date.now();
         const remoteProfiles = await fetchCollectionFromFirestore<Profile>('profiles');
         if (Array.isArray(remoteProfiles) && remoteProfiles.length > 0) {
           const freshDeleted = await getDeletedRecordIdsSet();
@@ -54,15 +62,18 @@ export const employeeService = {
       }
     };
 
-    if (validLocal.length > 0) {
-      syncRemote();
-      return validLocal;
+    if (validLocal.length === 0) {
+      await syncRemote();
+      const freshDeleted = await getDeletedRecordIdsSet();
+      const refreshed = await db.profiles.toArray();
+      return refreshed.filter(p => !freshDeleted.has(p.id));
     }
 
-    await syncRemote();
-    const freshDeleted = await getDeletedRecordIdsSet();
-    const refreshed = await db.profiles.toArray();
-    return refreshed.filter(p => !freshDeleted.has(p.id));
+    if (Date.now() - lastProfileRemoteSync > PROFILE_SYNC_INTERVAL) {
+      syncRemote().catch(() => {});
+    }
+
+    return validLocal;
   },
 
   async createEmployee(pData: Omit<Profile, 'id' | 'createdAt' | 'isActive'>): Promise<string> {

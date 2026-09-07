@@ -47,10 +47,18 @@ export const filterLeadsForUser = (
   });
 };
 
+let lastLeadRemoteSync = 0;
+const LEAD_SYNC_INTERVAL = 15 * 60 * 1000;
+
 export const leadService = {
   async getLeads(): Promise<Lead[]> {
+    const deletedIds = await getDeletedRecordIdsSet();
+    const localLeads = await db.leads.orderBy('createdAt').reverse().toArray();
+    const activeLocal = localLeads.filter(l => !deletedIds.has(l.id));
+
     const syncRemote = async () => {
       try {
+        lastLeadRemoteSync = Date.now();
         const remoteLeads = await fetchCollectionFromFirestore<Lead>('leads');
         if (Array.isArray(remoteLeads)) {
           const freshDeleted = await getDeletedRecordIdsSet();
@@ -75,7 +83,12 @@ export const leadService = {
       }
     };
 
-    await syncRemote();
+    // If local database is empty, wait for remote sync. Otherwise sync in background at most once every 15 min
+    if (activeLocal.length === 0) {
+      await syncRemote();
+    } else if (Date.now() - lastLeadRemoteSync > LEAD_SYNC_INTERVAL) {
+      syncRemote().catch(() => {});
+    }
 
     // Auto-heal any active leads mistakenly marked as deleted by previous background sync bugs
     try {

@@ -2163,6 +2163,69 @@ export const pdfService = {
     doc.setFontSize(7);
     doc.text("Authorized Dispatch Officer", 146, signY + 3.5);
 
+    // Page 2 (Optional / If attached): Official Geotagged Vehicle Inspection Proof
+    if (ch.vehiclePhoto) {
+      try {
+        const vehiclePhotoBase64 = await convertImageToBase64(ch.vehiclePhoto);
+        if (vehiclePhotoBase64) {
+          doc.addPage();
+
+          // Header for page 2
+          doc.setFillColor(255, 255, 255);
+          doc.rect(0, 0, 210, 30, 'F');
+          if (logoData) {
+            doc.addImage(logoData, 'PNG', 14, 6, 60, 17);
+          }
+          doc.setTextColor(slateDark[0], slateDark[1], slateDark[2]);
+          doc.setFont('helvetica', 'bold');
+          doc.setFontSize(13);
+          doc.text('GEOTAGGED VEHICLE DISPATCH PROOF', 196, 15, { align: 'right' });
+          doc.setFontSize(8.5);
+          doc.setTextColor(16, 185, 129);
+          doc.text(`CHALLAN NO: ${ch.challanNumber}`, 196, 21, { align: 'right' });
+
+          doc.setDrawColor(226, 232, 240);
+          doc.setLineWidth(0.5);
+          doc.line(14, 30, 196, 30);
+
+          // Info card
+          doc.setFillColor(248, 250, 252);
+          doc.roundedRect(14, 35, 182, 22, 2, 2, 'F');
+          doc.setDrawColor(226, 232, 240);
+          doc.roundedRect(14, 35, 182, 22, 2, 2, 'D');
+
+          doc.setTextColor(slateDark[0], slateDark[1], slateDark[2]);
+          doc.setFont('helvetica', 'bold');
+          doc.setFontSize(9);
+          doc.text(`Vehicle Number: ${ch.vehicleNumber}`, 18, 42);
+          doc.text(`Driver: ${ch.driverName} (+91 ${ch.driverPhone})`, 110, 42);
+
+          doc.setFont('helvetica', 'normal');
+          doc.setFontSize(8);
+          doc.setTextColor(slateGray[0], slateGray[1], slateGray[2]);
+          doc.text(`Dispatch Representative: ${ch.employeeName}`, 18, 48);
+          const destTitle = ch.type === 'b2b' ? (ch.businessName || 'B2B Client') : (ch.leadName || 'Customer');
+          doc.text(`Client / Destination: ${destTitle}`, 110, 48);
+
+          if (ch.vehiclePhotoGps) {
+            const gpsCoords = `GPS: ${ch.vehiclePhotoGps.latitude.toFixed(6)}°, ${ch.vehiclePhotoGps.longitude.toFixed(6)}°`;
+            const gpsTime = ch.vehiclePhotoGps.timestamp ? ` • ${ch.vehiclePhotoGps.timestamp}` : '';
+            doc.text(gpsCoords + gpsTime, 18, 53);
+          }
+
+          // Image box
+          doc.addImage(vehiclePhotoBase64, 'JPEG', 14, 62, 182, 136, undefined, 'FAST');
+
+          // Footer note
+          doc.setFontSize(7.5);
+          doc.setTextColor(slateGray[0], slateGray[1], slateGray[2]);
+          doc.text('This tamper-evident geotagged photo serves as official verification of vehicle loading and dispatch from Green Energy Solution.', 14, 206);
+        }
+      } catch (photoErr) {
+        console.warn('PDF vehicle photo embed note:', photoErr);
+      }
+    }
+
     return doc.output('blob');
   },
 

@@ -57,23 +57,16 @@ export const leadService = {
           const validRemote = remoteLeads.filter(l => l.id && !freshDeleted.has(l.id));
           
           if (validRemote.length > 0) {
-            const remoteIds = new Set(validRemote.map(l => l.id));
-            const currentLocal = await db.leads.toArray();
-            const toDelete = currentLocal.filter(l => !remoteIds.has(l.id) || freshDeleted.has(l.id)).map(l => l.id);
-            
-            if (toDelete.length > 0) {
-              await db.leads.bulkDelete(toDelete);
-            }
+            // Merge remote leads into local database (do NOT delete local leads!)
             await db.leads.bulkPut(validRemote);
-          } else if (remoteLeads.length === 0) {
-            // All remote records deleted globally
-            const currentLocal = await db.leads.toArray();
-            if (currentLocal.length > 0) {
-              const freshDeleted = await getDeletedRecordIdsSet();
-              const toDelete = currentLocal.filter(l => freshDeleted.has(l.id)).map(l => l.id);
-              if (toDelete.length > 0) {
-                await db.leads.bulkDelete(toDelete);
-              }
+          }
+
+          // Push any active local leads not yet in remote Firestore to the cloud
+          const currentLocal = await db.leads.toArray();
+          const remoteIds = new Set(validRemote.map(l => l.id));
+          for (const localLead of currentLocal) {
+            if (localLead.id && !freshDeleted.has(localLead.id) && !remoteIds.has(localLead.id)) {
+              saveRecordToFirestore('leads', localLead.id, localLead).catch(() => {});
             }
           }
         }
@@ -83,6 +76,18 @@ export const leadService = {
     };
 
     await syncRemote();
+
+    // Auto-heal any active leads mistakenly marked as deleted by previous background sync bugs
+    try {
+      const allLocal = await db.leads.toArray();
+      const currentDeleted = await getDeletedRecordIdsSet();
+      for (const l of allLocal) {
+        if (l && l.id && currentDeleted.has(l.id)) {
+          await db.deletedRecords.delete(l.id);
+        }
+      }
+    } catch (_) {}
+
     const refreshed = await db.leads.orderBy('createdAt').reverse().toArray();
     const freshDeleted = await getDeletedRecordIdsSet();
     const activeLeads = refreshed.filter(l => !freshDeleted.has(l.id));
@@ -200,7 +205,7 @@ export const leadService = {
 
     // Save locally & sync to Firestore
     await db.leads.add(newLead);
-    saveRecordToFirestore('leads', id, newLead);
+    saveRecordToFirestore('leads', id, newLead).catch(err => console.warn("Background Firestore lead save note:", err));
     window.dispatchEvent(new CustomEvent('app-realtime-update'));
     return id;
   },

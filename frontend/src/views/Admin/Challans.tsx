@@ -40,8 +40,16 @@ import {
   Square,
   Filter,
   SlidersHorizontal,
-  Package as PackageIcon
+  Package as PackageIcon,
+  Camera,
+  MapPin,
+  Eye,
+  CheckCircle2,
+  Image as ImageIcon,
+  Loader2
 } from 'lucide-react';
+import { uploadImageToFirebase } from '../../services/firebase';
+import { acquireCurrentGpsLocation, applyGpsWatermark, type GpsWatermarkData } from '../../services/watermarkService';
 import dayjs from 'dayjs';
 import logoImg from '../../assets/Green-Energy-Solution.png';
 
@@ -119,6 +127,77 @@ export const Challans: React.FC = () => {
   const [currentEditQty, setCurrentEditQty] = useState(1);
   const [currentEditUnit, setCurrentEditUnit] = useState('Nos');
   const [selectedEditSerials, setSelectedEditSerials] = useState<string[]>([]);
+
+  // Vehicle Photo with GPS states for New Challan
+  const [vehiclePhotoBlob, setVehiclePhotoBlob] = useState<Blob | null>(null);
+  const [vehiclePhotoDataUrl, setVehiclePhotoDataUrl] = useState<string | null>(null);
+  const [vehiclePhotoGps, setVehiclePhotoGps] = useState<GpsWatermarkData | null>(null);
+  const [isProcessingVehicleGps, setIsProcessingVehicleGps] = useState(false);
+  const [vehicleGpsError, setVehicleGpsError] = useState<string | null>(null);
+
+  // Vehicle Photo with GPS states for Edit Challan
+  const [editVehiclePhoto, setEditVehiclePhoto] = useState<string | null>(null);
+  const [editVehiclePhotoBlob, setEditVehiclePhotoBlob] = useState<Blob | null>(null);
+  const [editVehiclePhotoDataUrl, setEditVehiclePhotoDataUrl] = useState<string | null>(null);
+  const [editVehiclePhotoGps, setEditVehiclePhotoGps] = useState<GpsWatermarkData | null>(null);
+  const [isProcessingEditVehicleGps, setIsProcessingEditVehicleGps] = useState(false);
+
+  // Lightbox preview state
+  const [previewPhotoUrl, setPreviewPhotoUrl] = useState<string | null>(null);
+
+  const handleVehiclePhotoCapture = async (file: File, isEditMode = false) => {
+    if (isEditMode) {
+      setIsProcessingEditVehicleGps(true);
+    } else {
+      setIsProcessingVehicleGps(true);
+      setVehicleGpsError(null);
+    }
+
+    try {
+      let gps: GpsWatermarkData | null = null;
+      try {
+        gps = await acquireCurrentGpsLocation();
+      } catch (gpsErr: any) {
+        console.warn("Challan vehicle photo GPS note:", gpsErr);
+        if (!isEditMode) {
+          setVehicleGpsError(gpsErr.message || 'GPS location unavailable');
+        }
+      }
+
+      const currentVehNo = (isEditMode ? editVehicleNumber : vehicleNumber).trim() || 'VEHICLE';
+      const currentDriver = (isEditMode ? editDriverName : driverName).trim() || 'Driver';
+      const clientName = isB2BMode ? (businessName || 'B2B Client') : (selectedLeadData?.name || 'Customer');
+
+      const detailLine = `VEHICLE: ${currentVehNo} • DRIVER: ${currentDriver} • CLIENT: ${clientName}`;
+
+      const result = await applyGpsWatermark(file, {
+        gps,
+        title: '🚚 DELIVERY CHALLAN • VEHICLE DISPATCH PROOF',
+        subtitle: 'GREEN ENERGY SOLUTION • MATERIAL DISPATCH AUDIT',
+        customDetailLine: detailLine,
+        customerName: clientName,
+        locationFallback: 'Dispatch Yard / Warehouse Site'
+      });
+
+      if (isEditMode) {
+        setEditVehiclePhotoBlob(result.watermarkedBlob);
+        setEditVehiclePhotoDataUrl(result.watermarkedDataUrl);
+        setEditVehiclePhotoGps(result.gps);
+      } else {
+        setVehiclePhotoBlob(result.watermarkedBlob);
+        setVehiclePhotoDataUrl(result.watermarkedDataUrl);
+        setVehiclePhotoGps(result.gps);
+      }
+    } catch (err: any) {
+      alert("Error processing vehicle photo: " + (err?.message || err));
+    } finally {
+      if (isEditMode) {
+        setIsProcessingEditVehicleGps(false);
+      } else {
+        setIsProcessingVehicleGps(false);
+      }
+    }
+  };
 
   // Date & Type Filters & Collapsible card State
   const [typeFilter, setTypeFilter] = useState<'all' | 'lead' | 'b2b'>('all');
@@ -225,6 +304,11 @@ export const Challans: React.FC = () => {
     setCurrentQty(1);
     setCurrentUnit('Nos');
     setSelectedSerials([]);
+    setVehiclePhotoBlob(null);
+    setVehiclePhotoDataUrl(null);
+    setVehiclePhotoGps(null);
+    setIsProcessingVehicleGps(false);
+    setVehicleGpsError(null);
     setShowAddModal(true);
   };
 
@@ -739,6 +823,20 @@ export const Challans: React.FC = () => {
       return;
     }
 
+    // Upload vehicle photo if captured
+    let uploadedVehiclePhotoUrl: string | undefined = undefined;
+    if (vehiclePhotoBlob) {
+      try {
+        uploadedVehiclePhotoUrl = await uploadImageToFirebase(
+          vehiclePhotoBlob,
+          `challans/vehicle_photos/vehicle_${Date.now()}.jpg`
+        );
+      } catch (uploadErr) {
+        console.warn("Vehicle photo upload note, using data URL fallback:", uploadErr);
+        uploadedVehiclePhotoUrl = vehiclePhotoDataUrl || undefined;
+      }
+    }
+
     if (isB2BMode) {
       // B2B Challan Validation
       if (!businessName.trim() || !businessAddress.trim() || !vehicleNumber || !driverName || !driverPhone) {
@@ -761,6 +859,8 @@ export const Challans: React.FC = () => {
           vehicleNumber,
           driverName,
           driverPhone,
+          vehiclePhoto: uploadedVehiclePhotoUrl,
+          vehiclePhotoGps: vehiclePhotoGps || undefined,
           items: challanItems,
           notes: notes || undefined
         });
@@ -794,6 +894,8 @@ export const Challans: React.FC = () => {
           vehicleNumber,
           driverName,
           driverPhone,
+          vehiclePhoto: uploadedVehiclePhotoUrl,
+          vehiclePhotoGps: vehiclePhotoGps || undefined,
           items: challanItems,
           notes: notes || undefined
         });
@@ -827,6 +929,11 @@ export const Challans: React.FC = () => {
     setDriverPhone('');
     setChallanItems([]);
     setNotes('');
+    setVehiclePhotoBlob(null);
+    setVehiclePhotoDataUrl(null);
+    setVehiclePhotoGps(null);
+    setIsProcessingVehicleGps(false);
+    setVehicleGpsError(null);
     setShowAddModal(false);
 
     loadData();
@@ -903,6 +1010,11 @@ export const Challans: React.FC = () => {
     setCurrentEditProductId('');
     setCurrentEditQty(1);
     setCurrentEditUnit('Nos');
+    setEditVehiclePhoto(ch.vehiclePhoto || null);
+    setEditVehiclePhotoBlob(null);
+    setEditVehiclePhotoDataUrl(null);
+    setEditVehiclePhotoGps(ch.vehiclePhotoGps || null);
+    setIsProcessingEditVehicleGps(false);
   };
 
   const handleDeleteChallan = async (ch: Challan) => {
@@ -986,11 +1098,31 @@ export const Challans: React.FC = () => {
     }
 
     try {
+      let uploadedVehiclePhotoUrl = editingChallan.vehiclePhoto;
+      let finalGps = editingChallan.vehiclePhotoGps;
+      if (editVehiclePhotoBlob) {
+        try {
+          uploadedVehiclePhotoUrl = await uploadImageToFirebase(
+            editVehiclePhotoBlob,
+            `challans/vehicle_photos/vehicle_${Date.now()}.jpg`
+          );
+          finalGps = editVehiclePhotoGps || undefined;
+        } catch (uploadErr) {
+          console.warn("Edit vehicle photo upload note:", uploadErr);
+          if (editVehiclePhotoDataUrl) uploadedVehiclePhotoUrl = editVehiclePhotoDataUrl;
+        }
+      } else if (editVehiclePhoto === null && editingChallan.vehiclePhoto) {
+        uploadedVehiclePhotoUrl = undefined;
+        finalGps = undefined;
+      }
+
       await challanService.updateChallan(editingChallan.id, {
         ...editingChallan,
         vehicleNumber: editVehicleNumber,
         driverName: editDriverName,
         driverPhone: editDriverPhone,
+        vehiclePhoto: uploadedVehiclePhotoUrl,
+        vehiclePhotoGps: finalGps,
         items: editChallanItems,
         notes: editNotes || undefined
       });
@@ -1200,6 +1332,11 @@ export const Challans: React.FC = () => {
                   <span className="inline-flex items-center px-2 py-0.5 rounded text-[9px] font-black bg-slate-50 text-slate-600 border border-slate-200/60 uppercase tracking-wider">
                     🚚 {ch.vehicleNumber}
                   </span>
+                  {ch.vehiclePhoto && (
+                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[9px] font-black bg-emerald-100 text-emerald-800 border border-emerald-300 uppercase tracking-wider">
+                      <Camera className="w-2.5 h-2.5" /> GPS Photo
+                    </span>
+                  )}
                   <span className="inline-flex items-center px-2 py-0.5 rounded text-[9px] font-black bg-emerald-50/55 text-emerald-800 border border-emerald-100 uppercase tracking-wider">
                     👤 Rep: {ch.employeeName}
                   </span>
@@ -1259,6 +1396,60 @@ export const Challans: React.FC = () => {
                       <p className="text-slate-800 font-bold mb-0.5">Vehicle: {ch.vehicleNumber}</p>
                       <p className="text-slate-800 font-bold mb-0.5">Driver: {ch.driverName}</p>
                       <p className="text-slate-500 font-medium">Phone: +91 {ch.driverPhone}</p>
+                      {ch.vehiclePhoto && (
+                        <div className="mt-3 pt-2.5 border-t border-slate-200/60">
+                          <p className="text-[10px] uppercase font-bold text-emerald-700 tracking-wider mb-1.5 flex items-center gap-1">
+                            <Camera className="w-3.5 h-3.5" />
+                            <span>Geotagged Vehicle Photo</span>
+                          </p>
+                          <div className="flex items-start gap-3">
+                            <div
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setPreviewPhotoUrl(ch.vehiclePhoto!);
+                              }}
+                              className="relative w-20 h-16 rounded-xl overflow-hidden border border-emerald-300 shadow-xs cursor-pointer group shrink-0"
+                            >
+                              <img
+                                src={ch.vehiclePhoto}
+                                alt="Vehicle Dispatch Photo"
+                                className="w-full h-full object-cover group-hover:scale-105 transition-transform"
+                              />
+                              <div className="absolute inset-0 bg-black/30 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-white">
+                                <Eye className="w-4 h-4" />
+                              </div>
+                            </div>
+                            <div className="text-[11px] text-slate-500 space-y-0.5">
+                              {ch.vehiclePhotoGps && (
+                                <>
+                                  <p className="font-mono text-[10px] text-slate-700 font-bold flex items-center gap-1">
+                                    <MapPin className="w-3 h-3 text-emerald-600" />
+                                    <span>{ch.vehiclePhotoGps.latitude.toFixed(5)}°, {ch.vehiclePhotoGps.longitude.toFixed(5)}°</span>
+                                  </p>
+                                  {ch.vehiclePhotoGps.address && (
+                                    <p className="text-[10px] text-slate-600 truncate max-w-[200px]" title={ch.vehiclePhotoGps.address}>
+                                      📍 {ch.vehiclePhotoGps.address}
+                                    </p>
+                                  )}
+                                  <p className="text-[9.5px] text-slate-400">
+                                    🕒 {ch.vehiclePhotoGps.timestamp}
+                                  </p>
+                                </>
+                              )}
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setPreviewPhotoUrl(ch.vehiclePhoto!);
+                                }}
+                                className="text-[10px] font-bold text-emerald-700 hover:text-emerald-800 underline cursor-pointer inline-flex items-center gap-1 mt-1"
+                              >
+                                View Full Photo
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      )}
                     </div>
                   </div>
 
@@ -1730,6 +1921,151 @@ export const Challans: React.FC = () => {
                 </div>
               </div>
 
+              {/* Vehicle Photo with GPS Verification Section */}
+              <div className="bg-slate-50 border border-slate-200/90 rounded-2xl p-4 space-y-3">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <div className="w-7 h-7 rounded-lg bg-emerald-100 text-emerald-800 flex items-center justify-center font-bold">
+                      <Camera className="w-4 h-4" />
+                    </div>
+                    <div>
+                      <h4 className="text-xs font-black text-slate-800">Vehicle Photo with GPS Verification (Optional)</h4>
+                      <p className="text-[10px] text-slate-400 font-semibold">Take photo of loaded vehicle. Real-time GPS location and timestamp will be watermarked.</p>
+                    </div>
+                  </div>
+                  {vehiclePhotoDataUrl && (
+                    <span className="px-2 py-0.5 rounded-md bg-emerald-100 text-emerald-800 text-[10px] font-black uppercase tracking-wider flex items-center gap-1">
+                      <CheckCircle2 className="w-3 h-3" /> Photo Attached
+                    </span>
+                  )}
+                </div>
+
+                {isProcessingVehicleGps && (
+                  <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-xl flex items-center gap-2.5 text-emerald-900 text-xs font-bold animate-pulse">
+                    <Loader2 className="w-4 h-4 animate-spin text-emerald-600 shrink-0" />
+                    <span>Acquiring GPS location & stamping watermark...</span>
+                  </div>
+                )}
+
+                {vehicleGpsError && (
+                  <div className="p-2.5 bg-amber-50 border border-amber-200 rounded-xl text-amber-800 text-[11px] font-semibold flex items-center justify-between">
+                    <span>⚠️ {vehicleGpsError}</span>
+                    <button
+                      type="button"
+                      onClick={() => setVehicleGpsError(null)}
+                      className="text-amber-600 hover:text-amber-900 font-bold ml-2 text-xs"
+                    >
+                      Dismiss
+                    </button>
+                  </div>
+                )}
+
+                {vehiclePhotoDataUrl ? (
+                  <div className="bg-white p-3 rounded-xl border border-slate-200 space-y-2.5">
+                    <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+                      <div className="flex items-start gap-3">
+                        <div
+                          onClick={() => setPreviewPhotoUrl(vehiclePhotoDataUrl)}
+                          className="relative w-24 h-20 rounded-xl overflow-hidden border border-slate-200 shadow-xs cursor-pointer group shrink-0"
+                        >
+                          <img
+                            src={vehiclePhotoDataUrl}
+                            alt="Vehicle Preview Watermarked"
+                            className="w-full h-full object-cover group-hover:scale-105 transition-transform"
+                          />
+                          <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-white">
+                            <Eye className="w-4 h-4" />
+                          </div>
+                        </div>
+
+                        <div className="text-xs space-y-1">
+                          <p className="font-extrabold text-slate-800 flex items-center gap-1 text-xs">
+                            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                            <span>GPS Watermarked Photo Ready</span>
+                          </p>
+                          {vehiclePhotoGps ? (
+                            <>
+                              <p className="text-[11px] font-mono text-slate-600 font-bold flex items-center gap-1">
+                                <MapPin className="w-3 h-3 text-emerald-600 shrink-0" />
+                                <span>{vehiclePhotoGps.latitude.toFixed(6)}°, {vehiclePhotoGps.longitude.toFixed(6)}°</span>
+                              </p>
+                              {vehiclePhotoGps.address && (
+                                <p className="text-[10px] text-slate-500 line-clamp-1" title={vehiclePhotoGps.address}>
+                                  📍 {vehiclePhotoGps.address}
+                                </p>
+                              )}
+                              <p className="text-[10px] text-slate-400">
+                                🕒 {vehiclePhotoGps.timestamp}
+                              </p>
+                            </>
+                          ) : (
+                            <p className="text-[10px] text-amber-600 font-bold">Standard photo without GPS</p>
+                          )}
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-2 self-end sm:self-auto">
+                        <button
+                          type="button"
+                          onClick={() => setPreviewPhotoUrl(vehiclePhotoDataUrl)}
+                          className="px-2.5 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-[11px] rounded-lg transition-colors cursor-pointer flex items-center gap-1"
+                        >
+                          <Eye className="w-3.5 h-3.5" />
+                          <span>Preview</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setVehiclePhotoBlob(null);
+                            setVehiclePhotoDataUrl(null);
+                            setVehiclePhotoGps(null);
+                          }}
+                          className="px-2.5 py-1.5 bg-rose-50 hover:bg-rose-100 text-rose-700 font-bold text-[11px] rounded-lg transition-colors cursor-pointer flex items-center gap-1 border border-rose-200"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                          <span>Remove</span>
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    {/* Camera Button */}
+                    <label className="flex items-center justify-center gap-2 px-4 py-3 bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white rounded-xl text-xs font-bold cursor-pointer transition-all shadow-xs">
+                      <Camera className="w-4 h-4" />
+                      <span>Take Vehicle Photo (Camera)</span>
+                      <input
+                        type="file"
+                        accept="image/*"
+                        capture="environment"
+                        className="hidden"
+                        onChange={(e) => {
+                          const file = e.target.files?.[0];
+                          if (file) handleVehiclePhotoCapture(file, false);
+                          e.target.value = '';
+                        }}
+                      />
+                    </label>
+
+                    {/* Upload from Gallery Button */}
+                    <label className="flex items-center justify-center gap-2 px-4 py-3 bg-white hover:bg-slate-50 active:bg-slate-100 text-slate-700 border border-slate-200 rounded-xl text-xs font-bold cursor-pointer transition-all shadow-xs">
+                      <ImageIcon className="w-4 h-4 text-slate-500" />
+                      <span>Upload from Device</span>
+                      <input
+                        type="file"
+                        accept="image/*"
+                        className="hidden"
+                        onChange={(e) => {
+                          const file = e.target.files?.[0];
+                          if (file) handleVehiclePhotoCapture(file, false);
+                          e.target.value = '';
+                        }}
+                      />
+                    </label>
+                  </div>
+                )}
+              </div>
+
               {/* Items Dispatch Section */}
               <div className="border border-slate-200 p-4 rounded-2xl bg-slate-50/50 space-y-3">
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-2 border-b border-slate-200/60">
@@ -1990,6 +2326,152 @@ export const Challans: React.FC = () => {
                     className="w-full border border-slate-200 rounded-xl px-3 py-2.5 bg-slate-50 focus:outline-none"
                   />
                 </div>
+              </div>
+
+              {/* Vehicle Photo with GPS (Edit Mode) */}
+              <div className="bg-slate-50 border border-slate-200/90 rounded-2xl p-4 space-y-3">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <div className="w-7 h-7 rounded-lg bg-emerald-100 text-emerald-800 flex items-center justify-center font-bold">
+                      <Camera className="w-4 h-4" />
+                    </div>
+                    <div>
+                      <h4 className="text-xs font-black text-slate-800">Geotagged Vehicle Photo</h4>
+                      <p className="text-[10px] text-slate-400 font-semibold">View or replace the vehicle photo with real-time GPS coordinates & timestamp.</p>
+                    </div>
+                  </div>
+                  {(editVehiclePhotoDataUrl || editVehiclePhoto) && (
+                    <span className="px-2 py-0.5 rounded-md bg-emerald-100 text-emerald-800 text-[10px] font-black uppercase tracking-wider flex items-center gap-1">
+                      <CheckCircle2 className="w-3 h-3" /> Attached
+                    </span>
+                  )}
+                </div>
+
+                {isProcessingEditVehicleGps && (
+                  <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-xl flex items-center gap-2.5 text-emerald-900 text-xs font-bold animate-pulse">
+                    <Loader2 className="w-4 h-4 animate-spin text-emerald-600 shrink-0" />
+                    <span>Acquiring GPS location & stamping watermark...</span>
+                  </div>
+                )}
+
+                {(editVehiclePhotoDataUrl || editVehiclePhoto) ? (
+                  <div className="bg-white p-3 rounded-xl border border-slate-200 space-y-2.5">
+                    <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+                      <div className="flex items-start gap-3">
+                        <div
+                          onClick={() => setPreviewPhotoUrl(editVehiclePhotoDataUrl || editVehiclePhoto)}
+                          className="relative w-24 h-20 rounded-xl overflow-hidden border border-slate-200 shadow-xs cursor-pointer group shrink-0"
+                        >
+                          <img
+                            src={editVehiclePhotoDataUrl || editVehiclePhoto!}
+                            alt="Vehicle Preview"
+                            className="w-full h-full object-cover group-hover:scale-105 transition-transform"
+                          />
+                          <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-white">
+                            <Eye className="w-4 h-4" />
+                          </div>
+                        </div>
+
+                        <div className="text-xs space-y-1">
+                          <p className="font-extrabold text-slate-800 flex items-center gap-1 text-xs">
+                            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                            <span>{editVehiclePhotoDataUrl ? 'New GPS Photo Selected' : 'Existing Vehicle Photo'}</span>
+                          </p>
+                          {editVehiclePhotoGps ? (
+                            <>
+                              <p className="text-[11px] font-mono text-slate-600 font-bold flex items-center gap-1">
+                                <MapPin className="w-3 h-3 text-emerald-600 shrink-0" />
+                                <span>{editVehiclePhotoGps.latitude.toFixed(6)}°, {editVehiclePhotoGps.longitude.toFixed(6)}°</span>
+                              </p>
+                              {editVehiclePhotoGps.address && (
+                                <p className="text-[10px] text-slate-500 line-clamp-1" title={editVehiclePhotoGps.address}>
+                                  📍 {editVehiclePhotoGps.address}
+                                </p>
+                              )}
+                              <p className="text-[10px] text-slate-400">
+                                🕒 {editVehiclePhotoGps.timestamp}
+                              </p>
+                            </>
+                          ) : (
+                            <p className="text-[10px] text-slate-400">Standard photo</p>
+                          )}
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-2 self-end sm:self-auto flex-wrap">
+                        <label className="px-2.5 py-1.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 font-bold text-[11px] rounded-lg transition-colors cursor-pointer flex items-center gap-1 border border-emerald-200">
+                          <Camera className="w-3.5 h-3.5" />
+                          <span>Replace</span>
+                          <input
+                            type="file"
+                            accept="image/*"
+                            capture="environment"
+                            className="hidden"
+                            onChange={(e) => {
+                              const file = e.target.files?.[0];
+                              if (file) handleVehiclePhotoCapture(file, true);
+                              e.target.value = '';
+                            }}
+                          />
+                        </label>
+                        <button
+                          type="button"
+                          onClick={() => setPreviewPhotoUrl(editVehiclePhotoDataUrl || editVehiclePhoto)}
+                          className="px-2.5 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-[11px] rounded-lg transition-colors cursor-pointer flex items-center gap-1"
+                        >
+                          <Eye className="w-3.5 h-3.5" />
+                          <span>Preview</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setEditVehiclePhoto(null);
+                            setEditVehiclePhotoBlob(null);
+                            setEditVehiclePhotoDataUrl(null);
+                            setEditVehiclePhotoGps(null);
+                          }}
+                          className="px-2.5 py-1.5 bg-rose-50 hover:bg-rose-100 text-rose-700 font-bold text-[11px] rounded-lg transition-colors cursor-pointer flex items-center gap-1 border border-rose-200"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                          <span>Remove</span>
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    <label className="flex items-center justify-center gap-2 px-4 py-3 bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white rounded-xl text-xs font-bold cursor-pointer transition-all shadow-xs">
+                      <Camera className="w-4 h-4" />
+                      <span>Take Vehicle Photo (Camera)</span>
+                      <input
+                        type="file"
+                        accept="image/*"
+                        capture="environment"
+                        className="hidden"
+                        onChange={(e) => {
+                          const file = e.target.files?.[0];
+                          if (file) handleVehiclePhotoCapture(file, true);
+                          e.target.value = '';
+                        }}
+                      />
+                    </label>
+
+                    <label className="flex items-center justify-center gap-2 px-4 py-3 bg-white hover:bg-slate-50 active:bg-slate-100 text-slate-700 border border-slate-200 rounded-xl text-xs font-bold cursor-pointer transition-all shadow-xs">
+                      <ImageIcon className="w-4 h-4 text-slate-500" />
+                      <span>Upload from Device</span>
+                      <input
+                        type="file"
+                        accept="image/*"
+                        className="hidden"
+                        onChange={(e) => {
+                          const file = e.target.files?.[0];
+                          if (file) handleVehiclePhotoCapture(file, true);
+                          e.target.value = '';
+                        }}
+                      />
+                    </label>
+                  </div>
+                )}
               </div>
 
               {/* Items Dispatch Section */}
@@ -2588,6 +3070,39 @@ export const Challans: React.FC = () => {
                   <span>Add Selected to Challan</span>
                 </button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Photo Preview Modal */}
+      {previewPhotoUrl && (
+        <div
+          onClick={() => setPreviewPhotoUrl(null)}
+          className="fixed inset-0 z-60 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 animate-fade-in"
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="relative max-w-3xl w-full bg-slate-900 rounded-2xl overflow-hidden shadow-2xl border border-slate-700"
+          >
+            <div className="flex items-center justify-between p-3 bg-slate-800/90 text-white">
+              <span className="text-xs font-bold flex items-center gap-1.5 text-emerald-400">
+                <Camera className="w-4 h-4" /> Geotagged Vehicle Photo Preview
+              </span>
+              <button
+                type="button"
+                onClick={() => setPreviewPhotoUrl(null)}
+                className="p-1 hover:bg-slate-700 rounded-lg text-slate-400 hover:text-white cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <div className="p-2 flex items-center justify-center bg-black/40">
+              <img
+                src={previewPhotoUrl}
+                alt="Vehicle Photo Full View"
+                className="max-h-[75vh] w-auto object-contain rounded-lg"
+              />
             </div>
           </div>
         </div>

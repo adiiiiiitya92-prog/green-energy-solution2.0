@@ -272,6 +272,14 @@ export interface Challan {
   vehicleNumber: string;
   driverName: string;
   driverPhone: string;
+  vehiclePhoto?: string;
+  vehiclePhotoGps?: {
+    latitude: number;
+    longitude: number;
+    accuracy?: number;
+    timestamp: string;
+    address?: string;
+  };
   items: ChallanItem[];
   notes?: string;
   createdAt: string;

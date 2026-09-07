@@ -742,16 +742,17 @@ export async function syncAllLocalDataToFirestore(): Promise<void> {
           await db.leads.delete(l.id);
           continue;
         }
-        if (remoteLeads.length > 0 && !remoteLeadIdsSet.has(l.id)) {
-          const createdAtTime = l.createdAt ? new Date(l.createdAt).getTime() : 0;
-          if (now - createdAtTime > FIVE_MINUTES_MS) {
-            // Document was deleted on remote Firestore console -> purge locally
-            await db.leads.delete(l.id);
-            await markRecordAsDeleted(l.id, 'leads');
-            continue;
+        // Always ensure local leads are pushed to Firestore Cloud
+        await saveRecordToFirestore('leads', l.id, l);
+      }
+
+      // Merge remote leads to local database
+      if (Array.isArray(remoteLeads)) {
+        for (const rl of remoteLeads) {
+          if (rl && rl.id && !deletedIds.has(rl.id)) {
+            await db.leads.put(rl);
           }
         }
-        await saveRecordToFirestore('leads', l.id, l);
       }
     } catch (err) {
       console.warn("Lead sync note:", err);
@@ -768,15 +769,17 @@ export async function syncAllLocalDataToFirestore(): Promise<void> {
           await db.quotations.delete(q.id);
           continue;
         }
-        if (remoteQuotes.length > 0 && !remoteQuoteIdsSet.has(q.id)) {
-          const createdAtTime = q.createdAt ? new Date(q.createdAt).getTime() : 0;
-          if (now - createdAtTime > FIVE_MINUTES_MS) {
-            await db.quotations.delete(q.id);
-            await markRecordAsDeleted(q.id, 'quotations');
-            continue;
+        // Always ensure local quotations are pushed to Firestore Cloud
+        await saveRecordToFirestore('quotations', q.id, q);
+      }
+
+      // Merge remote quotations to local database
+      if (Array.isArray(remoteQuotes)) {
+        for (const rq of remoteQuotes) {
+          if (rq && rq.id && !deletedIds.has(rq.id) && (!rq.leadId || !deletedIds.has(rq.leadId))) {
+            await db.quotations.put(rq);
           }
         }
-        await saveRecordToFirestore('quotations', q.id, q);
       }
     } catch (err) {
       console.warn("Quotation sync note:", err);
@@ -793,15 +796,17 @@ export async function syncAllLocalDataToFirestore(): Promise<void> {
           await db.clientDocuments.delete(cd.id);
           continue;
         }
-        if (remoteClientDocs.length > 0 && !remoteDocIdsSet.has(cd.id)) {
-          const uploadedAtTime = cd.uploadedAt ? new Date(cd.uploadedAt).getTime() : 0;
-          if (now - uploadedAtTime > FIVE_MINUTES_MS) {
-            await db.clientDocuments.delete(cd.id);
-            await markRecordAsDeleted(cd.id, 'clientDocuments');
-            continue;
+        // Always ensure local client documents are pushed to Firestore Cloud
+        await saveRecordToFirestore('clientDocuments', cd.id, cd);
+      }
+
+      // Merge remote client docs to local database
+      if (Array.isArray(remoteClientDocs)) {
+        for (const rd of remoteClientDocs) {
+          if (rd && rd.id && !deletedIds.has(rd.id) && (!rd.leadId || !deletedIds.has(rd.leadId))) {
+            await db.clientDocuments.put(rd);
           }
         }
-        await saveRecordToFirestore('clientDocuments', cd.id, cd);
       }
     } catch (err) {
       console.warn("Client document sync note:", err);

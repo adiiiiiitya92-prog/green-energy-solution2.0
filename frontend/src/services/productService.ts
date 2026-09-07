@@ -31,15 +31,8 @@ export const productService = {
         if (Array.isArray(remoteProds) && remoteProds.length > 0) {
           const freshDeleted = await getDeletedRecordIdsSet();
           const validRemote = remoteProds.filter(p => !freshDeleted.has(p.id));
-          const remoteIds = new Set(validRemote.map(p => p.id));
-          const currentLocal = await db.products.toArray();
-          const deletedIdsList = currentLocal.filter(p => !remoteIds.has(p.id) || freshDeleted.has(p.id)).map(p => p.id);
-
           if (validRemote.length > 0) {
             await db.products.bulkPut(validRemote);
-          }
-          if (deletedIdsList.length > 0) {
-            await db.products.bulkDelete(deletedIdsList);
           }
         }
       } catch (err) {

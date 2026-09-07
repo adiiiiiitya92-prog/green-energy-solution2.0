@@ -89,7 +89,7 @@ export const Leads: React.FC = () => {
       return fromUrl as any;
     }
     const fromStorage = sessionStorage.getItem('leads_rawFilter');
-    if (fromStorage === 'process_done_payment_pending' || fromStorage === 'raw' || fromStorage === 'confirmed') {
+    if (fromStorage === 'process_done_payment_pending' || fromStorage === 'raw' || fromStorage === 'confirmed' || fromStorage === 'all' || fromStorage === 'advanced') {
       return fromStorage as any;
     }
     // Default to confirmed leads only (as requested by user)
@@ -785,6 +785,10 @@ export const Leads: React.FC = () => {
           const lead = await leadService.getLeadById(savedLeadId);
           if (lead) {
             handleSelectLead(lead, true);
+            const isLeadRaw = (lead.status === 'new' || lead.status === 'quotation_sent');
+            if (isLeadRaw && (!rawFilterSaved || rawFilterSaved === 'confirmed')) {
+              handleSetRawFilter('all');
+            }
           }
         } catch (_) {}
       }
@@ -1007,7 +1011,7 @@ export const Leads: React.FC = () => {
     const formattedFollowUpDate = leadFollowUpDate ? dayjs(leadFollowUpDate).format('YYYY-MM-DD') : undefined;
 
     try {
-      await leadService.createLead({
+      const newLeadId = await leadService.createLead({
         name: leadName.trim(),
         phoneNumber: leadPhone.trim(),
         email: leadEmail.trim() || undefined,
@@ -1049,7 +1053,17 @@ export const Leads: React.FC = () => {
       setCreateNameWarning(null);
       setCreateEmailWarning(null);
       setShowCreateModal(false);
-      loadData();
+
+      // Switch filter to 'all' so that the new lead is immediately visible in the list
+      handleSetRawFilter('all');
+
+      await loadData();
+      if (newLeadId) {
+        const freshLead = await leadService.getLeadById(newLeadId);
+        if (freshLead) {
+          handleSelectLead(freshLead, true);
+        }
+      }
       window.dispatchEvent(new CustomEvent('app-realtime-update'));
     } catch (err: any) {
       console.error('Error creating lead:', err);

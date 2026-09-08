@@ -220,10 +220,10 @@ export const Layout: React.FC<LayoutProps> = ({ children }) => {
                   ? 'bg-rose-600 hover:bg-rose-700 text-white shadow-md animate-pulse'
                   : 'bg-slate-100 hover:bg-slate-200 text-slate-700'
               }`}
-              title="View Pending Deletion Requests"
+              title="View Staff Deletion & Edit Approval Requests"
             >
               <ShieldAlert className="w-4 h-4 text-rose-300" />
-              <span className="hidden sm:inline">Delete Approvals</span>
+              <span className="hidden sm:inline">Approvals & Audit</span>
               {pendingDeleteCount > 0 && (
                 <span className="bg-white text-rose-700 px-1.5 py-0.2 rounded-full text-[10px] font-black">
                   {pendingDeleteCount}

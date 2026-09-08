@@ -255,7 +255,36 @@ export const challanService = {
     saveRecordToFirestore('challans', id, updatedChallan);
   },
 
-  async deleteChallan(id: string, skipApprovalCheck = false): Promise<{ success: boolean; requiresApproval?: boolean }> {
+  async requestChallanEdit(id: string, updatedChallan: Challan, customReason?: string): Promise<{ success: boolean; requiresApproval: boolean; requestId?: string }> {
+    const { useAuthStore } = await import('../store/authStore');
+    const currentRole = useAuthStore.getState().currentRole;
+    const currentUser = useAuthStore.getState().currentUser;
+    const isSuperAdmin = currentRole === 'super_admin' || currentUser?.role === 'super_admin';
+
+    if (isSuperAdmin) {
+      await this.updateChallan(id, updatedChallan);
+      return { success: true, requiresApproval: false };
+    }
+
+    const previousData = await db.challans.get(id);
+    if (!previousData) {
+      throw new Error(`Delivery Challan #${id} not found.`);
+    }
+
+    const { deletionRequestService } = await import('./deletionRequestService');
+    const reqId = await deletionRequestService.requestEdit({
+      entityType: 'challan',
+      entityId: id,
+      entityName: `Delivery Challan "${updatedChallan.challanNumber}" (${updatedChallan.type === 'b2b' ? updatedChallan.businessName : updatedChallan.leadName})`,
+      previousData,
+      updatedData: updatedChallan,
+      reason: customReason || `Delivery challan edit requested by ${currentUser?.fullName || 'Inventory/Admin'}`
+    });
+
+    return { success: true, requiresApproval: true, requestId: reqId };
+  },
+
+  async deleteChallan(id: string, skipApprovalCheck = false, customReason?: string): Promise<{ success: boolean; requiresApproval?: boolean }> {
     if (!id) return { success: false };
 
     const { useAuthStore } = await import('../store/authStore');
@@ -265,14 +294,21 @@ export const challanService = {
 
     if (!isSuperAdmin && !skipApprovalCheck) {
       const challan = await db.challans.get(id);
-      const chName = challan ? `Delivery Challan ${challan.challanNumber}` : `Challan #${id}`;
+      const chName = challan ? `Delivery Challan ${challan.challanNumber} (${challan.type === 'b2b' ? challan.businessName : challan.leadName})` : `Challan #${id}`;
+      const itemSnapshot = {
+        ...challan,
+        itemsCount: Array.isArray(challan?.items) ? challan.items.length : 0,
+        totalDispatchedUnits: Array.isArray(challan?.items) ? challan.items.reduce((sum, it) => sum + (it.qty || 0), 0) : 0,
+      };
+
       const { deletionRequestService } = await import('./deletionRequestService');
       await deletionRequestService.requestDeletion({
         entityType: 'challan',
         entityId: id,
         entityName: chName,
         metadata: { leadId: challan?.leadId },
-        reason: `Delete delivery challan requested by ${currentUser?.fullName || 'Admin/Employee'}`
+        reason: customReason || `Delete delivery challan requested by ${currentUser?.fullName || 'Inventory/Admin'}`,
+        itemSnapshot
       });
       return { success: true, requiresApproval: true };
     }

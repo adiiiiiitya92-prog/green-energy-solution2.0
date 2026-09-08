@@ -1169,20 +1169,24 @@ export const Leads: React.FC = () => {
 
   const handleDeleteLead = async (id: string) => {
     const isSuperAdmin = currentRole === 'super_admin' || currentUser?.role === 'super_admin';
-    const confirmMsg = isSuperAdmin
-      ? 'WARNING: Are you sure you want to permanently delete this lead?'
-      : 'Submit deletion request to Super Admin for approval?';
-
-    if (confirm(confirmMsg)) {
-      const res = await leadService.deleteLead(id);
-      if (res?.requiresApproval) {
-        alert('🔒 Deletion request submitted successfully! This item will be deleted once approved by Super Admin.');
-      } else {
+    if (isSuperAdmin) {
+      if (confirm('WARNING: Are you sure you want to permanently delete this lead?')) {
+        await leadService.deleteLead(id, true);
         alert('Lead permanently deleted.');
         setSelectedLead(null);
+        loadData();
       }
-      loadData();
+      return;
     }
+
+    const reason = prompt('Please enter the reason for requesting deletion of this lead (submitted to Super Admin for approval):', 'Duplicate / Not needed');
+    if (reason === null) return;
+
+    const res = await leadService.deleteLead(id, false, reason.trim() || 'Lead deletion requested via CRM panel');
+    if (res?.requiresApproval) {
+      alert('🔒 Deletion request submitted successfully to Super Admin with your employee profile and complete lead snapshot!');
+    }
+    loadData();
   };
 
   const handleAssignSalesPerson = async (salesId: string) => {

@@ -332,20 +332,46 @@ export interface ShadowAnalysisRecord {
 
 export interface DeletionRequest {
   id: string;
-  entityType: 'lead' | 'quotation' | 'challan' | 'document' | 'product' | 'photo' | 'other';
+  requestType?: 'delete' | 'edit';
+  entityType: 'lead' | 'quotation' | 'challan' | 'document' | 'product' | 'photo' | 'complaint' | 'employee' | 'b2bBusiness' | 'visit' | 'other';
   entityId: string;
   entityName: string;
+  
+  // Requester details (exact employee details)
   requestedByUserId: string;
   requestedByUserName: string;
+  requestedByUserEmail?: string;
+  requestedByUserPhone?: string;
   requestedByUserRole: string;
+  requestedByUserDesignation?: string;
+  requestedFromPanel?: 'admin_panel' | 'inventory_panel' | 'field_employee_panel' | 'dealer_panel' | 'other';
   requestedAt: string;
+
   status: 'pending' | 'approved' | 'rejected';
   reason?: string;
+
+  // Complete item snapshot for Super Admin inspection
+  itemSnapshot?: Record<string, any>;
+
+  // Edit details (for edit requests)
+  previousData?: Record<string, any>;
+  updatedData?: Record<string, any>;
+  changedFields?: Array<{
+    field: string;
+    label: string;
+    oldValue: any;
+    newValue: any;
+  }>;
+
+  // Review details
   reviewedByUserId?: string;
   reviewedByUserName?: string;
   reviewedAt?: string;
+  reviewRemarks?: string;
   metadata?: Record<string, any>;
 }
+
+export type ApprovalRequest = DeletionRequest;
 
 export interface PackageItem {
   productId: string;

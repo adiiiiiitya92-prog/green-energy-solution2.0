@@ -250,7 +250,7 @@ export const leadService = {
     window.dispatchEvent(new CustomEvent('app-realtime-update'));
   },
 
-  async deleteLead(id: string, skipApprovalCheck = false): Promise<{ success: boolean; requiresApproval?: boolean }> {
+  async deleteLead(id: string, skipApprovalCheck = false, customReason?: string): Promise<{ success: boolean; requiresApproval?: boolean }> {
     if (!id) return { success: false };
 
     const { useAuthStore } = await import('../store/authStore');
@@ -260,13 +260,28 @@ export const leadService = {
 
     if (!isSuperAdmin && !skipApprovalCheck) {
       const lead = await db.leads.get(id);
-      const leadName = lead ? `${lead.name} (+91 ${lead.phoneNumber})` : `Lead ID #${id}`;
+      const quotes = await db.quotations.where({ leadId: id }).toArray();
+      const ocs = await db.orderConfirmations.where({ leadId: id }).toArray();
+      const docs = await db.clientDocuments.where({ leadId: id }).toArray();
+      const leadName = lead ? `${lead.name} (+91 ${lead.phoneNumber || 'N/A'})` : `Lead ID #${id}`;
+
+      const itemSnapshot = {
+        ...lead,
+        quotesCount: quotes.length,
+        hasOrderConfirmation: ocs.length > 0,
+        confirmedSubtotal: ocs[0]?.subtotal || 0,
+        documentsCount: docs.length,
+        assignedSalesPersonId: lead?.assignedSalesPersonId,
+        assignedAdminId: lead?.assignedAdminId,
+      };
+
       const { deletionRequestService } = await import('./deletionRequestService');
       await deletionRequestService.requestDeletion({
         entityType: 'lead',
         entityId: id,
         entityName: leadName,
-        reason: `Delete lead requested by ${currentUser?.fullName || 'Admin/Employee'}`
+        reason: customReason || `Delete lead requested by ${currentUser?.fullName || 'Admin/Employee'}`,
+        itemSnapshot
       });
       return { success: true, requiresApproval: true };
     }
@@ -336,7 +351,7 @@ export const leadService = {
     return { success: true };
   },
 
-  async deleteClientDocument(docId: string, leadId?: string, skipApprovalCheck = false): Promise<{ success: boolean; requiresApproval?: boolean }> {
+  async deleteClientDocument(docId: string, leadId?: string, skipApprovalCheck = false, customReason?: string): Promise<{ success: boolean; requiresApproval?: boolean }> {
     if (!docId) return { success: false };
 
     const { useAuthStore } = await import('../store/authStore');
@@ -346,14 +361,23 @@ export const leadService = {
 
     if (!isSuperAdmin && !skipApprovalCheck) {
       const docItem = await db.clientDocuments.get(docId);
-      const docName = docItem ? `Document "${docItem.name || docItem.docType}"` : `Document #${docId}`;
+      const lead = leadId ? await db.leads.get(leadId) : undefined;
+      const docName = docItem ? `Document "${docItem.name || docItem.docType}" (${lead?.name || 'Lead #' + (leadId || '')})` : `Document #${docId}`;
+      const itemSnapshot = {
+        ...docItem,
+        leadName: lead?.name,
+        leadPhone: lead?.phoneNumber,
+        leadCity: lead?.city,
+        fileBlob: undefined // omit large binary data
+      };
       const { deletionRequestService } = await import('./deletionRequestService');
       await deletionRequestService.requestDeletion({
         entityType: 'document',
         entityId: docId,
         entityName: docName,
         metadata: { leadId },
-        reason: `Delete document requested by ${currentUser?.fullName || 'Admin/Employee'}`
+        reason: customReason || `Delete document requested by ${currentUser?.fullName || 'Admin/Employee'}`,
+        itemSnapshot
       });
       return { success: true, requiresApproval: true };
     }

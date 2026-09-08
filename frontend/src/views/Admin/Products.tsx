@@ -437,6 +437,24 @@ export const Products: React.FC = () => {
     // Immediately close edit modal for 0ms lag
     setEditingProduct(null);
 
+    const isSuperAdmin = currentRole === 'super_admin' || currentUser?.role === 'super_admin';
+    if (!isSuperAdmin) {
+      const reason = prompt(`Submit changes for "${updated.name}" to Super Admin for approval? (Enter reason or notes):`, 'Stock / Price specification adjustment');
+      if (reason === null) return;
+
+      try {
+        const res = await productService.requestProductEdit(updated, reason.trim() || undefined);
+        if (res.requiresApproval) {
+          showToast(`🔒 Edit request submitted to Super Admin with full modification details!`);
+          return;
+        }
+      } catch (err: any) {
+        console.error("Error submitting edit request:", err);
+        showToast('Error submitting edit request: ' + (err?.message || ''));
+        return;
+      }
+    }
+
     // Optimistically update memory state
     setProducts(prev => prev.map(p => p.id === updated.id ? updated : p));
     showToast(`"${updated.name}" updated successfully!`);
@@ -451,18 +469,21 @@ export const Products: React.FC = () => {
 
   const handleDeleteProduct = async (id: string) => {
     const isSuperAdmin = currentRole === 'super_admin' || currentUser?.role === 'super_admin';
-    const confirmMsg = isSuperAdmin
-      ? 'Delete this item from catalog? This will not affect existing generated quotations.'
-      : 'Submit product deletion request to Super Admin for approval?';
-
-    if (confirm(confirmMsg)) {
-      const res = await productService.deleteProduct(id);
-      if (res?.requiresApproval) {
-        showToast('🔒 Deletion request submitted for Super Admin approval.');
-      } else {
+    if (isSuperAdmin) {
+      if (confirm('Delete this item from catalog? This will not affect existing generated quotations.')) {
+        await productService.deleteProduct(id, true);
         setProducts(prev => prev.filter(p => p.id !== id));
-        showToast('Item deleted from catalog.');
+        showToast('Item permanently deleted from catalog.');
       }
+      return;
+    }
+
+    const reason = prompt('Please enter the reason for deleting this product from catalog (submitted to Super Admin for approval):', 'Discontinued / Out of stock');
+    if (reason === null) return;
+
+    const res = await productService.deleteProduct(id, false, reason.trim() || 'Product deletion requested via Inventory panel');
+    if (res?.requiresApproval) {
+      showToast('🔒 Detailed deletion request submitted to Super Admin with full inventory specs!');
     }
   };
 

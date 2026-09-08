@@ -99,7 +99,36 @@ export const productService = {
     window.dispatchEvent(new CustomEvent('app-realtime-update'));
   },
 
-  async deleteProduct(id: string, skipApprovalCheck = false): Promise<{ success: boolean; requiresApproval?: boolean }> {
+  async requestProductEdit(updatedProduct: Product, customReason?: string): Promise<{ success: boolean; requiresApproval: boolean; requestId?: string }> {
+    const { useAuthStore } = await import('../store/authStore');
+    const currentRole = useAuthStore.getState().currentRole;
+    const currentUser = useAuthStore.getState().currentUser;
+    const isSuperAdmin = currentRole === 'super_admin' || currentUser?.role === 'super_admin';
+
+    if (isSuperAdmin) {
+      await this.updateProduct(updatedProduct);
+      return { success: true, requiresApproval: false };
+    }
+
+    const previousData = await db.products.get(updatedProduct.id);
+    if (!previousData) {
+      throw new Error(`Product #${updatedProduct.id} not found.`);
+    }
+
+    const { deletionRequestService } = await import('./deletionRequestService');
+    const reqId = await deletionRequestService.requestEdit({
+      entityType: 'product',
+      entityId: updatedProduct.id,
+      entityName: `Product "${updatedProduct.name}" (${updatedProduct.category})`,
+      previousData,
+      updatedData: updatedProduct,
+      reason: customReason || `Product update requested by ${currentUser?.fullName || 'Inventory Manager'}`
+    });
+
+    return { success: true, requiresApproval: true, requestId: reqId };
+  },
+
+  async deleteProduct(id: string, skipApprovalCheck = false, customReason?: string): Promise<{ success: boolean; requiresApproval?: boolean }> {
     if (!id) return { success: false };
 
     const { useAuthStore } = await import('../store/authStore');
@@ -110,12 +139,19 @@ export const productService = {
     if (!isSuperAdmin && !skipApprovalCheck) {
       const prod = await db.products.get(id);
       const prodName = prod ? `Product "${prod.name}" (${prod.category})` : `Product #${id}`;
+      const itemSnapshot = {
+        ...prod,
+        unitsCount: Array.isArray(prod?.units) ? prod.units.length : 0,
+        availableUnitsCount: Array.isArray(prod?.units) ? prod.units.filter((u: any) => u.status === 'available').length : 0,
+      };
+
       const { deletionRequestService } = await import('./deletionRequestService');
       await deletionRequestService.requestDeletion({
         entityType: 'product',
         entityId: id,
         entityName: prodName,
-        reason: `Delete product requested by ${currentUser?.fullName || 'Admin/Employee'}`
+        reason: customReason || `Delete product requested by ${currentUser?.fullName || 'Inventory/Admin'}`,
+        itemSnapshot
       });
       return { success: true, requiresApproval: true };
     }

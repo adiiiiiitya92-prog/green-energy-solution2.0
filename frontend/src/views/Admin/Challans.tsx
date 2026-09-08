@@ -1020,23 +1020,34 @@ export const Challans: React.FC = () => {
   const handleDeleteChallan = async (ch: Challan) => {
     const isSuperAdmin = currentRole === 'super_admin' || currentUser?.role === 'super_admin';
     const targetName = ch.type === 'b2b' ? ch.businessName : ch.leadName;
-    const confirmMsg = isSuperAdmin
-      ? `⚠️ DELETE CONFIRMATION:\n\nAre you sure you want to PERMANENTLY delete Delivery Challan "${ch.challanNumber}" for ${targetName}?\n\n(This will also restore all stock quantities and serial numbers to available inventory).`
-      : `Submit Delivery Challan "${ch.challanNumber}" deletion request to Super Admin for approval?`;
 
-    if (confirm(confirmMsg)) {
-      try {
-        const res = await challanService.deleteChallan(ch.id);
-        if (res?.requiresApproval) {
-          alert('🔒 Deletion request submitted successfully! This delivery challan will be deleted once approved by Super Admin.');
-        } else {
+    if (isSuperAdmin) {
+      const confirmMsg = `⚠️ DELETE CONFIRMATION:\n\nAre you sure you want to PERMANENTLY delete Delivery Challan "${ch.challanNumber}" for ${targetName}?\n\n(This will also restore all stock quantities and serial numbers to available inventory).`;
+      if (confirm(confirmMsg)) {
+        try {
+          await challanService.deleteChallan(ch.id, true);
           alert('✅ Delivery Challan permanently deleted and product stock restored!');
+          await loadData();
+        } catch (err) {
+          console.error("Error deleting challan:", err);
+          alert('Error processing deletion.');
         }
-        await loadData();
-      } catch (err) {
-        console.error("Error deleting challan:", err);
-        alert('Error processing deletion request. Please try again.');
       }
+      return;
+    }
+
+    const reason = prompt(`Submit Delivery Challan "${ch.challanNumber}" deletion request to Super Admin for approval?\n\nPlease enter the reason:`, 'Wrong dispatch / Cancelled order');
+    if (reason === null) return;
+
+    try {
+      const res = await challanService.deleteChallan(ch.id, false, reason.trim() || 'Delivery challan deletion requested via Inventory panel');
+      if (res?.requiresApproval) {
+        alert('🔒 Deletion request submitted successfully to Super Admin with your employee details and full dispatch information!');
+      }
+      await loadData();
+    } catch (err) {
+      console.error("Error deleting challan:", err);
+      alert('Error processing deletion request. Please try again.');
     }
   };
 

@@ -909,9 +909,29 @@ export const complaintService = {
   },
 
   /**
-   * Delete complaint with permission.
+   * Delete complaint with permission & approval gatekeeping.
    */
-  async deleteComplaint(id: string): Promise<void> {
+  async deleteComplaint(id: string, skipApprovalCheck = false, customReason?: string): Promise<{ success: boolean; requiresApproval?: boolean }> {
+    const { useAuthStore } = await import('../store/authStore');
+    const currentRole = useAuthStore.getState().currentRole;
+    const currentUser = useAuthStore.getState().currentUser;
+    const isSuperAdmin = currentRole === 'super_admin' || currentUser?.role === 'super_admin';
+
+    if (!isSuperAdmin && !skipApprovalCheck) {
+      const complaint = await db.complaints.get(id);
+      const cName = complaint ? `Complaint #${complaint.complaintNumber} (${complaint.customerName})` : `Complaint #${id}`;
+      const itemSnapshot = { ...complaint };
+      const { deletionRequestService } = await import('./deletionRequestService');
+      await deletionRequestService.requestDeletion({
+        entityType: 'complaint',
+        entityId: id,
+        entityName: cName,
+        reason: customReason || `Delete complaint requested by ${currentUser?.fullName || 'User'}`,
+        itemSnapshot
+      });
+      return { success: true, requiresApproval: true };
+    }
+
     await db.complaints.delete(id);
     try {
       await deleteRecordFromFirestore('complaints', id);
@@ -919,6 +939,7 @@ export const complaintService = {
       console.warn("Firestore delete complaint note:", e);
     }
     window.dispatchEvent(new CustomEvent('app-realtime-update'));
+    return { success: true };
   },
 
   /**

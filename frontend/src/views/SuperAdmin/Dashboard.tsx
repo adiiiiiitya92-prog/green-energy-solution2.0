@@ -9,8 +9,9 @@ import { employeeService } from '../../services/employeeService';
 import { productService } from '../../services/productService';
 import { useAuthStore } from '../../store/authStore';
 import { FollowUpReminders } from '../../components/Common/FollowUpReminders';
+import { DeletionApprovalsModal } from '../../components/Common/DeletionApprovalsModal';
 import type { Lead, Quotation, OrderConfirmation, Profile, Product, PaymentInstallment, DeletionRequest } from '../../types';
-import { TrendingUp, DollarSign, Award, ClipboardList, PackageCheck, ShieldAlert, Boxes, Check, X, AlertCircle, ChevronRight, Wallet, ChevronDown, ChevronUp } from 'lucide-react';
+import { TrendingUp, DollarSign, Award, ClipboardList, PackageCheck, ShieldAlert, Boxes, Check, X, AlertCircle, ChevronRight, Wallet, ChevronDown, ChevronUp, FileEdit, Phone, Mail, Eye } from 'lucide-react';
 
 export const Dashboard: React.FC = () => {
   const { currentRole, currentUser } = useAuthStore();
@@ -22,6 +23,7 @@ export const Dashboard: React.FC = () => {
   const [products, setProducts] = useState<Product[]>([]);
   const [lowStockProducts, setLowStockProducts] = useState<Product[]>([]);
   const [pendingDeleteRequests, setPendingDeleteRequests] = useState<DeletionRequest[]>([]);
+  const [showApprovalsModal, setShowApprovalsModal] = useState<boolean>(false);
   const [isLowStockMinimized, setIsLowStockMinimized] = useState<boolean>(() => {
     try {
       return localStorage.getItem('minimized_inventory_alert') === 'true';
@@ -206,56 +208,117 @@ export const Dashboard: React.FC = () => {
         <p className="text-sm text-slate-500 font-medium">Real-time installation pipeline metrics & revenue insights.</p>
       </div>
 
-      {/* Super Admin Pending Delete Requests Alert Banner */}
+      {/* Super Admin Pending Delete & Edit Requests Alert Banner */}
       {isSuperAdmin && pendingDeleteRequests.length > 0 && (
-        <div className="bg-gradient-to-br from-rose-950 via-slate-900 to-rose-950 text-white p-5 rounded-2xl border border-rose-500/40 shadow-xl space-y-3 animate-fade-in">
-          <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
+        <div className="bg-gradient-to-br from-slate-950 via-rose-950 to-slate-900 text-white p-5 rounded-3xl border border-rose-500/40 shadow-2xl space-y-4 animate-fade-in">
+          <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 border-b border-rose-500/20 pb-3">
             <div className="flex items-center space-x-3">
-              <div className="p-2.5 rounded-xl bg-rose-500/20 border border-rose-500/40 text-rose-300 shrink-0">
+              <div className="p-2.5 rounded-2xl bg-rose-500/20 border border-rose-500/40 text-rose-300 shrink-0">
                 <ShieldAlert className="w-6 h-6" />
               </div>
               <div>
                 <span className="text-[10px] font-black text-rose-300 uppercase tracking-widest block">
-                  ACTION REQUIRED • {pendingDeleteRequests.length} PENDING DELETE REQUEST(S)
+                  ACTION REQUIRED • {pendingDeleteRequests.length} PENDING GATEKEEPER APPROVAL(S)
                 </span>
-                <h3 className="text-base font-black text-white">Super Admin Deletion Approvals Needed</h3>
+                <h3 className="text-lg font-black text-white">Action Requests From Staff (Admin, Inventory, Field Teams)</h3>
               </div>
             </div>
+            <button
+              onClick={() => setShowApprovalsModal(true)}
+              className="px-4 py-2 bg-white/10 hover:bg-white/20 text-white font-black text-xs rounded-xl border border-white/20 transition-all flex items-center gap-2 cursor-pointer shrink-0"
+            >
+              <Eye className="w-4 h-4 text-rose-300" />
+              <span>Review All ({pendingDeleteRequests.length}) in Detail</span>
+            </button>
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5 pt-1">
-            {pendingDeleteRequests.slice(0, 3).map(req => (
-              <div key={req.id} className="bg-black/40 p-3 rounded-xl border border-rose-500/30 text-xs flex justify-between items-center gap-2">
-                <div className="truncate">
-                  <span className="text-[10px] uppercase font-bold text-rose-300 block truncate">{req.entityType}: {req.entityName}</span>
-                  <span className="text-[10px] text-slate-300 font-medium block truncate">By {req.requestedByUserName} ({req.requestedByUserRole.replace('_', ' ')})</span>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+            {pendingDeleteRequests.slice(0, 3).map(req => {
+              const isEdit = req.requestType === 'edit';
+              return (
+                <div key={req.id} className="bg-black/50 p-3.5 rounded-2xl border border-rose-500/30 text-xs flex flex-col justify-between space-y-3">
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className={`px-2 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wider border ${
+                        isEdit ? 'bg-indigo-600 text-white border-indigo-500' : 'bg-rose-600 text-white border-rose-500'
+                      }`}>
+                        {isEdit ? 'EDIT' : 'DELETE'}
+                      </span>
+                      <span className="text-[10px] uppercase font-bold text-rose-300 bg-rose-950/80 px-2 py-0.5 rounded-full border border-rose-500/30">
+                        {req.entityType}
+                      </span>
+                    </div>
+
+                    <div>
+                      <h4 className="font-black text-sm text-white truncate" title={req.entityName}>
+                        {req.entityName}
+                      </h4>
+                    </div>
+
+                    {/* Requester Employee Info */}
+                    <div className="bg-white/5 p-2 rounded-xl border border-white/10 space-y-1 text-[11px]">
+                      <div className="font-bold text-slate-200">
+                        By: <span className="text-white font-black">{req.requestedByUserName}</span>
+                        {req.requestedByUserDesignation && (
+                          <span className="text-slate-400 font-normal"> ({req.requestedByUserDesignation})</span>
+                        )}
+                      </div>
+                      <div className="text-[10px] text-slate-400 flex items-center gap-2 flex-wrap">
+                        <span className="uppercase text-rose-300 font-bold">{req.requestedByUserRole.replace('_', ' ')}</span>
+                        {req.requestedByUserPhone && <span>• 📞 +91 {req.requestedByUserPhone}</span>}
+                      </div>
+                    </div>
+
+                    {req.reason && (
+                      <div className="text-[11px] text-slate-300 italic line-clamp-2 bg-black/40 p-2 rounded-lg border border-white/5">
+                        "{req.reason}"
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Actions */}
+                  <div className="flex items-center justify-between pt-2 border-t border-white/10 gap-2">
+                    <button
+                      onClick={() => setShowApprovalsModal(true)}
+                      className="text-[11px] text-rose-300 hover:text-white font-bold flex items-center gap-1 cursor-pointer"
+                    >
+                      <Eye className="w-3.5 h-3.5" />
+                      <span>Inspect</span>
+                    </button>
+                    <div className="flex items-center space-x-1.5 shrink-0">
+                      <button
+                        onClick={async () => {
+                          const rem = prompt('Rejection reason (optional):', 'Rejected by Super Admin');
+                          if (rem === null) return;
+                          const { deletionRequestService } = await import('../../services/deletionRequestService');
+                          await deletionRequestService.rejectRequest(req.id, rem || undefined);
+                          loadData();
+                        }}
+                        className="px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg transition-colors cursor-pointer font-bold flex items-center text-[10px] gap-1 border border-slate-700"
+                        title="Reject Request"
+                      >
+                        <X className="w-3.5 h-3.5 text-rose-400" />
+                        <span>Reject</span>
+                      </button>
+                      <button
+                        onClick={async () => {
+                          const rem = prompt('Approval remarks (optional):', 'Approved by Super Admin');
+                          if (rem === null) return;
+                          const { deletionRequestService } = await import('../../services/deletionRequestService');
+                          await deletionRequestService.approveRequest(req.id, rem || undefined);
+                          loadData();
+                        }}
+                        className="px-2.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg transition-colors cursor-pointer font-bold flex items-center text-[10px] gap-1 shadow-md"
+                        title="Approve & Execute"
+                      >
+                        <Check className="w-3.5 h-3.5" />
+                        <span>Approve</span>
+                      </button>
+                    </div>
+                  </div>
                 </div>
-                <div className="flex items-center space-x-1.5 shrink-0">
-                  <button
-                    onClick={async () => {
-                      const { deletionRequestService } = await import('../../services/deletionRequestService');
-                      await deletionRequestService.approveRequest(req.id);
-                      loadData();
-                    }}
-                    className="p-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg transition-colors cursor-pointer font-bold flex items-center text-[10px]"
-                    title="Approve & Delete"
-                  >
-                    <Check className="w-3.5 h-3.5" />
-                  </button>
-                  <button
-                    onClick={async () => {
-                      const { deletionRequestService } = await import('../../services/deletionRequestService');
-                      await deletionRequestService.rejectRequest(req.id);
-                      loadData();
-                    }}
-                    className="p-1.5 bg-slate-700 hover:bg-slate-600 text-white rounded-lg transition-colors cursor-pointer font-bold flex items-center text-[10px]"
-                    title="Reject Request"
-                  >
-                    <X className="w-3.5 h-3.5 text-rose-400" />
-                  </button>
-                </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </div>
       )}
@@ -583,6 +646,15 @@ export const Dashboard: React.FC = () => {
           </table>
         </div>
       </div>
+
+      {/* Deletion & Action Approvals Modal */}
+      <DeletionApprovalsModal
+        isOpen={showApprovalsModal}
+        onClose={() => {
+          setShowApprovalsModal(false);
+          loadData();
+        }}
+      />
     </div>
   );
 };

@@ -381,7 +381,7 @@ export const quotationService = {
     window.dispatchEvent(new CustomEvent('app-realtime-update'));
   },
 
-  async deleteQuotation(id: string, skipApprovalCheck = false): Promise<{ success: boolean; requiresApproval?: boolean }> {
+  async deleteQuotation(id: string, skipApprovalCheck = false, customReason?: string): Promise<{ success: boolean; requiresApproval?: boolean }> {
     if (!id) return { success: false };
 
     const { useAuthStore } = await import('../store/authStore');
@@ -391,14 +391,23 @@ export const quotationService = {
 
     if (!isSuperAdmin && !skipApprovalCheck) {
       const q = await db.quotations.get(id);
-      const qName = q ? `Quotation ${q.quotationNumber || '#' + id}` : `Quotation #${id}`;
+      const lead = q?.leadId ? await db.leads.get(q.leadId) : undefined;
+      const qName = q ? `Quotation ${q.quotationNumber || '#' + id} (${lead?.name || 'Customer'})` : `Quotation #${id}`;
+      const itemSnapshot = {
+        ...q,
+        leadName: lead?.name,
+        leadPhone: lead?.phoneNumber,
+        pdfBlob: undefined // omit binary blob
+      };
+
       const { deletionRequestService } = await import('./deletionRequestService');
       await deletionRequestService.requestDeletion({
         entityType: 'quotation',
         entityId: id,
         entityName: qName,
         metadata: { leadId: q?.leadId },
-        reason: `Delete quotation requested by ${currentUser?.fullName || 'Admin/Employee'}`
+        reason: customReason || `Delete quotation requested by ${currentUser?.fullName || 'Admin/Employee'}`,
+        itemSnapshot
       });
       return { success: true, requiresApproval: true };
     }

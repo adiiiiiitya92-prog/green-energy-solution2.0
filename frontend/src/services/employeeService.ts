@@ -143,7 +143,27 @@ export const employeeService = {
     }
   },
 
-  async deleteEmployee(id: string): Promise<void> {
+  async deleteEmployee(id: string, skipApprovalCheck = false, customReason?: string): Promise<{ success: boolean; requiresApproval?: boolean }> {
+    const { useAuthStore } = await import('../store/authStore');
+    const currentRole = useAuthStore.getState().currentRole;
+    const currentUser = useAuthStore.getState().currentUser;
+    const isSuperAdmin = currentRole === 'super_admin' || currentUser?.role === 'super_admin';
+
+    if (!isSuperAdmin && !skipApprovalCheck) {
+      const emp = await db.profiles.get(id);
+      const empName = emp ? `Employee "${emp.fullName}" (${emp.role.replace('_', ' ')})` : `Employee #${id}`;
+      const itemSnapshot = { ...emp };
+      const { deletionRequestService } = await import('./deletionRequestService');
+      await deletionRequestService.requestDeletion({
+        entityType: 'employee',
+        entityId: id,
+        entityName: empName,
+        reason: customReason || `Delete employee profile requested by ${currentUser?.fullName || 'Admin'}`,
+        itemSnapshot
+      });
+      return { success: true, requiresApproval: true };
+    }
+
     await db.profiles.delete(id);
     await markRecordAsDeleted(id, 'profiles');
     try {
@@ -153,5 +173,6 @@ export const employeeService = {
       console.warn("Firestore delete profile note:", e);
     }
     window.dispatchEvent(new CustomEvent('app-realtime-update'));
+    return { success: true };
   }
 };

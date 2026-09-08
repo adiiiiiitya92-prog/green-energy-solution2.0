@@ -227,9 +227,37 @@ export const orderService = {
     return id;
   },
 
-  async deleteClientDocument(id: string): Promise<void> {
+  async deleteClientDocument(id: string, skipApprovalCheck = false, customReason?: string): Promise<{ success: boolean; requiresApproval?: boolean }> {
+    const { useAuthStore } = await import('../store/authStore');
+    const currentRole = useAuthStore.getState().currentRole;
+    const currentUser = useAuthStore.getState().currentUser;
+    const isSuperAdmin = currentRole === 'super_admin' || currentUser?.role === 'super_admin';
+
+    if (!isSuperAdmin && !skipApprovalCheck) {
+      const doc = await db.clientDocuments.get(id);
+      const lead = doc?.leadId ? await db.leads.get(doc.leadId) : undefined;
+      const docName = doc ? `Document "${doc.name || doc.docType}" (${lead?.name || 'Lead #' + (doc?.leadId || '')})` : `Document #${id}`;
+      const itemSnapshot = {
+        ...doc,
+        leadName: lead?.name,
+        leadPhone: lead?.phoneNumber,
+        leadCity: lead?.city,
+        fileBlob: undefined
+      };
+      const { deletionRequestService } = await import('./deletionRequestService');
+      await deletionRequestService.requestDeletion({
+        entityType: 'document',
+        entityId: id,
+        entityName: docName,
+        metadata: { leadId: doc?.leadId },
+        reason: customReason || `Delete document requested by ${currentUser?.fullName || 'User'}`,
+        itemSnapshot
+      });
+      return { success: true, requiresApproval: true };
+    }
+
     const doc = await db.clientDocuments.get(id);
-    if (!doc) return;
+    if (!doc) return { success: false };
     await db.transaction('rw', [db.clientDocuments, db.clientRegistrations], async () => {
       await db.clientDocuments.delete(id);
       if (doc.docType === 'account_details') {
@@ -245,6 +273,7 @@ export const orderService = {
 
     await markRecordAsDeleted(id, 'clientDocuments');
     deleteRecordFromFirestore('clientDocuments', id);
+    return { success: true };
   },
 
   // Installation Photos

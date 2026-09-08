@@ -634,7 +634,7 @@ export const Timeline: React.FC<TimelineProps> = ({ lead }) => {
             </span>
             <div className="grid grid-cols-2 gap-3 mt-2">
               {photos.map((ph) => {
-                const photoFile = ph.photoBlob || (ph as any).photoUrl;
+                const photoFile = ph.photoBlob || (ph as any).photoUrl || (ph as any).url;
                 const imgUrl = renderBlobImage(photoFile);
                 return (
                   <div key={ph.id} className="border border-slate-200 rounded-lg p-2 bg-slate-50 relative group">

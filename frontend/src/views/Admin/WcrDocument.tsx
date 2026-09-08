@@ -128,15 +128,21 @@ export const WcrDocument: React.FC<{
     try {
       const docs = await orderService.getClientDocumentsByLeadId(leadId);
       const aadharDoc = docs.find((d) => d.docType === 'aadhar_card');
-      if (aadharDoc && aadharDoc.fileBlob) {
-        const rawUrl = typeof aadharDoc.fileBlob === 'string' ? aadharDoc.fileBlob : URL.createObjectURL(aadharDoc.fileBlob);
-        const freshUrl = await getFreshB2SignedUrl(rawUrl);
-        setAadharXeroxUrl(freshUrl);
-        setIsAadharAutoLoaded(true);
+      if (aadharDoc) {
+        const rawUrl = typeof aadharDoc.fileBlob === 'string'
+          ? aadharDoc.fileBlob
+          : (aadharDoc.fileBlob instanceof Blob || (aadharDoc.fileBlob as any) instanceof File)
+            ? URL.createObjectURL(aadharDoc.fileBlob)
+            : (aadharDoc as any).fileUrl || (aadharDoc as any).url || '';
+        if (rawUrl) {
+          const freshUrl = await getFreshB2SignedUrl(rawUrl);
+          setAadharXeroxUrl(freshUrl);
+          setIsAadharAutoLoaded(true);
 
-        // If Aadhar number is not yet entered, use Groq AI to read it in background
-        if (!aadharNumber) {
-          triggerAIAadharExtraction(freshUrl);
+          // If Aadhar number is not yet entered, use Groq AI to read it in background
+          if (!aadharNumber) {
+            triggerAIAadharExtraction(freshUrl);
+          }
         }
       }
     } catch (err) {

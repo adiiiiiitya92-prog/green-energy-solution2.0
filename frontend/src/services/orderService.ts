@@ -86,6 +86,9 @@ export const orderService = {
       id,
       createdAt: new Date().toISOString()
     };
+    let updatedLead: any = null;
+    let createdReg: any = null;
+
     await db.transaction('rw', [db.orderConfirmations, db.leads, db.clientRegistrations], async () => {
       await db.orderConfirmations.add(newOc);
       
@@ -94,7 +97,7 @@ export const orderService = {
         lead.status = 'confirmed';
         lead.updatedAt = new Date().toISOString();
         await db.leads.put(lead);
-        saveRecordToFirestore('leads', lead.id, lead);
+        updatedLead = lead;
       }
 
       const reg = await db.clientRegistrations.get(ocData.leadId);
@@ -108,10 +111,16 @@ export const orderService = {
           updatedAt: new Date().toISOString()
         };
         await db.clientRegistrations.add(newReg);
-        saveRecordToFirestore('clientRegistrations', ocData.leadId, newReg);
+        createdReg = newReg;
       }
     });
 
+    if (updatedLead) {
+      saveRecordToFirestore('leads', updatedLead.id, updatedLead);
+    }
+    if (createdReg) {
+      saveRecordToFirestore('clientRegistrations', ocData.leadId, createdReg);
+    }
     saveRecordToFirestore('orderConfirmations', id, newOc);
     return id;
   },
@@ -152,6 +161,8 @@ export const orderService = {
     const deletedIds = await getDeletedRecordIdsSet();
     if (deletedIds.has(registration.leadId)) return;
     registration.updatedAt = new Date().toISOString();
+    let updatedLead: any = null;
+
     await db.transaction('rw', [db.clientRegistrations, db.leads], async () => {
       await db.clientRegistrations.put(registration);
       
@@ -160,10 +171,13 @@ export const orderService = {
         lead.status = 'registered';
         lead.updatedAt = new Date().toISOString();
         await db.leads.put(lead);
-        saveRecordToFirestore('leads', lead.id, lead);
+        updatedLead = lead;
       }
     });
 
+    if (updatedLead) {
+      saveRecordToFirestore('leads', updatedLead.id, updatedLead);
+    }
     saveRecordToFirestore('clientRegistrations', registration.leadId, registration);
   },
 
@@ -172,7 +186,10 @@ export const orderService = {
     const deletedIds = await getDeletedRecordIdsSet();
     if (deletedIds.has(leadId)) return [];
 
-    const localDocs = await db.clientDocuments.where({ leadId }).toArray();
+    let localDocs = await db.clientDocuments.where('leadId').equals(leadId).toArray().catch(() => []);
+    if (localDocs.length === 0) {
+      localDocs = await db.clientDocuments.filter(d => String(d.leadId).trim() === String(leadId).trim()).toArray();
+    }
     let validLocal = localDocs.filter(d => !deletedIds.has(d.id));
 
     if (validLocal.length === 0) {
@@ -182,8 +199,18 @@ export const orderService = {
           const freshDeleted = await getDeletedRecordIdsSet();
           const validRemote = remoteDocs.filter(d => !freshDeleted.has(d.id) && !freshDeleted.has(d.leadId));
           if (validRemote.length > 0) {
-            await db.clientDocuments.bulkPut(validRemote);
-            const reRead = await db.clientDocuments.where({ leadId }).toArray();
+            for (const vd of validRemote) {
+              const existing = await db.clientDocuments.get(vd.id);
+              if (existing?.fileBlob && !vd.fileBlob) {
+                await db.clientDocuments.put({ ...vd, fileBlob: existing.fileBlob });
+              } else {
+                await db.clientDocuments.put(vd);
+              }
+            }
+            let reRead = await db.clientDocuments.where('leadId').equals(leadId).toArray().catch(() => []);
+            if (reRead.length === 0) {
+              reRead = await db.clientDocuments.filter(d => String(d.leadId).trim() === String(leadId).trim()).toArray();
+            }
             validLocal = reRead.filter(d => !freshDeleted.has(d.id));
           }
         }
@@ -203,12 +230,14 @@ export const orderService = {
       uploadedAt: new Date().toISOString()
     };
 
+    let removedDocIds: string[] = [];
+    let updatedReg: any = null;
+
     await db.transaction('rw', [db.clientDocuments, db.clientRegistrations], async () => {
       const existing = await db.clientDocuments.where({ leadId: docData.leadId, docType: docData.docType }).first();
       if (existing) {
         await db.clientDocuments.delete(existing.id);
-        await markRecordAsDeleted(existing.id, 'clientDocuments');
-        deleteRecordFromFirestore('clientDocuments', existing.id);
+        removedDocIds.push(existing.id);
       }
       await db.clientDocuments.add(newDoc);
 
@@ -218,11 +247,18 @@ export const orderService = {
           reg.bankFileUploaded = true;
           reg.updatedAt = new Date().toISOString();
           await db.clientRegistrations.put(reg);
-          saveRecordToFirestore('clientRegistrations', docData.leadId, reg);
+          updatedReg = reg;
         }
       }
     });
 
+    for (const oldId of removedDocIds) {
+      await markRecordAsDeleted(oldId, 'clientDocuments');
+      deleteRecordFromFirestore('clientDocuments', oldId);
+    }
+    if (updatedReg) {
+      saveRecordToFirestore('clientRegistrations', docData.leadId, updatedReg);
+    }
     saveRecordToFirestore('clientDocuments', id, newDoc);
     return id;
   },
@@ -258,6 +294,8 @@ export const orderService = {
 
     const doc = await db.clientDocuments.get(id);
     if (!doc) return { success: false };
+    let updatedReg: any = null;
+
     await db.transaction('rw', [db.clientDocuments, db.clientRegistrations], async () => {
       await db.clientDocuments.delete(id);
       if (doc.docType === 'account_details') {
@@ -266,11 +304,14 @@ export const orderService = {
           reg.bankFileUploaded = false;
           reg.updatedAt = new Date().toISOString();
           await db.clientRegistrations.put(reg);
-          saveRecordToFirestore('clientRegistrations', doc.leadId, reg);
+          updatedReg = reg;
         }
       }
     });
 
+    if (updatedReg) {
+      saveRecordToFirestore('clientRegistrations', doc.leadId, updatedReg);
+    }
     await markRecordAsDeleted(id, 'clientDocuments');
     deleteRecordFromFirestore('clientDocuments', id);
     return { success: true };
@@ -281,7 +322,10 @@ export const orderService = {
     const deletedIds = await getDeletedRecordIdsSet();
     if (deletedIds.has(leadId)) return [];
 
-    const localPhotos = await db.installationPhotos.where({ leadId }).toArray();
+    let localPhotos = await db.installationPhotos.where('leadId').equals(leadId).toArray().catch(() => []);
+    if (localPhotos.length === 0) {
+      localPhotos = await db.installationPhotos.filter(p => String(p.leadId).trim() === String(leadId).trim()).toArray();
+    }
     let validLocal = localPhotos.filter(p => !deletedIds.has(p.id));
 
     if (validLocal.length === 0) {
@@ -291,8 +335,18 @@ export const orderService = {
           const freshDeleted = await getDeletedRecordIdsSet();
           const validRemote = remotePhotos.filter(p => !freshDeleted.has(p.id) && !freshDeleted.has(p.leadId));
           if (validRemote.length > 0) {
-            await db.installationPhotos.bulkPut(validRemote);
-            const reRead = await db.installationPhotos.where({ leadId }).toArray();
+            for (const vr of validRemote) {
+              const existing = await db.installationPhotos.get(vr.id);
+              if (existing?.photoBlob && !vr.photoBlob) {
+                await db.installationPhotos.put({ ...vr, photoBlob: existing.photoBlob });
+              } else {
+                await db.installationPhotos.put(vr);
+              }
+            }
+            let reRead = await db.installationPhotos.where('leadId').equals(leadId).toArray().catch(() => []);
+            if (reRead.length === 0) {
+              reRead = await db.installationPhotos.filter(p => String(p.leadId).trim() === String(leadId).trim()).toArray();
+            }
             validLocal = reRead.filter(p => !freshDeleted.has(p.id));
           }
         }
@@ -310,10 +364,15 @@ export const orderService = {
       ...photoData,
       id
     };
+    let updatedLead: any = null;
+
     await db.transaction('rw', [db.installationPhotos, db.leads], async () => {
       await db.installationPhotos.add(newPhoto);
 
-      const photos = await db.installationPhotos.where({ leadId: photoData.leadId }).toArray();
+      let photos = await db.installationPhotos.where('leadId').equals(photoData.leadId).toArray().catch(() => []);
+      if (photos.length === 0) {
+        photos = await db.installationPhotos.filter(p => String(p.leadId).trim() === String(photoData.leadId).trim()).toArray();
+      }
       const types = photos.map(p => p.photoType);
       const hasRequired = ['earthing', 'meter', 'grouting'].every(type => types.includes(type as any));
 
@@ -322,10 +381,13 @@ export const orderService = {
         lead.status = 'installed';
         lead.updatedAt = new Date().toISOString();
         await db.leads.put(lead);
-        saveRecordToFirestore('leads', lead.id, lead);
+        updatedLead = lead;
       }
     });
 
+    if (updatedLead) {
+      saveRecordToFirestore('leads', updatedLead.id, updatedLead);
+    }
     saveRecordToFirestore('installationPhotos', id, newPhoto);
     return id;
   },
@@ -341,7 +403,10 @@ export const orderService = {
     const deletedIds = await getDeletedRecordIdsSet();
     if (deletedIds.has(leadId)) return [];
 
-    const localReleases = await db.releaseDocuments.where({ leadId }).toArray();
+    let localReleases = await db.releaseDocuments.where('leadId').equals(leadId).toArray().catch(() => []);
+    if (localReleases.length === 0) {
+      localReleases = await db.releaseDocuments.filter(r => String(r.leadId).trim() === String(leadId).trim()).toArray();
+    }
     let validLocal = localReleases.filter(r => !deletedIds.has(r.id));
 
     if (validLocal.length === 0) {
@@ -351,8 +416,18 @@ export const orderService = {
           const freshDeleted = await getDeletedRecordIdsSet();
           const validRemote = remoteReleases.filter(r => !freshDeleted.has(r.id) && !freshDeleted.has(r.leadId));
           if (validRemote.length > 0) {
-            await db.releaseDocuments.bulkPut(validRemote);
-            const reRead = await db.releaseDocuments.where({ leadId }).toArray();
+            for (const vr of validRemote) {
+              const existing = await db.releaseDocuments.get(vr.id);
+              if (existing?.fileBlob && !vr.fileBlob) {
+                await db.releaseDocuments.put({ ...vr, fileBlob: existing.fileBlob });
+              } else {
+                await db.releaseDocuments.put(vr);
+              }
+            }
+            let reRead = await db.releaseDocuments.where('leadId').equals(leadId).toArray().catch(() => []);
+            if (reRead.length === 0) {
+              reRead = await db.releaseDocuments.filter(r => String(r.leadId).trim() === String(leadId).trim()).toArray();
+            }
             validLocal = reRead.filter(r => !freshDeleted.has(r.id));
           }
         }
@@ -371,13 +446,18 @@ export const orderService = {
       id,
       uploadedAt: new Date().toISOString()
     };
+    let removedDocIds: string[] = [];
+    let updatedLead: any = null;
+
     await db.transaction('rw', [db.releaseDocuments, db.leads], async () => {
       // Clear any existing release docs for this lead so only 1 single file is kept
-      const existing = await db.releaseDocuments.where({ leadId: relData.leadId }).toArray();
+      let existing = await db.releaseDocuments.where('leadId').equals(relData.leadId).toArray().catch(() => []);
+      if (existing.length === 0) {
+        existing = await db.releaseDocuments.filter(r => String(r.leadId).trim() === String(relData.leadId).trim()).toArray();
+      }
       for (const item of existing) {
         await db.releaseDocuments.delete(item.id);
-        await markRecordAsDeleted(item.id, 'releaseDocuments');
-        deleteRecordFromFirestore('releaseDocuments', item.id);
+        removedDocIds.push(item.id);
       }
 
       await db.releaseDocuments.add(newRel);
@@ -387,10 +467,17 @@ export const orderService = {
         lead.status = 'closed';
         lead.updatedAt = new Date().toISOString();
         await db.leads.put(lead);
-        saveRecordToFirestore('leads', lead.id, lead);
+        updatedLead = lead;
       }
     });
 
+    for (const oldId of removedDocIds) {
+      await markRecordAsDeleted(oldId, 'releaseDocuments');
+      deleteRecordFromFirestore('releaseDocuments', oldId);
+    }
+    if (updatedLead) {
+      saveRecordToFirestore('leads', updatedLead.id, updatedLead);
+    }
     saveRecordToFirestore('releaseDocuments', id, newRel);
     return id;
   },

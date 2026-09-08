@@ -1967,14 +1967,13 @@ export const Leads: React.FC = () => {
                 uploadedBy: currentUser?.id || 'mock_emp'
               });
 
-              // Touch lead timestamp so Timeline detects change
-              await leadService.updateLead({
-                ...selectedLead,
-                updatedAt: new Date().toISOString()
-              });
-
-              const refreshed = await leadService.getLeadById(selectedLead.id);
-              if (refreshed) setSelectedLead(refreshed);
+              // Touch lead timestamp so Timeline detects change without reverting status
+              const freshLead = await leadService.getLeadById(selectedLead.id);
+              if (freshLead) {
+                freshLead.updatedAt = new Date().toISOString();
+                await leadService.updateLead(freshLead);
+                setSelectedLead(freshLead);
+              }
 
               const photos = await orderService.getInstallationPhotosByLeadId(selectedLead.id);
               setInstallPhotos(photos);
@@ -3242,7 +3241,12 @@ export const Leads: React.FC = () => {
                                       <button
                                         type="button"
                                         onClick={async () => {
-                                          const rawUrl = typeof doc.fileBlob === 'string' ? doc.fileBlob : URL.createObjectURL(doc.fileBlob);
+                                          const rawUrl = typeof doc.fileBlob === 'string'
+                                            ? doc.fileBlob
+                                            : (doc.fileBlob instanceof Blob || doc.fileBlob instanceof File)
+                                              ? URL.createObjectURL(doc.fileBlob)
+                                              : (doc as any).fileUrl || (doc as any).url || '';
+                                          if (!rawUrl) return;
                                           const freshUrl = await getFreshB2SignedUrl(rawUrl);
                                           setPreviewDoc({
                                             name: doc.docType.replace('_', ' ').toUpperCase(),
@@ -3257,7 +3261,12 @@ export const Leads: React.FC = () => {
                                       <button
                                         type="button"
                                         onClick={async () => {
-                                          const rawUrl = typeof doc.fileBlob === 'string' ? doc.fileBlob : URL.createObjectURL(doc.fileBlob);
+                                          const rawUrl = typeof doc.fileBlob === 'string'
+                                            ? doc.fileBlob
+                                            : (doc.fileBlob instanceof Blob || doc.fileBlob instanceof File)
+                                              ? URL.createObjectURL(doc.fileBlob)
+                                              : (doc as any).fileUrl || (doc as any).url || '';
+                                          if (!rawUrl) return;
                                           const freshUrl = await getFreshB2SignedUrl(rawUrl);
                                           const a = document.createElement('a');
                                           a.href = freshUrl;
@@ -3401,8 +3410,13 @@ export const Leads: React.FC = () => {
                 {/* Uploaded Gallery Grid */}
                 <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
                   {installPhotos.map((photo) => {
-                    const rawUrl = typeof photo.photoBlob === 'string' ? photo.photoBlob : URL.createObjectURL(photo.photoBlob);
-                    const objectUrl = getQuickB2Url(rawUrl);
+                    const rawUrl = typeof photo.photoBlob === 'string'
+                      ? photo.photoBlob
+                      : (photo.photoBlob instanceof Blob || photo.photoBlob instanceof File)
+                        ? URL.createObjectURL(photo.photoBlob)
+                        : (photo as any).photoUrl || (photo as any).url || '';
+                    const objectUrl = rawUrl ? getQuickB2Url(rawUrl) : '';
+                    const locText = photo.location?.placeName || (photo.location?.latitude != null && photo.location?.longitude != null ? `${photo.location.latitude.toFixed(4)}, ${photo.location.longitude.toFixed(4)}` : 'Location captured');
                     return (
                       <div key={photo.id} className="border border-slate-200 rounded-xl p-3 bg-white space-y-3 shadow-xs">
                         <div className="flex justify-between items-start">
@@ -3426,6 +3440,7 @@ export const Leads: React.FC = () => {
                         <button
                           type="button"
                           onClick={async () => {
+                            if (!rawUrl) return;
                             const freshUrl = await getFreshB2SignedUrl(rawUrl);
                             setPreviewDoc({
                               name: `Installation Photo - ${photo.photoType.toUpperCase()}`,
@@ -3435,25 +3450,31 @@ export const Leads: React.FC = () => {
                           }}
                           className="block w-full overflow-hidden rounded-lg border border-slate-100 bg-slate-50 aspect-video cursor-pointer text-left"
                         >
-                          <img src={objectUrl} alt="Inspection tag" className="w-full h-full object-cover hover:scale-105 transition-transform" />
+                          {objectUrl ? (
+                            <img src={objectUrl} alt="Inspection tag" className="w-full h-full object-cover hover:scale-105 transition-transform" />
+                          ) : (
+                            <div className="w-full h-full flex items-center justify-center text-xs text-slate-400">Photo Unavailable</div>
+                          )}
                         </button>
 
                         <div className="pt-2 border-t border-slate-100 flex items-center justify-between gap-2">
                           <div className="flex items-center gap-1 min-w-0 text-slate-500 text-[10px] font-medium">
                             <Compass className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
-                            <span className="truncate">{photo.location.placeName || `${photo.location.latitude.toFixed(4)}, ${photo.location.longitude.toFixed(4)}`}</span>
+                            <span className="truncate">{locText}</span>
                           </div>
 
-                          <button
-                            type="button"
-                            onClick={() => {
-                              window.open(`https://www.google.com/maps/search/?api=1&query=${photo.location.latitude},${photo.location.longitude}`, '_blank');
-                            }}
-                            className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-[10px] font-bold transition-all shadow-xs shrink-0 flex items-center gap-1 cursor-pointer"
-                          >
-                            <Compass className="w-3 h-3" />
-                            <span>Check Map Location</span>
-                          </button>
+                          {photo.location?.latitude != null && photo.location?.longitude != null && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                window.open(`https://www.google.com/maps/search/?api=1&query=${photo.location.latitude},${photo.location.longitude}`, '_blank');
+                              }}
+                              className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-[10px] font-bold transition-all shadow-xs shrink-0 flex items-center gap-1 cursor-pointer"
+                            >
+                              <Compass className="w-3 h-3" />
+                              <span>Check Map Location</span>
+                            </button>
+                          )}
                         </div>
                       </div>
                     );
@@ -3711,7 +3732,12 @@ export const Leads: React.FC = () => {
                                 <button
                                   type="button"
                                   onClick={async () => {
-                                    const rawUrl = typeof regChecklist.bankDocumentBlob === 'string' ? regChecklist.bankDocumentBlob : URL.createObjectURL(regChecklist.bankDocumentBlob as Blob);
+                                    const rawUrl = typeof regChecklist.bankDocumentBlob === 'string'
+                                      ? regChecklist.bankDocumentBlob
+                                      : (regChecklist.bankDocumentBlob instanceof Blob || (regChecklist.bankDocumentBlob as any) instanceof File)
+                                        ? URL.createObjectURL(regChecklist.bankDocumentBlob as Blob)
+                                        : (regChecklist as any).bankDocumentUrl || (regChecklist as any).url || '';
+                                    if (!rawUrl) return;
                                     const freshUrl = await getFreshB2SignedUrl(rawUrl);
                                     const a = document.createElement('a');
                                     a.href = freshUrl;
@@ -3805,7 +3831,12 @@ export const Leads: React.FC = () => {
                             type="button"
                             onClick={async () => {
                               const rel = releaseDocs[0];
-                              const rawUrl = typeof rel.fileBlob === 'string' ? rel.fileBlob : URL.createObjectURL(rel.fileBlob);
+                              const rawUrl = typeof rel.fileBlob === 'string'
+                                ? rel.fileBlob
+                                : (rel.fileBlob instanceof Blob || rel.fileBlob instanceof File)
+                                  ? URL.createObjectURL(rel.fileBlob)
+                                  : (rel as any).fileUrl || (rel as any).url || '';
+                              if (!rawUrl) return;
                               const freshUrl = await getFreshB2SignedUrl(rawUrl);
                               setPreviewDoc({
                                 name: 'Release Handover Document',
@@ -3822,7 +3853,12 @@ export const Leads: React.FC = () => {
                             type="button"
                             onClick={async () => {
                               const rel = releaseDocs[0];
-                              const rawUrl = typeof rel.fileBlob === 'string' ? rel.fileBlob : URL.createObjectURL(rel.fileBlob);
+                              const rawUrl = typeof rel.fileBlob === 'string'
+                                ? rel.fileBlob
+                                : (rel.fileBlob instanceof Blob || rel.fileBlob instanceof File)
+                                  ? URL.createObjectURL(rel.fileBlob)
+                                  : (rel as any).fileUrl || (rel as any).url || '';
+                              if (!rawUrl) return;
                               const freshUrl = await getFreshB2SignedUrl(rawUrl);
                               const a = document.createElement('a');
                               a.href = freshUrl;

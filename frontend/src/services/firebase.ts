@@ -379,7 +379,16 @@ export function getQuickB2Url(storagePathOrUrl: any): string {
     return `${b2AuthCache.downloadUrl}/file/${b2AuthCache.bucketName}/${cleanPath}?Authorization=${encodeURIComponent(b2AuthCache.downloadAuthToken)}`;
   }
 
-  getMasterB2DownloadAuth().catch(() => {});
+  // Preserve working Authorization token if already present on URL
+  if (storagePathOrUrl.includes('Authorization=')) {
+    return storagePathOrUrl;
+  }
+
+  getMasterB2DownloadAuth().then((auth) => {
+    if (auth?.downloadAuthToken && typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('b2-auth-refreshed'));
+    }
+  }).catch(() => {});
   return storagePathOrUrl.split('?')[0];
 }
 
@@ -409,6 +418,11 @@ export async function getFreshB2SignedUrl(storagePathOrUrl: string): Promise<str
     }
   } catch (err) {
     console.warn("Signed URL refresh note:", err);
+  }
+
+  // Preserve existing Authorization token if refresh was not possible
+  if (storagePathOrUrl.includes('Authorization=')) {
+    return storagePathOrUrl;
   }
 
   return storagePathOrUrl.split('?')[0];
@@ -763,7 +777,16 @@ export async function syncAllLocalDataToFirestore(force: boolean = false): Promi
       if (Array.isArray(remoteLeads)) {
         for (const rl of remoteLeads) {
           if (rl && rl.id && !deletedIds.has(rl.id)) {
-            await db.leads.put(rl);
+            const local = await db.leads.get(rl.id);
+            if (local) {
+              const merged = { ...rl };
+              if (!merged.clientSignatureBlob && local.clientSignatureBlob) merged.clientSignatureBlob = local.clientSignatureBlob;
+              if (!merged.vehiclePhotoBlob && local.vehiclePhotoBlob) merged.vehiclePhotoBlob = local.vehiclePhotoBlob;
+              if (!merged.bankDocumentBlob && local.bankDocumentBlob) merged.bankDocumentBlob = local.bankDocumentBlob;
+              await db.leads.put(merged);
+            } else {
+              await db.leads.put(rl);
+            }
           }
         }
       }
@@ -819,11 +842,16 @@ export async function syncAllLocalDataToFirestore(force: boolean = false): Promi
         }
       }
 
-      // Merge remote client docs to local database
+      // Merge remote client docs to local database while preserving local fileBlob
       if (Array.isArray(remoteClientDocs)) {
         for (const rd of remoteClientDocs) {
           if (rd && rd.id && !deletedIds.has(rd.id) && (!rd.leadId || !deletedIds.has(rd.leadId))) {
-            await db.clientDocuments.put(rd);
+            const local = await db.clientDocuments.get(rd.id);
+            if (local?.fileBlob && !rd.fileBlob) {
+              await db.clientDocuments.put({ ...rd, fileBlob: local.fileBlob });
+            } else {
+              await db.clientDocuments.put(rd);
+            }
           }
         }
       }
@@ -865,8 +893,55 @@ export async function syncAllLocalDataToFirestore(force: boolean = false): Promi
           await saveRecordToFirestore('releaseDocuments', rel.id, rel);
         }
       }
+
+      // Merge remote release docs to local database while preserving local fileBlob
+      if (Array.isArray(remoteReleases)) {
+        for (const rd of remoteReleases) {
+          if (rd && rd.id && !deletedIds.has(rd.id) && (!rd.leadId || !deletedIds.has(rd.leadId))) {
+            const local = await db.releaseDocuments.get(rd.id);
+            if (local?.fileBlob && !rd.fileBlob) {
+              await db.releaseDocuments.put({ ...rd, fileBlob: local.fileBlob });
+            } else {
+              await db.releaseDocuments.put(rd);
+            }
+          }
+        }
+      }
     } catch (err) {
       console.warn("Release document sync note:", err);
+    }
+
+    // 7. Reconcile & Sync Installation Photos (Smart)
+    try {
+      const remotePhotos = await fetchCollectionFromFirestore<any>('installationPhotos', 3000).catch(() => []);
+      const remotePhotoMap = new Map<string, any>((Array.isArray(remotePhotos) ? remotePhotos : []).map(r => [r.id, r]));
+      const localPhotos = await db.installationPhotos.toArray();
+
+      for (const p of localPhotos) {
+        if (deletedIds.has(p.id) || (p.leadId && deletedIds.has(p.leadId))) {
+          await db.installationPhotos.delete(p.id);
+          continue;
+        }
+        if (!remotePhotoMap.has(p.id)) {
+          await saveRecordToFirestore('installationPhotos', p.id, p);
+        }
+      }
+
+      // Merge remote installation photos to local database while preserving local photoBlob
+      if (Array.isArray(remotePhotos)) {
+        for (const rp of remotePhotos) {
+          if (rp && rp.id && !deletedIds.has(rp.id) && (!rp.leadId || !deletedIds.has(rp.leadId))) {
+            const local = await db.installationPhotos.get(rp.id);
+            if (local?.photoBlob && !rp.photoBlob) {
+              await db.installationPhotos.put({ ...rp, photoBlob: local.photoBlob });
+            } else {
+              await db.installationPhotos.put(rp);
+            }
+          }
+        }
+      }
+    } catch (err) {
+      console.warn("Installation photo sync note:", err);
     }
 
     console.log("🔥 Smart reconciliation completed with minimal writes!");
@@ -989,8 +1064,21 @@ export function initializeRealtimeFirestoreSync(): void {
             await markRecordAsDeleted(docId, colName);
             changed = true;
           } else if (change.type === 'added' || change.type === 'modified') {
-            const data = { id: docId, ...change.doc.data() };
-            if (dexieTable) await dexieTable.put(data);
+            const incomingData = { id: docId, ...change.doc.data() } as any;
+            if (dexieTable) {
+              const existing = await dexieTable.get(docId);
+              if (existing) {
+                const mergedData = { ...incomingData };
+                if (!mergedData.photoBlob && existing.photoBlob) mergedData.photoBlob = existing.photoBlob;
+                if (!mergedData.fileBlob && existing.fileBlob) mergedData.fileBlob = existing.fileBlob;
+                if (!mergedData.clientSignatureBlob && existing.clientSignatureBlob) mergedData.clientSignatureBlob = existing.clientSignatureBlob;
+                if (!mergedData.vehiclePhotoBlob && existing.vehiclePhotoBlob) mergedData.vehiclePhotoBlob = existing.vehiclePhotoBlob;
+                if (!mergedData.bankDocumentBlob && existing.bankDocumentBlob) mergedData.bankDocumentBlob = existing.bankDocumentBlob;
+                await dexieTable.put(mergedData);
+              } else {
+                await dexieTable.put(incomingData);
+              }
+            }
             changed = true;
           }
         }

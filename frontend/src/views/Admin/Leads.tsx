@@ -32,7 +32,7 @@ import {
   ChevronLeft, Trash2, Send, Star, FileCheck, CheckCircle, Compass, X, Eye, Download,
   CreditCard, Wallet, Edit3, MessageSquare, Bell, Flame, FileText,
   BarChart3, FileSpreadsheet, Printer, Calendar, RotateCcw, Sparkles, Truck, AlertCircle,
-  Layers, Sun, Zap, Landmark, MapPin, Loader2
+  Layers, Sun, Zap, Landmark, MapPin, Loader2, Lock
 } from 'lucide-react';
 import dayjs from 'dayjs';
 
@@ -1291,6 +1291,10 @@ export const Leads: React.FC = () => {
 
   // 2. Booking order confirmation
   const handleConfirmOrder = async () => {
+    if (currentRole === 'field_employee') {
+      alert('⚠️ Access Restricted: Field employees are not authorized to collect or record payments.');
+      return;
+    }
     if (!selectedLead) return;
     if (!hasAdminQuotation || bookingItems.length === 0) {
       alert('⚠️ Payment collection / Order Confirmation cannot be created without an official saved quotation. Please create and save a quotation first.');
@@ -1473,6 +1477,10 @@ export const Leads: React.FC = () => {
   // 2b. Handle subsequent payments (2nd, 3rd, 4th payment installments)
   const handleRecordSubsequentPayment = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (currentRole === 'field_employee') {
+      alert('⚠️ Access Restricted: Field employees are not authorized to collect or record payments.');
+      return;
+    }
     if (!selectedLead || !existingOc || !hasAdminQuotation) {
       alert('⚠️ Payment cannot be recorded because no valid saved quotation was found for this lead.');
       return;
@@ -2220,7 +2228,7 @@ export const Leads: React.FC = () => {
                 <span>Order & KYC Docs</span>
                 {hasAdminQuotation && existingOc && (
                   <span className="px-1.5 py-0.5 rounded-full bg-emerald-100 text-emerald-800 text-[9px] font-black uppercase tracking-wider">
-                    Payments Active
+                    {currentRole === 'field_employee' ? 'Payment Status' : 'Payments Active'}
                   </span>
                 )}
               </button>
@@ -2351,9 +2359,13 @@ export const Leads: React.FC = () => {
                       <div>
                         <h3 className="text-sm font-bold text-slate-800 uppercase tracking-wider flex items-center gap-2">
                           <Wallet className="w-4 h-4 text-violet-600" />
-                          <span>Book Order & Installment Payment Management</span>
+                          <span>{currentRole === 'field_employee' ? 'Order Details & Payment Status' : 'Book Order & Installment Payment Management'}</span>
                         </h3>
-                        <p className="text-[10px] text-slate-400 font-medium mt-0.5">Track 1st advance deposits, 2nd & 3rd installments, remaining balances, and receipts.</p>
+                        <p className="text-[10px] text-slate-400 font-medium mt-0.5">
+                          {currentRole === 'field_employee'
+                            ? 'View installment payment history, remaining balance, and receipts (Collection restricted for field employees).'
+                            : 'Track 1st advance deposits, 2nd & 3rd installments, remaining balances, and receipts.'}
+                        </p>
                       </div>
 
                       {hasPaymentsRecorded && isQuotationCreated && (
@@ -2691,6 +2703,36 @@ export const Leads: React.FC = () => {
 
                         {/* Add Subsequent Payment Form (Only when remaining balance > 0) */}
                         {remainingBalance > 0 ? (
+                          currentRole === 'field_employee' ? (
+                            <div className="bg-amber-50/80 border border-amber-200 rounded-xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-2xs">
+                              <div className="flex items-center gap-3">
+                                <div className="w-9 h-9 rounded-xl bg-amber-100 border border-amber-300 text-amber-800 flex items-center justify-center font-black shrink-0">
+                                  <Lock className="w-4 h-4 text-amber-700" />
+                                </div>
+                                <div>
+                                  <h4 className="text-xs font-black text-amber-950 uppercase tracking-wider">
+                                    Installment Collection Restricted
+                                  </h4>
+                                  <p className="text-[11px] text-amber-900/80 font-medium mt-0.5">
+                                    Client has a remaining balance of <strong className="text-amber-950 font-black">₹{remainingBalance.toLocaleString('en-IN')}</strong>. Field employees cannot record installment payments. Only Admin / Accounts team can collect payments.
+                                  </p>
+                                </div>
+                              </div>
+                              {selectedLead && (
+                                <a
+                                  href={`https://api.whatsapp.com/send?phone=${getCleanWhatsAppPhone(selectedLead.phoneNumber)}&text=${encodeURIComponent(
+                                    `Dear ${selectedLead.name},\n\nGreetings from *Green Energy Solution*! ☀️\n\nThis is a polite payment reminder regarding your Solar Rooftop Order details:\n\n📌 *Total Contract Amount:* ₹${orderSubtotal.toLocaleString('en-IN')}\n✅ *Total Amount Paid:* ₹${totalPaid.toLocaleString('en-IN')}\n⚠️ *Remaining Balance Due:* ₹${remainingBalance.toLocaleString('en-IN')}\n\nKindly clear the remaining payment of *₹${remainingBalance.toLocaleString('en-IN')}* at your earliest convenience to avoid installation delays.\n\nThank you!\n*Green Energy Solution*`
+                                  )}`}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-bold transition-all shadow-xs flex items-center gap-1.5 cursor-pointer shrink-0"
+                                >
+                                  <MessageSquare className="w-3.5 h-3.5" />
+                                  <span>WhatsApp Reminder</span>
+                                </a>
+                              )}
+                            </div>
+                          ) : (
                           <div className="bg-amber-50/60 border border-amber-200 rounded-xl p-4 space-y-3">
                             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
                               <div>
@@ -2916,6 +2958,7 @@ export const Leads: React.FC = () => {
                               </button>
                             </form>
                           </div>
+                          )
                         ) : (
                           /* Full Payment Cleared Banner */
                           <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-xs">
@@ -2938,6 +2981,22 @@ export const Leads: React.FC = () => {
                       </div>
                     ) : (
                       /* First Time Initial Advance Booking Form */
+                      currentRole === 'field_employee' ? (
+                        <div className="bg-slate-50 border border-slate-200 rounded-2xl p-6 text-center space-y-3 shadow-2xs">
+                          <div className="w-12 h-12 rounded-full bg-amber-100 border border-amber-300 text-amber-700 flex items-center justify-center font-bold mx-auto text-xl">
+                            <Lock className="w-5 h-5 text-amber-700" />
+                          </div>
+                          <h4 className="text-sm font-black text-slate-800 uppercase tracking-wider">
+                            Payment Collection Restricted for Field Employees
+                          </h4>
+                          <p className="text-xs text-slate-600 font-medium max-w-md mx-auto leading-relaxed">
+                            Field employees cannot collect or record order booking advance payments. Please contact the Admin or Accounts team to confirm order booking and record the payment deposit.
+                          </p>
+                          <div className="text-[11px] text-slate-500 font-semibold pt-1">
+                            Contract Value: <strong className="text-slate-800 font-bold">₹{orderSubtotal.toLocaleString('en-IN')}</strong> (Ready for Office Booking)
+                          </div>
+                        </div>
+                      ) : (
                       <div className="space-y-4">
                         <div className="bg-violet-50/60 border border-violet-200 rounded-xl p-3 text-[11px] text-violet-800 font-medium">
                           <strong>Order Initial Booking & Payment Entry:</strong> Enter the 1st Advance Payment deposit amount to initiate order confirmation and unlock installment tracking.
@@ -3137,6 +3196,7 @@ export const Leads: React.FC = () => {
                           <span>{isBookingOrder ? 'Booking Order & Receipt...' : 'Book Order & Lock Contract (1st Advance)'}</span>
                         </button>
                       </div>
+                      )
                     )}
                   </div>
 

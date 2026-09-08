@@ -50,7 +50,7 @@ export const QuotationDocument: React.FC<{
   onSwitchToEdit?: () => void;
   onQuotationSaved?: () => void;
 }> = ({ defaultLeadId, isEmbedded, readOnlyQuotation, viewOnly = false, onClosePreview, onNavigateToOrderKyc, onSwitchToEdit, onQuotationSaved }) => {
-  const { currentUser } = useAuthStore();
+  const { currentUser, currentRole } = useAuthStore();
   const [profiles, setProfiles] = useState<Profile[]>([]);
   const [isViewOnlyMode, setIsViewOnlyMode] = useState<boolean>(viewOnly);
   const [leads, setLeads] = useState<Lead[]>([]);
@@ -1290,7 +1290,7 @@ export const QuotationDocument: React.FC<{
               onClick={onNavigateToOrderKyc}
               className="px-4 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-xl font-black text-xs cursor-pointer shadow-md shrink-0 flex items-center gap-2 transition-all"
             >
-              <span>💳 Record Payment / View Order & KYC →</span>
+              <span>{currentRole === 'field_employee' ? '📁 View Order & KYC Docs →' : '💳 Record Payment / View Order & KYC →'}</span>
             </button>
           )}
         </div>

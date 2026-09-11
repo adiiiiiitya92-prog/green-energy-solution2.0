@@ -102,7 +102,7 @@ export const Layout: React.FC<LayoutProps> = ({ children }) => {
     {
       name: 'B2B Businesses',
       path: '/b2b-businesses',
-      roles: ['super_admin', 'admin', 'inventory_manager'],
+      roles: ['super_admin', 'inventory_manager'],
       icon: Building2
     },
     {

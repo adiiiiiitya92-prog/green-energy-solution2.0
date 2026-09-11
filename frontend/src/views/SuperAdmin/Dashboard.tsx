@@ -7,6 +7,7 @@ import { orderService } from '../../services/orderService';
 import { visitService } from '../../services/visitService';
 import { employeeService } from '../../services/employeeService';
 import { productService } from '../../services/productService';
+import { challanService } from '../../services/challanService';
 import { useAuthStore } from '../../store/authStore';
 import { FollowUpReminders } from '../../components/Common/FollowUpReminders';
 import { DeletionApprovalsModal } from '../../components/Common/DeletionApprovalsModal';
@@ -16,8 +17,12 @@ import { TrendingUp, DollarSign, Award, ClipboardList, PackageCheck, ShieldAlert
 export const Dashboard: React.FC = () => {
   const { currentRole, currentUser } = useAuthStore();
   const [leads, setLeads] = useState<Lead[]>([]);
+  const [allCompanyLeads, setAllCompanyLeads] = useState<Lead[]>([]);
   const [quotations, setQuotations] = useState<Quotation[]>([]);
+  const [allCompanyQuotations, setAllCompanyQuotations] = useState<Quotation[]>([]);
   const [confirmations, setConfirmations] = useState<OrderConfirmation[]>([]);
+  const [allCompanyConfirmations, setAllCompanyConfirmations] = useState<OrderConfirmation[]>([]);
+  const [installationEvidenceLeadIds, setInstallationEvidenceLeadIds] = useState<Set<string>>(new Set());
   const [employees, setEmployees] = useState<Profile[]>([]);
   const [visitsCount, setVisitsCount] = useState(0);
   const [products, setProducts] = useState<Product[]>([]);
@@ -41,42 +46,72 @@ export const Dashboard: React.FC = () => {
 
   const loadData = async () => {
     try {
-      const [leadsRes, quotesRes, ocsRes, empsRes, visitsRes, prodsRes, deleteReqsRes] = await Promise.allSettled([
+      const [leadsRes, quotesRes, ocsRes, empsRes, visitsRes, prodsRes, deleteReqsRes, challansRes, evidenceLeadIdsRes] = await Promise.allSettled([
         leadService.getLeads(),
         quotationService.getAllQuotations(),
         orderService.getAllOrderConfirmations(),
         employeeService.getEmployees(),
         visitService.getVisitReports(),
         productService.getProducts(),
-        import('../../services/deletionRequestService').then(m => m.deletionRequestService.getPendingRequests()).catch(() => [])
+        import('../../services/deletionRequestService').then(m => m.deletionRequestService.getPendingRequests()).catch(() => []),
+        challanService.getChallans(),
+        orderService.getAllInstallationEvidenceLeadIds()
       ]);
 
-      const rawLeads = leadsRes.status === 'fulfilled' ? (leadsRes.value || []) : [];
-      const lList = filterLeadsForUser(rawLeads, currentUser, currentRole);
-      setLeads(lList);
-
-      const allValidLeadIds = new Set(rawLeads.map(l => l.id));
-      const activeLeadIds = new Set(lList.map(l => l.id));
       const roleStr = (currentRole || currentUser?.role || '').toLowerCase();
       const desigStr = (currentUser?.designation || '').toLowerCase();
       const hasFullAccess = roleStr === 'super_admin' || roleStr === 'operations_admin' || desigStr.includes('operations admin');
 
-      let qList: Quotation[] = quotesRes.status === 'fulfilled' ? (quotesRes.value || []) : [];
-      if (!hasFullAccess) {
-        qList = qList.filter(q => !!q.leadId && activeLeadIds.has(q.leadId));
-      } else {
-        qList = qList.filter(q => !!q.leadId && allValidLeadIds.has(q.leadId));
+      if (leadsRes.status === 'fulfilled' && Array.isArray(leadsRes.value) && leadsRes.value.length > 0) {
+        const rawLeads = leadsRes.value;
+        setAllCompanyLeads(rawLeads);
+        const lList = filterLeadsForUser(rawLeads, currentUser, currentRole);
+        setLeads(lList);
       }
-      if (lList.length === 0 && !hasFullAccess) {
-        qList = [];
-      }
-      setQuotations(qList);
 
-      const allOcs = ocsRes.status === 'fulfilled' ? (ocsRes.value || []) : [];
-      const matchedOcs = hasFullAccess
-        ? allOcs.filter(oc => !!oc.leadId && allValidLeadIds.has(oc.leadId))
-        : allOcs.filter(oc => !!oc.leadId && activeLeadIds.has(oc.leadId));
-      setConfirmations(matchedOcs);
+      if (quotesRes.status === 'fulfilled' && Array.isArray(quotesRes.value) && quotesRes.value.length > 0) {
+        let qList: Quotation[] = quotesRes.value;
+        setAllCompanyQuotations(qList);
+        const currentLeads = leadsRes.status === 'fulfilled' && Array.isArray(leadsRes.value) && leadsRes.value.length > 0 ? leadsRes.value : allCompanyLeads;
+        const allValidLeadIds = new Set(currentLeads.map(l => l.id));
+        const activeList = filterLeadsForUser(currentLeads, currentUser, currentRole);
+        const activeLeadIds = new Set(activeList.map(l => l.id));
+
+        if (!hasFullAccess) {
+          setQuotations(qList.filter(q => !!q.leadId && activeLeadIds.has(q.leadId)));
+        } else {
+          setQuotations(qList.filter(q => !!q.leadId && allValidLeadIds.has(q.leadId)));
+        }
+      }
+
+      if (ocsRes.status === 'fulfilled' && Array.isArray(ocsRes.value) && ocsRes.value.length > 0) {
+        const allOcs = ocsRes.value;
+        setAllCompanyConfirmations(allOcs);
+        const currentLeads = leadsRes.status === 'fulfilled' && Array.isArray(leadsRes.value) && leadsRes.value.length > 0 ? leadsRes.value : allCompanyLeads;
+        const allValidLeadIds = new Set(currentLeads.map(l => l.id));
+        const activeList = filterLeadsForUser(currentLeads, currentUser, currentRole);
+        const activeLeadIds = new Set(activeList.map(l => l.id));
+
+        const matchedOcs = hasFullAccess
+          ? allOcs.filter(oc => !!oc.leadId && allValidLeadIds.has(oc.leadId))
+          : allOcs.filter(oc => !!oc.leadId && activeLeadIds.has(oc.leadId));
+        setConfirmations(matchedOcs);
+      }
+
+      const evidenceSet = new Set<string>();
+      if (challansRes.status === 'fulfilled' && Array.isArray(challansRes.value)) {
+        challansRes.value.forEach(c => { if (c.leadId) evidenceSet.add(c.leadId); });
+      }
+      if (evidenceLeadIdsRes.status === 'fulfilled' && evidenceLeadIdsRes.value instanceof Set) {
+        evidenceLeadIdsRes.value.forEach(id => evidenceSet.add(id));
+      }
+      if (evidenceSet.size > 0) {
+        setInstallationEvidenceLeadIds(prev => {
+          const union = new Set(prev);
+          evidenceSet.forEach(id => union.add(id));
+          return union;
+        });
+      }
 
       if (empsRes.status === 'fulfilled') setEmployees(empsRes.value || []);
       if (visitsRes.status === 'fulfilled') setVisitsCount((visitsRes.value || []).length);
@@ -95,12 +130,34 @@ export const Dashboard: React.FC = () => {
   };
 
   useEffect(() => {
-    loadData();
-    const handleRealtimeUpdate = () => {
-      loadData();
+    let isMounted = true;
+    let debounceTimer: any = null;
+    let isFetching = false;
+
+    const executeLoad = async () => {
+      if (isFetching) return;
+      isFetching = true;
+      try {
+        await loadData();
+      } finally {
+        isFetching = false;
+      }
     };
+
+    executeLoad();
+
+    const handleRealtimeUpdate = () => {
+      if (!isMounted) return;
+      if (debounceTimer) clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(() => {
+        if (isMounted) executeLoad();
+      }, 1000);
+    };
+
     window.addEventListener('app-realtime-update', handleRealtimeUpdate);
     return () => {
+      isMounted = false;
+      if (debounceTimer) clearTimeout(debounceTimer);
       window.removeEventListener('app-realtime-update', handleRealtimeUpdate);
     };
   }, []);
@@ -146,26 +203,31 @@ export const Dashboard: React.FC = () => {
     };
   });
 
-  // 5. Process Done (Payment Due) financial totals sum calculation
+  // 5. Process Done (Payment Due) financial totals sum calculation (Executive Company-Wide)
   const processDoneStats = (() => {
     let count = 0;
     let totalContract = 0;
     let totalPaid = 0;
     let totalRemaining = 0;
 
+    const sourceLeads = allCompanyLeads.length > 0 ? allCompanyLeads : leads;
+    const sourceQuotes = allCompanyQuotations.length > 0 ? allCompanyQuotations : quotations;
+    const sourceOcs = allCompanyConfirmations.length > 0 ? allCompanyConfirmations : confirmations;
+
     const ocByLeadId = new Map<string, OrderConfirmation>();
-    confirmations.forEach(c => {
+    sourceOcs.forEach(c => {
       if (c.leadId) ocByLeadId.set(c.leadId, c);
     });
 
     const quoteByLeadId = new Map<string, Quotation>();
-    quotations.forEach(q => {
+    sourceQuotes.forEach(q => {
       if (q.leadId && !quoteByLeadId.has(q.leadId)) quoteByLeadId.set(q.leadId, q);
     });
 
-    leads.forEach(l => {
+    sourceLeads.forEach(l => {
       if (!l || !l.id) return;
-      const isProcessDone = (l.status === 'closed' || l.status === 'installed');
+      const hasEvidence = installationEvidenceLeadIds.has(l.id);
+      const isProcessDone = (l.status === 'closed' || l.status === 'installed' || hasEvidence);
       if (!isProcessDone) return;
 
       const mainQuote = quoteByLeadId.get(l.id);

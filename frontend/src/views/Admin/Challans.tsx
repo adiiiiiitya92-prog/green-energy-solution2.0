@@ -115,6 +115,9 @@ export const Challans: React.FC = () => {
   const [currentQty, setCurrentQty] = useState(1);
   const [currentUnit, setCurrentUnit] = useState('Nos');
   const [selectedSerials, setSelectedSerials] = useState<string[]>([]);
+  const [serialSearchTerm, setSerialSearchTerm] = useState('');
+  const [showPasteSerialsDrawer, setShowPasteSerialsDrawer] = useState(false);
+  const [pasteSerialsInput, setPasteSerialsInput] = useState('');
 
   // Edit Form States
   const [editingChallan, setEditingChallan] = useState<Challan | null>(null);
@@ -127,6 +130,9 @@ export const Challans: React.FC = () => {
   const [currentEditQty, setCurrentEditQty] = useState(1);
   const [currentEditUnit, setCurrentEditUnit] = useState('Nos');
   const [selectedEditSerials, setSelectedEditSerials] = useState<string[]>([]);
+  const [editSerialSearchTerm, setEditSerialSearchTerm] = useState('');
+  const [showEditPasteSerialsDrawer, setShowEditPasteSerialsDrawer] = useState(false);
+  const [editPasteSerialsInput, setEditPasteSerialsInput] = useState('');
 
   // Vehicle Photo with GPS states for New Challan
   const [vehiclePhotoBlob, setVehiclePhotoBlob] = useState<Blob | null>(null);
@@ -649,6 +655,9 @@ export const Challans: React.FC = () => {
 
   const handleProductSelect = (prodId: string) => {
     setCurrentProductId(prodId);
+    setSerialSearchTerm('');
+    setShowPasteSerialsDrawer(false);
+    setPasteSerialsInput('');
     const p = products.find(prod => prod.id === prodId);
     if (p && p.unit) {
       setCurrentUnit(p.unit);
@@ -659,6 +668,9 @@ export const Challans: React.FC = () => {
 
   const handleEditProductSelect = (prodId: string) => {
     setCurrentEditProductId(prodId);
+    setEditSerialSearchTerm('');
+    setShowEditPasteSerialsDrawer(false);
+    setEditPasteSerialsInput('');
     const p = products.find(prod => prod.id === prodId);
     if (p && p.unit) {
       setCurrentEditUnit(p.unit);
@@ -768,6 +780,146 @@ export const Challans: React.FC = () => {
     });
   };
 
+  // Serial number quick search & scan handler (Barcode / Enter key support)
+  const handleSerialSearchKeyDown = (e: React.KeyboardEvent<HTMLInputElement>, isEdit: boolean = false) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      const term = (isEdit ? editSerialSearchTerm : serialSearchTerm).trim().toLowerCase();
+      if (!term) return;
+
+      const avail = isEdit
+        ? getAvailableSerialsForProduct(currentEditProductId, editingChallan)
+        : getAvailableSerialsForProduct(currentProductId, null);
+
+      const match = avail.find(sn => sn.toLowerCase() === term) ||
+                    avail.find(sn => sn.toLowerCase().startsWith(term)) ||
+                    avail.find(sn => sn.toLowerCase().includes(term));
+
+      if (match) {
+        if (isEdit) {
+          setSelectedEditSerials(prev => {
+            const next = prev.includes(match) ? prev : [...prev, match];
+            setCurrentEditQty(next.length > 0 ? next.length : 1);
+            return next;
+          });
+          setEditSerialSearchTerm('');
+        } else {
+          setSelectedSerials(prev => {
+            const next = prev.includes(match) ? prev : [...prev, match];
+            setCurrentQty(next.length > 0 ? next.length : 1);
+            return next;
+          });
+          setSerialSearchTerm('');
+        }
+      } else {
+        alert(`Serial number "${term}" is either sold out or not in available stock.`);
+      }
+    }
+  };
+
+  const handleSelectFirstNSerials = (isEdit: boolean = false) => {
+    if (isEdit) {
+      const avail = getAvailableSerialsForProduct(currentEditProductId, editingChallan);
+      const toPick = avail.slice(0, currentEditQty);
+      setSelectedEditSerials(toPick);
+    } else {
+      const avail = getAvailableSerialsForProduct(currentProductId, null);
+      const toPick = avail.slice(0, currentQty);
+      setSelectedSerials(toPick);
+    }
+  };
+
+  const handleSelectAllFilteredSerials = (filteredSerials: string[], isEdit: boolean = false) => {
+    if (isEdit) {
+      setSelectedEditSerials(prev => {
+        const set = new Set([...prev, ...filteredSerials]);
+        const next = Array.from(set);
+        setCurrentEditQty(next.length > 0 ? next.length : 1);
+        return next;
+      });
+    } else {
+      setSelectedSerials(prev => {
+        const set = new Set([...prev, ...filteredSerials]);
+        const next = Array.from(set);
+        setCurrentQty(next.length > 0 ? next.length : 1);
+        return next;
+      });
+    }
+  };
+
+  const handleClearAllSerials = (isEdit: boolean = false) => {
+    if (isEdit) {
+      setSelectedEditSerials([]);
+      setCurrentEditQty(1);
+    } else {
+      setSelectedSerials([]);
+      setCurrentQty(1);
+    }
+  };
+
+  const handleApplyPastedSerials = (isEdit: boolean = false) => {
+    const rawInput = isEdit ? editPasteSerialsInput : pasteSerialsInput;
+    const tokens = rawInput
+      .split(/[\r\n,;\t\s]+/)
+      .map(s => s.trim())
+      .filter(Boolean);
+
+    if (tokens.length === 0) {
+      alert('Please paste at least one serial number.');
+      return;
+    }
+
+    const avail = isEdit
+      ? getAvailableSerialsForProduct(currentEditProductId, editingChallan)
+      : getAvailableSerialsForProduct(currentProductId, null);
+
+    const matchedSerials: string[] = [];
+    const notFoundTokens: string[] = [];
+
+    tokens.forEach(tok => {
+      const tokLower = tok.toLowerCase();
+      const match = avail.find(s => s.toLowerCase() === tokLower);
+      if (match) {
+        if (!matchedSerials.includes(match)) {
+          matchedSerials.push(match);
+        }
+      } else {
+        notFoundTokens.push(tok);
+      }
+    });
+
+    if (matchedSerials.length === 0) {
+      alert(`None of the pasted serial numbers were found in available stock.\nCheck entered values:\n${tokens.slice(0, 5).join(', ')}...`);
+      return;
+    }
+
+    if (isEdit) {
+      setSelectedEditSerials(prev => {
+        const set = new Set([...prev, ...matchedSerials]);
+        const next = Array.from(set);
+        setCurrentEditQty(next.length > 0 ? next.length : 1);
+        return next;
+      });
+      setEditPasteSerialsInput('');
+      setShowEditPasteSerialsDrawer(false);
+    } else {
+      setSelectedSerials(prev => {
+        const set = new Set([...prev, ...matchedSerials]);
+        const next = Array.from(set);
+        setCurrentQty(next.length > 0 ? next.length : 1);
+        return next;
+      });
+      setPasteSerialsInput('');
+      setShowPasteSerialsDrawer(false);
+    }
+
+    if (notFoundTokens.length > 0) {
+      alert(`✅ Selected ${matchedSerials.length} serial numbers.\n⚠️ ${notFoundTokens.length} serials not found or already sold:\n${notFoundTokens.slice(0, 5).join(', ')}${notFoundTokens.length > 5 ? '...' : ''}`);
+    } else {
+      alert(`✅ Successfully selected all ${matchedSerials.length} serial numbers!`);
+    }
+  };
+
   const handleAddItem = () => {
     if (!currentProductId || currentQty <= 0) {
       alert('Please select a product and enter a valid quantity.');
@@ -803,6 +955,9 @@ export const Challans: React.FC = () => {
     setCurrentQty(1);
     setCurrentUnit('Nos');
     setSelectedSerials([]);
+    setSerialSearchTerm('');
+    setShowPasteSerialsDrawer(false);
+    setPasteSerialsInput('');
   };
 
   const handleRemoveItem = (index: number) => {
@@ -1088,6 +1243,9 @@ export const Challans: React.FC = () => {
     setCurrentEditQty(1);
     setCurrentEditUnit('Nos');
     setSelectedEditSerials([]);
+    setEditSerialSearchTerm('');
+    setShowEditPasteSerialsDrawer(false);
+    setEditPasteSerialsInput('');
   };
 
   const handleEditRemoveItem = (index: number) => {
@@ -2158,42 +2316,205 @@ export const Challans: React.FC = () => {
                   </div>
                 </div>
 
-                {/* Serial Numbers Picker UI */}
-                {currentProductId && (
-                  <div className="bg-slate-100/80 p-3 rounded-xl border border-slate-200/80">
-                    <div className="flex justify-between items-center mb-1.5">
-                      <span className="text-[10px] font-bold text-slate-600 uppercase tracking-wider">
-                        Available Serial Numbers ({selectedSerials.length} selected)
-                      </span>
-                      {getAvailableSerialsForProduct(currentProductId, null).length === 0 && (
-                        <span className="text-[10px] text-amber-600 font-bold">No available unsold serial numbers</span>
+                {/* Serial Numbers Picker UI with Search & Fast Selection */}
+                {currentProductId && (() => {
+                  const allAvailable = getAvailableSerialsForProduct(currentProductId, null);
+                  const isTracked = allAvailable.length > 0;
+                  const query = serialSearchTerm.trim().toLowerCase();
+                  const filtered = query
+                    ? allAvailable.filter(sn => sn.toLowerCase().includes(query))
+                    : allAvailable;
+
+                  return (
+                    <div className="bg-gradient-to-b from-slate-50 to-slate-100/90 p-3.5 rounded-2xl border border-slate-200/80 shadow-xs space-y-2.5">
+                      {/* Section Title & Counters Bar */}
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <div className="flex items-center gap-2">
+                          <span className="text-[11px] font-extrabold text-slate-700 uppercase tracking-wider flex items-center gap-1.5">
+                            <span className="w-2 h-2 rounded-full bg-emerald-500 inline-block animate-pulse" />
+                            Available Serial Numbers
+                          </span>
+                          {isTracked ? (
+                            <span className={`px-2 py-0.5 rounded-full text-[10px] font-black ${
+                              selectedSerials.length === currentQty
+                                ? 'bg-emerald-100 text-emerald-800 border border-emerald-200'
+                                : selectedSerials.length > 0
+                                ? 'bg-blue-100 text-blue-800 border border-blue-200'
+                                : 'bg-slate-200 text-slate-700'
+                            }`}>
+                              {selectedSerials.length} Selected (Target: {currentQty})
+                            </span>
+                          ) : (
+                            <span className="text-[10px] text-amber-600 font-bold">No available unsold serial numbers</span>
+                          )}
+                        </div>
+
+                        {/* Fast Selection Actions */}
+                        {isTracked && (
+                          <div className="flex flex-wrap items-center gap-1.5 text-[10px]">
+                            <button
+                              type="button"
+                              onClick={() => handleSelectFirstNSerials(false)}
+                              title={`Auto-pick first ${currentQty} serial numbers`}
+                              className="px-2 py-1 rounded-lg bg-emerald-50 text-emerald-700 hover:bg-emerald-100 border border-emerald-200 font-bold transition-colors cursor-pointer flex items-center gap-1"
+                            >
+                              <Sparkles className="w-3 h-3 text-emerald-600" />
+                              Auto-Pick ({currentQty})
+                            </button>
+
+                            {query && filtered.length > 0 && (
+                              <button
+                                type="button"
+                                onClick={() => handleSelectAllFilteredSerials(filtered, false)}
+                                className="px-2 py-1 rounded-lg bg-blue-50 text-blue-700 hover:bg-blue-100 border border-blue-200 font-bold transition-colors cursor-pointer flex items-center gap-1"
+                              >
+                                <CheckSquare className="w-3 h-3 text-blue-600" />
+                                Select Filtered ({filtered.length})
+                              </button>
+                            )}
+
+                            {selectedSerials.length > 0 && (
+                              <button
+                                type="button"
+                                onClick={() => handleClearAllSerials(false)}
+                                className="px-2 py-1 rounded-lg bg-rose-50 text-rose-700 hover:bg-rose-100 border border-rose-200 font-bold transition-colors cursor-pointer"
+                              >
+                                Clear
+                              </button>
+                            )}
+
+                            <button
+                              type="button"
+                              onClick={() => setShowPasteSerialsDrawer(prev => !prev)}
+                              className={`px-2 py-1 rounded-lg font-bold transition-colors cursor-pointer flex items-center gap-1 border ${
+                                showPasteSerialsDrawer
+                                  ? 'bg-purple-600 text-white border-purple-700 shadow-xs'
+                                  : 'bg-white text-purple-700 hover:bg-purple-50 border-purple-200'
+                              }`}
+                              title="Paste serial numbers from Excel or WhatsApp"
+                            >
+                              <ClipboardList className="w-3 h-3" />
+                              Paste List
+                            </button>
+                          </div>
+                        )}
+                      </div>
+
+                      {isTracked ? (
+                        <>
+                          {/* Search Input Bar */}
+                          <div className="relative flex items-center">
+                            <div className="absolute left-3 text-slate-400 pointer-events-none flex items-center">
+                              <Search className="w-3.5 h-3.5" />
+                            </div>
+                            <input
+                              type="text"
+                              value={serialSearchTerm}
+                              onChange={e => setSerialSearchTerm(e.target.value)}
+                              onKeyDown={e => handleSerialSearchKeyDown(e, false)}
+                              placeholder="Search serial no. or scan barcode... (Press Enter to pick)"
+                              className="w-full bg-white border border-slate-300 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 text-xs font-mono font-medium rounded-xl pl-8.5 pr-20 py-1.5 text-slate-800 placeholder:font-sans placeholder:text-slate-400 focus:outline-none transition-all"
+                            />
+                            <div className="absolute right-2 flex items-center gap-1">
+                              {serialSearchTerm && (
+                                <button
+                                  type="button"
+                                  onClick={() => setSerialSearchTerm('')}
+                                  className="p-1 text-slate-400 hover:text-slate-600 rounded-md hover:bg-slate-100 transition-colors cursor-pointer"
+                                  title="Clear search"
+                                >
+                                  <X className="w-3 h-3" />
+                                </button>
+                              )}
+                              <span className="text-[10px] font-bold text-slate-400 bg-slate-100 px-1.5 py-0.5 rounded border border-slate-200">
+                                {filtered.length}/{allAvailable.length}
+                              </span>
+                            </div>
+                          </div>
+
+                          {/* Collapsible Multi-Paste Drawer */}
+                          {showPasteSerialsDrawer && (
+                            <div className="p-3 bg-purple-50/80 border border-purple-200 rounded-xl space-y-2 animate-in fade-in duration-150">
+                              <div className="flex justify-between items-center">
+                                <span className="text-[11px] font-extrabold text-purple-900 flex items-center gap-1.5">
+                                  <ClipboardList className="w-3.5 h-3.5 text-purple-600" />
+                                  Paste Multiple Serial Numbers
+                                </span>
+                                <span className="text-[10px] text-purple-600 font-medium">
+                                  Comma, newline, or space separated
+                                </span>
+                              </div>
+                              <textarea
+                                value={pasteSerialsInput}
+                                onChange={e => setPasteSerialsInput(e.target.value)}
+                                rows={3}
+                                placeholder="Paste list e.g.:&#10;LA-2026-052&#10;LA-2026-053&#10;LA-2026-054..."
+                                className="w-full text-xs font-mono p-2 bg-white border border-purple-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-400/30 text-slate-800 placeholder:text-slate-400"
+                              />
+                              <div className="flex justify-end gap-2">
+                                <button
+                                  type="button"
+                                  onClick={() => setShowPasteSerialsDrawer(false)}
+                                  className="px-2.5 py-1 text-xs font-bold text-slate-600 hover:text-slate-800 bg-white border border-slate-200 rounded-lg cursor-pointer"
+                                >
+                                  Cancel
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => handleApplyPastedSerials(false)}
+                                  className="px-3 py-1 text-xs font-black text-white bg-purple-600 hover:bg-purple-700 rounded-lg shadow-xs cursor-pointer flex items-center gap-1"
+                                >
+                                  <Check className="w-3 h-3" />
+                                  Apply Pasted Serials
+                                </button>
+                              </div>
+                            </div>
+                          )}
+
+                          {/* Serial Numbers Badges Grid */}
+                          {filtered.length > 0 ? (
+                            <div className="flex flex-wrap gap-1.5 max-h-36 overflow-y-auto p-1.5 bg-white/80 rounded-xl border border-slate-200/80">
+                              {filtered.map(sn => {
+                                const isSelected = selectedSerials.includes(sn);
+                                return (
+                                  <button
+                                    key={sn}
+                                    type="button"
+                                    onClick={() => toggleSerialSelection(sn)}
+                                    className={`px-2.5 py-1 rounded-lg text-[10.5px] font-mono border font-bold transition-all cursor-pointer flex items-center gap-1 ${
+                                      isSelected
+                                        ? 'bg-emerald-600 text-white border-emerald-700 shadow-xs scale-[1.02]'
+                                        : 'bg-white text-slate-700 border-slate-300 hover:bg-emerald-50 hover:border-emerald-300 hover:text-emerald-900'
+                                    }`}
+                                  >
+                                    {isSelected && <Check className="w-3 h-3 stroke-[3]" />}
+                                    <span>{sn}</span>
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          ) : (
+                            <div className="py-4 px-3 text-center bg-white/80 rounded-xl border border-dashed border-slate-300">
+                              <p className="text-xs font-bold text-slate-700">No serial numbers found</p>
+                              <p className="text-[11px] text-slate-400 mt-0.5">
+                                No available serial numbers match "{serialSearchTerm}".
+                              </p>
+                              <button
+                                type="button"
+                                onClick={() => setSerialSearchTerm('')}
+                                className="mt-1 text-xs text-emerald-600 font-bold hover:underline cursor-pointer"
+                              >
+                                Clear search filter
+                              </button>
+                            </div>
+                          )}
+                        </>
+                      ) : (
+                        <p className="text-[11px] text-slate-400 font-medium">Standard inventory item without pre-indexed serial numbers.</p>
                       )}
                     </div>
-                    {getAvailableSerialsForProduct(currentProductId, null).length > 0 ? (
-                      <div className="flex flex-wrap gap-1.5 max-h-32 overflow-y-auto p-1">
-                        {getAvailableSerialsForProduct(currentProductId, null).map(sn => {
-                          const isSelected = selectedSerials.includes(sn);
-                          return (
-                            <button
-                              key={sn}
-                              type="button"
-                              onClick={() => toggleSerialSelection(sn)}
-                              className={`px-2 py-1 rounded-md text-[10px] font-mono border font-bold transition-all cursor-pointer ${
-                                isSelected
-                                  ? 'bg-emerald-600 text-white border-emerald-700 shadow-xs scale-[1.02]'
-                                  : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-50'
-                              }`}
-                            >
-                              {isSelected ? '✓ ' : ''}{sn}
-                            </button>
-                          );
-                        })}
-                      </div>
-                    ) : (
-                      <p className="text-[11px] text-slate-400 font-medium">Standard inventory item without pre-indexed serial numbers.</p>
-                    )}
-                  </div>
-                )}
+                  );
+                })()}
 
                 {/* Items Added Table */}
                 {challanItems.length > 0 && (
@@ -2535,42 +2856,205 @@ export const Challans: React.FC = () => {
                   </div>
                 </div>
 
-                {/* Serial Numbers Picker UI */}
-                {currentEditProductId && (
-                  <div className="bg-slate-100/80 p-3 rounded-xl border border-slate-200/80">
-                    <div className="flex justify-between items-center mb-1.5">
-                      <span className="text-[10px] font-bold text-slate-600 uppercase tracking-wider">
-                        Available Serial Numbers ({selectedEditSerials.length} selected)
-                      </span>
-                      {getAvailableSerialsForProduct(currentEditProductId, editingChallan).length === 0 && (
-                        <span className="text-[10px] text-amber-600 font-bold">No available unsold serial numbers</span>
+                {/* Serial Numbers Picker UI with Search & Fast Selection */}
+                {currentEditProductId && (() => {
+                  const allAvailable = getAvailableSerialsForProduct(currentEditProductId, editingChallan);
+                  const isTracked = allAvailable.length > 0;
+                  const query = editSerialSearchTerm.trim().toLowerCase();
+                  const filtered = query
+                    ? allAvailable.filter(sn => sn.toLowerCase().includes(query))
+                    : allAvailable;
+
+                  return (
+                    <div className="bg-gradient-to-b from-slate-50 to-slate-100/90 p-3.5 rounded-2xl border border-slate-200/80 shadow-xs space-y-2.5">
+                      {/* Section Title & Counters Bar */}
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <div className="flex items-center gap-2">
+                          <span className="text-[11px] font-extrabold text-slate-700 uppercase tracking-wider flex items-center gap-1.5">
+                            <span className="w-2 h-2 rounded-full bg-emerald-500 inline-block animate-pulse" />
+                            Available Serial Numbers
+                          </span>
+                          {isTracked ? (
+                            <span className={`px-2 py-0.5 rounded-full text-[10px] font-black ${
+                              selectedEditSerials.length === currentEditQty
+                                ? 'bg-emerald-100 text-emerald-800 border border-emerald-200'
+                                : selectedEditSerials.length > 0
+                                ? 'bg-blue-100 text-blue-800 border border-blue-200'
+                                : 'bg-slate-200 text-slate-700'
+                            }`}>
+                              {selectedEditSerials.length} Selected (Target: {currentEditQty})
+                            </span>
+                          ) : (
+                            <span className="text-[10px] text-amber-600 font-bold">No available unsold serial numbers</span>
+                          )}
+                        </div>
+
+                        {/* Fast Selection Actions */}
+                        {isTracked && (
+                          <div className="flex flex-wrap items-center gap-1.5 text-[10px]">
+                            <button
+                              type="button"
+                              onClick={() => handleSelectFirstNSerials(true)}
+                              title={`Auto-pick first ${currentEditQty} serial numbers`}
+                              className="px-2 py-1 rounded-lg bg-emerald-50 text-emerald-700 hover:bg-emerald-100 border border-emerald-200 font-bold transition-colors cursor-pointer flex items-center gap-1"
+                            >
+                              <Sparkles className="w-3 h-3 text-emerald-600" />
+                              Auto-Pick ({currentEditQty})
+                            </button>
+
+                            {query && filtered.length > 0 && (
+                              <button
+                                type="button"
+                                onClick={() => handleSelectAllFilteredSerials(filtered, true)}
+                                className="px-2 py-1 rounded-lg bg-blue-50 text-blue-700 hover:bg-blue-100 border border-blue-200 font-bold transition-colors cursor-pointer flex items-center gap-1"
+                              >
+                                <CheckSquare className="w-3 h-3 text-blue-600" />
+                                Select Filtered ({filtered.length})
+                              </button>
+                            )}
+
+                            {selectedEditSerials.length > 0 && (
+                              <button
+                                type="button"
+                                onClick={() => handleClearAllSerials(true)}
+                                className="px-2 py-1 rounded-lg bg-rose-50 text-rose-700 hover:bg-rose-100 border border-rose-200 font-bold transition-colors cursor-pointer"
+                              >
+                                Clear
+                              </button>
+                            )}
+
+                            <button
+                              type="button"
+                              onClick={() => setShowEditPasteSerialsDrawer(prev => !prev)}
+                              className={`px-2 py-1 rounded-lg font-bold transition-colors cursor-pointer flex items-center gap-1 border ${
+                                showEditPasteSerialsDrawer
+                                  ? 'bg-purple-600 text-white border-purple-700 shadow-xs'
+                                  : 'bg-white text-purple-700 hover:bg-purple-50 border-purple-200'
+                              }`}
+                              title="Paste serial numbers from Excel or WhatsApp"
+                            >
+                              <ClipboardList className="w-3 h-3" />
+                              Paste List
+                            </button>
+                          </div>
+                        )}
+                      </div>
+
+                      {isTracked ? (
+                        <>
+                          {/* Search Input Bar */}
+                          <div className="relative flex items-center">
+                            <div className="absolute left-3 text-slate-400 pointer-events-none flex items-center">
+                              <Search className="w-3.5 h-3.5" />
+                            </div>
+                            <input
+                              type="text"
+                              value={editSerialSearchTerm}
+                              onChange={e => setEditSerialSearchTerm(e.target.value)}
+                              onKeyDown={e => handleSerialSearchKeyDown(e, true)}
+                              placeholder="Search serial no. or scan barcode... (Press Enter to pick)"
+                              className="w-full bg-white border border-slate-300 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 text-xs font-mono font-medium rounded-xl pl-8.5 pr-20 py-1.5 text-slate-800 placeholder:font-sans placeholder:text-slate-400 focus:outline-none transition-all"
+                            />
+                            <div className="absolute right-2 flex items-center gap-1">
+                              {editSerialSearchTerm && (
+                                <button
+                                  type="button"
+                                  onClick={() => setEditSerialSearchTerm('')}
+                                  className="p-1 text-slate-400 hover:text-slate-600 rounded-md hover:bg-slate-100 transition-colors cursor-pointer"
+                                  title="Clear search"
+                                >
+                                  <X className="w-3 h-3" />
+                                </button>
+                              )}
+                              <span className="text-[10px] font-bold text-slate-400 bg-slate-100 px-1.5 py-0.5 rounded border border-slate-200">
+                                {filtered.length}/{allAvailable.length}
+                              </span>
+                            </div>
+                          </div>
+
+                          {/* Collapsible Multi-Paste Drawer */}
+                          {showEditPasteSerialsDrawer && (
+                            <div className="p-3 bg-purple-50/80 border border-purple-200 rounded-xl space-y-2 animate-in fade-in duration-150">
+                              <div className="flex justify-between items-center">
+                                <span className="text-[11px] font-extrabold text-purple-900 flex items-center gap-1.5">
+                                  <ClipboardList className="w-3.5 h-3.5 text-purple-600" />
+                                  Paste Multiple Serial Numbers
+                                </span>
+                                <span className="text-[10px] text-purple-600 font-medium">
+                                  Comma, newline, or space separated
+                                </span>
+                              </div>
+                              <textarea
+                                value={editPasteSerialsInput}
+                                onChange={e => setEditPasteSerialsInput(e.target.value)}
+                                rows={3}
+                                placeholder="Paste list e.g.:&#10;LA-2026-052&#10;LA-2026-053&#10;LA-2026-054..."
+                                className="w-full text-xs font-mono p-2 bg-white border border-purple-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-400/30 text-slate-800 placeholder:text-slate-400"
+                              />
+                              <div className="flex justify-end gap-2">
+                                <button
+                                  type="button"
+                                  onClick={() => setShowEditPasteSerialsDrawer(false)}
+                                  className="px-2.5 py-1 text-xs font-bold text-slate-600 hover:text-slate-800 bg-white border border-slate-200 rounded-lg cursor-pointer"
+                                >
+                                  Cancel
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => handleApplyPastedSerials(true)}
+                                  className="px-3 py-1 text-xs font-black text-white bg-purple-600 hover:bg-purple-700 rounded-lg shadow-xs cursor-pointer flex items-center gap-1"
+                                >
+                                  <Check className="w-3 h-3" />
+                                  Apply Pasted Serials
+                                </button>
+                              </div>
+                            </div>
+                          )}
+
+                          {/* Serial Numbers Badges Grid */}
+                          {filtered.length > 0 ? (
+                            <div className="flex flex-wrap gap-1.5 max-h-36 overflow-y-auto p-1.5 bg-white/80 rounded-xl border border-slate-200/80">
+                              {filtered.map(sn => {
+                                const isSelected = selectedEditSerials.includes(sn);
+                                return (
+                                  <button
+                                    key={sn}
+                                    type="button"
+                                    onClick={() => toggleEditSerialSelection(sn)}
+                                    className={`px-2.5 py-1 rounded-lg text-[10.5px] font-mono border font-bold transition-all cursor-pointer flex items-center gap-1 ${
+                                      isSelected
+                                        ? 'bg-emerald-600 text-white border-emerald-700 shadow-xs scale-[1.02]'
+                                        : 'bg-white text-slate-700 border-slate-300 hover:bg-emerald-50 hover:border-emerald-300 hover:text-emerald-900'
+                                    }`}
+                                  >
+                                    {isSelected && <Check className="w-3 h-3 stroke-[3]" />}
+                                    <span>{sn}</span>
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          ) : (
+                            <div className="py-4 px-3 text-center bg-white/80 rounded-xl border border-dashed border-slate-300">
+                              <p className="text-xs font-bold text-slate-700">No serial numbers found</p>
+                              <p className="text-[11px] text-slate-400 mt-0.5">
+                                No available serial numbers match "{editSerialSearchTerm}".
+                              </p>
+                              <button
+                                type="button"
+                                onClick={() => setEditSerialSearchTerm('')}
+                                className="mt-1 text-xs text-emerald-600 font-bold hover:underline cursor-pointer"
+                              >
+                                Clear search filter
+                              </button>
+                            </div>
+                          )}
+                        </>
+                      ) : (
+                        <p className="text-[11px] text-slate-400 font-medium">Standard inventory item without pre-indexed serial numbers.</p>
                       )}
                     </div>
-                    {getAvailableSerialsForProduct(currentEditProductId, editingChallan).length > 0 ? (
-                      <div className="flex flex-wrap gap-1.5 max-h-32 overflow-y-auto p-1">
-                        {getAvailableSerialsForProduct(currentEditProductId, editingChallan).map(sn => {
-                          const isSelected = selectedEditSerials.includes(sn);
-                          return (
-                            <button
-                              key={sn}
-                              type="button"
-                              onClick={() => toggleEditSerialSelection(sn)}
-                              className={`px-2 py-1 rounded-md text-[10px] font-mono border font-bold transition-all cursor-pointer ${
-                                isSelected
-                                  ? 'bg-emerald-600 text-white border-emerald-700 shadow-xs scale-[1.02]'
-                                  : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-50'
-                              }`}
-                            >
-                              {isSelected ? '✓ ' : ''}{sn}
-                            </button>
-                          );
-                        })}
-                      </div>
-                    ) : (
-                      <p className="text-[11px] text-slate-400 font-medium">Standard inventory item without pre-indexed serial numbers.</p>
-                    )}
-                  </div>
-                )}
+                  );
+                })()}
 
                 {/* Items Added Table */}
                 {editChallanItems.length > 0 && (

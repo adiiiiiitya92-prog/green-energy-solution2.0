@@ -69,8 +69,10 @@ export const SearchableProductSelect: React.FC<SearchableProductSelectProps> = (
     const catMatch = (p.category || '').toLowerCase().includes(q);
     const bomCatMatch = (p.bomCategory || '').toLowerCase().includes(q);
     const descMatch = (p.description || '').toLowerCase().includes(q);
+    const serialMatch = (p.serialNumbers || []).some(sn => sn.toLowerCase().includes(q)) ||
+      (p.productUnits || []).some(u => u.serialNumber && u.serialNumber.toLowerCase().includes(q));
 
-    return nameMatch || brandMatch || catMatch || bomCatMatch || descMatch;
+    return nameMatch || brandMatch || catMatch || bomCatMatch || descMatch || serialMatch;
   });
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {

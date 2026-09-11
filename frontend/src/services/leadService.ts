@@ -48,43 +48,68 @@ export const filterLeadsForUser = (
 };
 
 let lastLeadRemoteSync = 0;
-const LEAD_SYNC_INTERVAL = 15 * 60 * 1000;
+const LEAD_SYNC_INTERVAL = 30 * 1000; // 30 seconds fresh sync throttle
+let activeLeadSyncPromise: Promise<void> | null = null;
 
 export const leadService = {
-  async getLeads(): Promise<Lead[]> {
+  async getLeads(forceFresh: boolean = false): Promise<Lead[]> {
     const deletedIds = await getDeletedRecordIdsSet();
     const localLeads = await db.leads.orderBy('createdAt').reverse().toArray();
     const activeLocal = localLeads.filter(l => !deletedIds.has(l.id));
 
     const syncRemote = async () => {
-      try {
-        lastLeadRemoteSync = Date.now();
-        const remoteLeads = await fetchCollectionFromFirestore<Lead>('leads');
-        if (Array.isArray(remoteLeads)) {
-          const freshDeleted = await getDeletedRecordIdsSet();
-          const validRemote = remoteLeads.filter(l => l.id && !freshDeleted.has(l.id));
-          
-          if (validRemote.length > 0) {
-            // Merge remote leads into local database (do NOT delete local leads!)
-            await db.leads.bulkPut(validRemote);
-          }
+      if (activeLeadSyncPromise) return activeLeadSyncPromise;
+      activeLeadSyncPromise = (async () => {
+        try {
+          lastLeadRemoteSync = Date.now();
+          const remoteLeads = await fetchCollectionFromFirestore<Lead>('leads');
+          if (Array.isArray(remoteLeads) && remoteLeads.length > 0) {
+            const freshDeleted = await getDeletedRecordIdsSet();
+            const validRemote = remoteLeads.filter(l => l.id && !freshDeleted.has(l.id));
+            
+            if (validRemote.length > 0) {
+              // Merge remote leads into local database safely using timestamp reconciliation
+              for (const rLead of validRemote) {
+                const local = await db.leads.get(rLead.id);
+                if (!local) {
+                  await db.leads.put(rLead);
+                } else {
+                  const rTime = new Date(rLead.updatedAt || 0).getTime();
+                  const lTime = new Date(local.updatedAt || 0).getTime();
+                  if (rTime >= lTime) {
+                    await db.leads.put({
+                      ...local,
+                      ...rLead,
+                      // Preserve any local blobs if remote doesn't have them
+                      clientSignatureBlob: rLead.clientSignatureBlob || local.clientSignatureBlob,
+                      vehiclePhotoBlob: rLead.vehiclePhotoBlob || local.vehiclePhotoBlob,
+                      bankDocumentBlob: rLead.bankDocumentBlob || local.bankDocumentBlob
+                    });
+                  }
+                }
+              }
+            }
 
-          // Push any active local leads not yet in remote Firestore to the cloud
-          const currentLocal = await db.leads.toArray();
-          const remoteIds = new Set(validRemote.map(l => l.id));
-          for (const localLead of currentLocal) {
-            if (localLead.id && !freshDeleted.has(localLead.id) && !remoteIds.has(localLead.id)) {
-              saveRecordToFirestore('leads', localLead.id, localLead).catch(() => {});
+            // Push any active local leads genuinely missing from remote Firestore to the cloud
+            const currentLocal = await db.leads.toArray();
+            const remoteIds = new Set(validRemote.map(l => l.id));
+            for (const localLead of currentLocal) {
+              if (localLead.id && !freshDeleted.has(localLead.id) && !remoteIds.has(localLead.id)) {
+                saveRecordToFirestore('leads', localLead.id, localLead).catch(() => {});
+              }
             }
           }
+        } catch (err) {
+          console.warn("Background lead sync note:", err);
+        } finally {
+          activeLeadSyncPromise = null;
         }
-      } catch (err) {
-        console.warn("Background lead sync note:", err);
-      }
+      })();
+      return activeLeadSyncPromise;
     };
 
-    // If local database is empty, wait for remote sync. Otherwise sync in background at most once every 15 min
-    if (activeLocal.length === 0) {
+    // If local database is empty or forceFresh is requested, or cooldown expired, sync immediately
+    if (forceFresh || activeLocal.length === 0) {
       await syncRemote();
     } else if (Date.now() - lastLeadRemoteSync > LEAD_SYNC_INTERVAL) {
       syncRemote().catch(() => {});
@@ -105,7 +130,7 @@ export const leadService = {
     const freshDeleted = await getDeletedRecordIdsSet();
     const activeLeads = refreshed.filter(l => !freshDeleted.has(l.id));
 
-    // Auto-sanitize existing complaint leads so no complaint text appears on leads UI
+    // Auto-sanitize existing complaint leads without overwriting cloud statuses
     for (const lead of activeLeads) {
       let needsFix = false;
       let cleanReq = lead.requirement;
@@ -123,9 +148,7 @@ export const leadService = {
       if (needsFix) {
         lead.requirement = cleanReq || 'Service Request';
         lead.description = cleanDesc;
-        lead.updatedAt = new Date().toISOString();
         await db.leads.put(lead);
-        saveRecordToFirestore('leads', lead.id, lead);
       }
     }
 

@@ -145,10 +145,11 @@ export function sanitizeQuotationRecord(q: Quotation): Quotation {
 }
 
 let lastQuotationRemoteSync = 0;
-const QUOTE_SYNC_INTERVAL = 15 * 60 * 1000;
+const QUOTE_SYNC_INTERVAL = 30 * 1000; // 30 seconds fresh sync throttle
+let activeQuotationSyncPromise: Promise<void> | null = null;
 
 export const quotationService = {
-  async getAllQuotations(): Promise<Quotation[]> {
+  async getAllQuotations(forceFresh: boolean = false): Promise<Quotation[]> {
     // Auto-heal any active quotations mistakenly marked as deleted by previous background sync bugs
     try {
       const allLocal = await db.quotations.toArray();
@@ -165,32 +166,38 @@ export const quotationService = {
     const validLocal = localQuotes.filter(q => !deletedIds.has(q.id) && q.items && q.items.length > 0 && getQuotationTotalAmount(q) > 0).map(sanitizeQuotationRecord);
 
     const syncRemote = async () => {
-      try {
-        lastQuotationRemoteSync = Date.now();
-        const remoteQuotes = await fetchCollectionFromFirestore<Quotation>('quotations');
-        if (Array.isArray(remoteQuotes)) {
-          const freshDeleted = await getDeletedRecordIdsSet();
-          const validRemote = remoteQuotes.filter(q => !freshDeleted.has(q.id) && q.items && q.items.length > 0 && getQuotationTotalAmount(q) > 0);
-          if (validRemote.length > 0) {
-            // Merge remote quotations into local database (do NOT delete local quotations!)
-            await db.quotations.bulkPut(validRemote.map(sanitizeQuotationRecord));
-          }
+      if (activeQuotationSyncPromise) return activeQuotationSyncPromise;
+      activeQuotationSyncPromise = (async () => {
+        try {
+          lastQuotationRemoteSync = Date.now();
+          const remoteQuotes = await fetchCollectionFromFirestore<Quotation>('quotations');
+          if (Array.isArray(remoteQuotes)) {
+            const freshDeleted = await getDeletedRecordIdsSet();
+            const validRemote = remoteQuotes.filter(q => !freshDeleted.has(q.id) && q.items && q.items.length > 0 && getQuotationTotalAmount(q) > 0);
+            if (validRemote.length > 0) {
+              // Merge remote quotations into local database (do NOT delete local quotations!)
+              await db.quotations.bulkPut(validRemote.map(sanitizeQuotationRecord));
+            }
 
-          // Push any active local quotations not yet in remote Firestore to the cloud
-          const currentLocal = await db.quotations.toArray();
-          const remoteIds = new Set(validRemote.map(q => q.id));
-          for (const localQuote of currentLocal) {
-            if (localQuote.id && !freshDeleted.has(localQuote.id) && !remoteIds.has(localQuote.id)) {
-              saveRecordToFirestore('quotations', localQuote.id, sanitizeQuotationRecord(localQuote)).catch(() => {});
+            // Push any active local quotations not yet in remote Firestore to the cloud
+            const currentLocal = await db.quotations.toArray();
+            const remoteIds = new Set(validRemote.map(q => q.id));
+            for (const localQuote of currentLocal) {
+              if (localQuote.id && !freshDeleted.has(localQuote.id) && !remoteIds.has(localQuote.id)) {
+                saveRecordToFirestore('quotations', localQuote.id, sanitizeQuotationRecord(localQuote)).catch(() => {});
+              }
             }
           }
+        } catch (err) {
+          console.warn("Background quotation sync note:", err);
+        } finally {
+          activeQuotationSyncPromise = null;
         }
-      } catch (err) {
-        console.warn("Background quotation sync note:", err);
-      }
+      })();
+      return activeQuotationSyncPromise;
     };
 
-    if (validLocal.length === 0) {
+    if (forceFresh || validLocal.length === 0) {
       await syncRemote();
       const refreshed = await db.quotations.orderBy('createdAt').reverse().toArray();
       const freshDeleted = await getDeletedRecordIdsSet();

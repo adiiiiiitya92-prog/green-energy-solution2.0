@@ -5,6 +5,7 @@ import { getQuotationTotalAmount } from './quotationService';
 
 let lastOrderRemoteSync = 0;
 const ORDER_SYNC_INTERVAL = 15 * 60 * 1000;
+let activeOrderSyncPromise: Promise<void> | null = null;
 
 export const orderService = {
   // Order Confirmations
@@ -17,12 +18,17 @@ export const orderService = {
 
     if (!oc) {
       try {
-        const remoteOcs = await fetchCollectionFromFirestore<OrderConfirmation>('orderConfirmations');
+        const remoteOcs = await fetchCollectionFromFirestore<OrderConfirmation>('orderConfirmations', 15000);
         if (Array.isArray(remoteOcs) && remoteOcs.length > 0) {
           const freshDeleted = await getDeletedRecordIdsSet();
           const validRemote = remoteOcs.filter(o => !freshDeleted.has(o.id) && !freshDeleted.has(o.leadId));
           if (validRemote.length > 0) {
-            await db.orderConfirmations.bulkPut(validRemote);
+            for (const rOc of validRemote) {
+              const local = await db.orderConfirmations.get(rOc.id);
+              if (!local) {
+                await db.orderConfirmations.put(rOc);
+              }
+            }
             oc = await db.orderConfirmations.where({ leadId }).first();
           }
         }
@@ -41,19 +47,51 @@ export const orderService = {
     const validLocal = all.filter(o => !deletedIds.has(o.id) && !deletedIds.has(o.leadId));
 
     const syncRemote = async () => {
-      try {
-        lastOrderRemoteSync = Date.now();
-        const remoteOcs = await fetchCollectionFromFirestore<OrderConfirmation>('orderConfirmations');
-        if (Array.isArray(remoteOcs) && remoteOcs.length > 0) {
-          const freshDeleted = await getDeletedRecordIdsSet();
-          const validRemote = remoteOcs.filter(o => !freshDeleted.has(o.id) && !freshDeleted.has(o.leadId));
-          if (validRemote.length > 0) {
-            await db.orderConfirmations.bulkPut(validRemote);
+      if (activeOrderSyncPromise) return activeOrderSyncPromise;
+      activeOrderSyncPromise = (async () => {
+        try {
+          lastOrderRemoteSync = Date.now();
+          const remoteOcs = await fetchCollectionFromFirestore<OrderConfirmation>('orderConfirmations', 15000);
+          if (Array.isArray(remoteOcs) && remoteOcs.length > 0) {
+            const freshDeleted = await getDeletedRecordIdsSet();
+            const validRemote = remoteOcs.filter(o => !freshDeleted.has(o.id) && !freshDeleted.has(o.leadId));
+            
+            for (const rOc of validRemote) {
+              const local = await db.orderConfirmations.get(rOc.id);
+              if (!local) {
+                await db.orderConfirmations.put(rOc);
+              } else {
+                const localPayments = local.payments || [];
+                const remotePayments = rOc.payments || [];
+                const localPaid = localPayments.reduce((s, p) => s + (p?.amount || 0), 0) || local.advanceAmount || 0;
+                const remotePaid = remotePayments.reduce((s, p) => s + (p?.amount || 0), 0) || rOc.advanceAmount || 0;
+
+                if (localPaid > remotePaid) {
+                  const merged = { ...rOc, payments: localPayments, advanceAmount: local.advanceAmount || rOc.advanceAmount };
+                  await db.orderConfirmations.put(merged);
+                  saveRecordToFirestore('orderConfirmations', merged.id, merged).catch(() => {});
+                } else {
+                  await db.orderConfirmations.put(rOc);
+                }
+              }
+            }
+
+            // Push any active local order confirmations missing from remote to Firestore
+            const currentLocal = await db.orderConfirmations.toArray();
+            const remoteIds = new Set(validRemote.map(o => o.id));
+            for (const loc of currentLocal) {
+              if (loc.id && !freshDeleted.has(loc.id) && !remoteIds.has(loc.id)) {
+                saveRecordToFirestore('orderConfirmations', loc.id, loc).catch(() => {});
+              }
+            }
           }
+        } catch (err) {
+          console.warn("Background orderConfirmations sync note:", err);
+        } finally {
+          activeOrderSyncPromise = null;
         }
-      } catch (err) {
-        console.warn("Background orderConfirmations sync note:", err);
-      }
+      })();
+      return activeOrderSyncPromise;
     };
 
     if (validLocal.length === 0) {
@@ -486,5 +524,42 @@ export const orderService = {
     await db.releaseDocuments.delete(id);
     await markRecordAsDeleted(id, 'releaseDocuments');
     deleteRecordFromFirestore('releaseDocuments', id);
+  },
+
+  async getAllInstallationEvidenceLeadIds(): Promise<Set<string>> {
+    const deletedIds = await getDeletedRecordIdsSet();
+    const [photos, releases, challans] = await Promise.all([
+      db.installationPhotos.toArray().catch(() => []),
+      db.releaseDocuments.toArray().catch(() => []),
+      db.challans.toArray().catch(() => [])
+    ]);
+    const leadIds = new Set<string>();
+    photos.forEach(p => { if (p.leadId && !deletedIds.has(p.leadId) && !deletedIds.has(p.id)) leadIds.add(p.leadId); });
+    releases.forEach(r => { if (r.leadId && !deletedIds.has(r.leadId) && !deletedIds.has(r.id)) leadIds.add(r.leadId); });
+    challans.forEach(c => { if (c.leadId && !deletedIds.has(c.leadId) && !deletedIds.has(c.id)) leadIds.add(c.leadId); });
+
+    // If local caches are completely empty (e.g. fresh device), pull from Firestore in background
+    if (leadIds.size === 0) {
+      try {
+        const [remotePhotos, remoteReleases, remoteChallans] = await Promise.all([
+          fetchCollectionFromFirestore<InstallationPhoto>('installationPhotos', 6000).catch(() => []),
+          fetchCollectionFromFirestore<ReleaseDocument>('releaseDocuments', 6000).catch(() => []),
+          fetchCollectionFromFirestore<any>('challans', 6000).catch(() => [])
+        ]);
+        if (Array.isArray(remotePhotos) && remotePhotos.length > 0) {
+          await db.installationPhotos.bulkPut(remotePhotos).catch(() => {});
+          remotePhotos.forEach(p => { if (p.leadId && !deletedIds.has(p.leadId) && !deletedIds.has(p.id)) leadIds.add(p.leadId); });
+        }
+        if (Array.isArray(remoteReleases) && remoteReleases.length > 0) {
+          await db.releaseDocuments.bulkPut(remoteReleases).catch(() => {});
+          remoteReleases.forEach(r => { if (r.leadId && !deletedIds.has(r.leadId) && !deletedIds.has(r.id)) leadIds.add(r.leadId); });
+        }
+        if (Array.isArray(remoteChallans) && remoteChallans.length > 0) {
+          await db.challans.bulkPut(remoteChallans).catch(() => {});
+          remoteChallans.forEach(c => { if (c.leadId && !deletedIds.has(c.leadId) && !deletedIds.has(c.id)) leadIds.add(c.leadId); });
+        }
+      } catch (_) {}
+    }
+    return leadIds;
   }
 };

@@ -96,6 +96,7 @@ export const Leads: React.FC = () => {
     return 'confirmed';
   });
   const [dispatchedLeadIds, setDispatchedLeadIds] = useState<Set<string>>(new Set());
+  const [installationEvidenceLeadIds, setInstallationEvidenceLeadIds] = useState<Set<string>>(new Set());
 
   // Lead Category-wise Dispatch and History Modal states
   const [allChallans, setAllChallans] = useState<Challan[]>([]);
@@ -713,30 +714,44 @@ export const Leads: React.FC = () => {
     setLeads(filteredList);
 
     try {
-      const [challans, allQuotes] = await Promise.all([
+      const [challans, allQuotes, evidenceIds] = await Promise.all([
         challanService.getChallans(),
-        quotationService.getAllQuotations().catch(() => [])
+        quotationService.getAllQuotations().catch(() => []),
+        orderService.getAllInstallationEvidenceLeadIds().catch(() => new Set<string>())
       ]);
-      setAllChallans(challans);
+      if (evidenceIds && evidenceIds.size > 0) {
+        setInstallationEvidenceLeadIds(prev => {
+          const union = new Set(prev);
+          evidenceIds.forEach(id => union.add(id));
+          return union;
+        });
+      }
 
-      const qMap: Record<string, Quotation> = {};
-      allQuotes.forEach(q => {
-        if (q.leadId && (!qMap[q.leadId] || (q.items && q.items.length > 0))) {
-          qMap[q.leadId] = q;
-        }
-      });
-      setLeadQuotationsMap(qMap);
+      let freshQMap = leadQuotationsMap;
+      if (allQuotes && allQuotes.length > 0) {
+        const qMap: Record<string, Quotation> = {};
+        allQuotes.forEach(q => {
+          if (q.leadId && (!qMap[q.leadId] || (q.items && q.items.length > 0))) {
+            qMap[q.leadId] = q;
+          }
+        });
+        freshQMap = qMap;
+        setLeadQuotationsMap(qMap);
+      }
 
-      const dMap = computeAllLeadsDispatchMap(challans, qMap);
-      setLeadsDispatchMap(dMap);
+      if (challans && challans.length > 0) {
+        setAllChallans(challans);
+        const dMap = computeAllLeadsDispatchMap(challans, freshQMap);
+        setLeadsDispatchMap(dMap);
 
-      const dispatchedIds = new Set<string>();
-      Object.keys(dMap).forEach(leadId => {
-        if (dMap[leadId].totalChallansCount > 0) {
-          dispatchedIds.add(leadId);
-        }
-      });
-      setDispatchedLeadIds(dispatchedIds);
+        const dispatchedIds = new Set<string>();
+        Object.keys(dMap).forEach(leadId => {
+          if (dMap[leadId].totalChallansCount > 0) {
+            dispatchedIds.add(leadId);
+          }
+        });
+        setDispatchedLeadIds(dispatchedIds);
+      }
     } catch (e) {
       console.warn("Challans/Quotes load error in Leads view:", e);
     }
@@ -799,7 +814,7 @@ export const Leads: React.FC = () => {
       if (realtimeDebounceTimer) clearTimeout(realtimeDebounceTimer);
       realtimeDebounceTimer = setTimeout(() => {
         loadData();
-      }, 300);
+      }, 1000);
     };
     window.addEventListener('app-realtime-update', handleRealtimeUpdate);
     return () => {
@@ -4523,7 +4538,7 @@ export const Leads: React.FC = () => {
             }).length;
 
             const processDonePaymentDueCount = leads.filter(l => {
-              const isProcessDone = (l.status === 'closed' || l.status === 'installed');
+              const isProcessDone = (l.status === 'closed' || l.status === 'installed' || dispatchedLeadIds.has(l.id) || installationEvidenceLeadIds.has(l.id));
               const fin = leadFinancialMap[l.id];
               return isProcessDone && fin && fin.pendingBalance > 0;
             }).length;
@@ -4573,11 +4588,13 @@ export const Leads: React.FC = () => {
               }
 
               const isRaw = (lead.status === 'new' || lead.status === 'quotation_sent') && !hasPayment && !isDispatched;
-              const isProcessDone = (lead.status === 'closed' || lead.status === 'installed');
+              const isProcessDone = (lead.status === 'closed' || lead.status === 'installed' || dispatchedLeadIds.has(lead.id) || installationEvidenceLeadIds.has(lead.id));
               const isProcessDonePaymentPending = isProcessDone && !!fin && fin.pendingBalance > 0;
 
               let matchesRaw = true;
-              if (rawFilter === 'confirmed') {
+              if (loanFilter === 'loan') {
+                matchesRaw = true;
+              } else if (rawFilter === 'confirmed') {
                 matchesRaw = !isRaw;
               } else if (rawFilter === 'raw') {
                 matchesRaw = isRaw;
@@ -4622,18 +4639,22 @@ export const Leads: React.FC = () => {
                     {/* Quick Confirmed Leads Filter Toggle Pill */}
                     <button
                       type="button"
-                      onClick={() => handleSetRawFilter('confirmed')}
+                      onClick={() => {
+                        setLoanFilter('all');
+                        setHotFilter('all');
+                        handleSetRawFilter('confirmed');
+                      }}
                       className={`px-3 py-2 rounded-lg border flex items-center gap-1.5 transition-all cursor-pointer ${
-                        rawFilter === 'confirmed'
+                        rawFilter === 'confirmed' && loanFilter !== 'loan'
                           ? 'bg-emerald-600 text-white border-emerald-700 shadow-xs font-black'
                           : 'bg-emerald-50 text-emerald-800 border-emerald-200 hover:bg-emerald-100 font-bold'
                       }`}
                       title="Filter Confirmed Leads Only (Active Pipeline Projects)"
                     >
-                      <CheckCircle className={`w-4 h-4 ${rawFilter === 'confirmed' ? 'text-white' : 'text-emerald-600'}`} />
+                      <CheckCircle className={`w-4 h-4 ${rawFilter === 'confirmed' && loanFilter !== 'loan' ? 'text-white' : 'text-emerald-600'}`} />
                       <span>⚡ Confirmed Leads</span>
                       <span className={`px-1.5 py-0.2 rounded-full text-[10px] ${
-                        rawFilter === 'confirmed' ? 'bg-white text-emerald-700 font-black' : 'bg-emerald-200/80 text-emerald-900 font-black'
+                        rawFilter === 'confirmed' && loanFilter !== 'loan' ? 'bg-white text-emerald-700 font-black' : 'bg-emerald-200/80 text-emerald-900 font-black'
                       }`}>
                         {confirmedLeadsCount}
                       </span>
@@ -4642,7 +4663,10 @@ export const Leads: React.FC = () => {
                     {/* Quick Raw Lead Filter Toggle Pill */}
                     <button
                       type="button"
-                      onClick={() => handleSetRawFilter(rawFilter === 'raw' ? 'confirmed' : 'raw')}
+                      onClick={() => {
+                        setLoanFilter('all');
+                        handleSetRawFilter(rawFilter === 'raw' ? 'confirmed' : 'raw');
+                      }}
                       className={`px-3 py-2 rounded-lg border flex items-center gap-1.5 transition-all cursor-pointer ${
                         rawFilter === 'raw'
                           ? 'bg-blue-600 text-white border-blue-700 shadow-xs font-black'
@@ -4662,18 +4686,21 @@ export const Leads: React.FC = () => {
                     {/* Quick Process Done & Payment Due Filter Toggle Pill */}
                     <button
                       type="button"
-                      onClick={() => handleSetRawFilter(rawFilter === 'process_done_payment_pending' ? 'confirmed' : 'process_done_payment_pending')}
+                      onClick={() => {
+                        setLoanFilter('all');
+                        handleSetRawFilter(rawFilter === 'process_done_payment_pending' ? 'confirmed' : 'process_done_payment_pending');
+                      }}
                       className={`px-3 py-2 rounded-lg border flex items-center gap-1.5 transition-all cursor-pointer ${
-                        rawFilter === 'process_done_payment_pending'
+                        rawFilter === 'process_done_payment_pending' && loanFilter !== 'loan'
                           ? 'bg-purple-700 text-white border-purple-800 shadow-xs font-black'
                           : 'bg-purple-50 text-purple-800 border-purple-200 hover:bg-purple-100 font-bold'
                       }`}
                       title="Filter Leads with Process Completed but Payment Pending"
                     >
-                      <AlertCircle className={`w-4 h-4 ${rawFilter === 'process_done_payment_pending' ? 'text-white' : 'text-purple-700'}`} />
+                      <AlertCircle className={`w-4 h-4 ${rawFilter === 'process_done_payment_pending' && loanFilter !== 'loan' ? 'text-white' : 'text-purple-700'}`} />
                       <span>⚠️ Process Done (Payment Due)</span>
                       <span className={`px-1.5 py-0.2 rounded-full text-[10px] ${
-                        rawFilter === 'process_done_payment_pending' ? 'bg-white text-purple-800 font-black' : 'bg-purple-200/80 text-purple-900 font-black'
+                        rawFilter === 'process_done_payment_pending' && loanFilter !== 'loan' ? 'bg-white text-purple-800 font-black' : 'bg-purple-200/80 text-purple-900 font-black'
                       }`}>
                         {processDonePaymentDueCount}
                       </span>
@@ -4682,7 +4709,10 @@ export const Leads: React.FC = () => {
                     {/* Quick Hot Lead Filter Toggle Pill */}
                     <button
                       type="button"
-                      onClick={() => setHotFilter(prev => prev === 'hot' ? 'all' : 'hot')}
+                      onClick={() => {
+                        setLoanFilter('all');
+                        setHotFilter(prev => prev === 'hot' ? 'all' : 'hot');
+                      }}
                       className={`px-3 py-2 rounded-lg border flex items-center gap-1.5 transition-all cursor-pointer ${
                         hotFilter === 'hot'
                           ? 'bg-amber-500 text-white border-amber-600 shadow-xs font-black'
@@ -4702,7 +4732,19 @@ export const Leads: React.FC = () => {
                     {/* Quick Loan Cases Filter Toggle Pill */}
                     <button
                       type="button"
-                      onClick={() => setLoanFilter(prev => prev === 'loan' ? 'all' : 'loan')}
+                      onClick={() => {
+                        if (loanFilter === 'loan') {
+                          setLoanFilter('all');
+                          handleSetRawFilter('confirmed');
+                        } else {
+                          setLoanFilter('loan');
+                          handleSetRawFilter('all');
+                          setHotFilter('all');
+                          setDispatchFilter('all');
+                          setBalanceFilter('all');
+                          setStatusFilter('');
+                        }
+                      }}
                       className={`px-3 py-2 rounded-lg border flex items-center gap-1.5 transition-all cursor-pointer ${
                         loanFilter === 'loan'
                           ? 'bg-indigo-600 text-white border-indigo-700 shadow-xs font-black'
@@ -4728,7 +4770,7 @@ export const Leads: React.FC = () => {
                           ? 'bg-rose-600 text-white border-rose-700 shadow-xs font-black'
                           : 'bg-rose-50 text-rose-800 border-rose-200 hover:bg-rose-100 font-bold'
                       }`}
-                      title="Filter Clients with Remaining Pending Balance"
+                      title="Filter Leads with Pending Balance (> ₹0)"
                     >
                       <Wallet className={`w-4 h-4 ${balanceFilter === 'pending' ? 'text-white' : 'text-rose-600'}`} />
                       <span>⏳ Pending Balance</span>
@@ -4761,13 +4803,26 @@ export const Leads: React.FC = () => {
 
                     {/* Raw Lead Filter Select */}
                     <select
-                      value={rawFilter}
-                      onChange={(e) => handleSetRawFilter(e.target.value as any)}
+                      value={loanFilter === 'loan' ? 'loan_cases' : rawFilter}
+                      onChange={(e) => {
+                        if (e.target.value === 'loan_cases') {
+                          setLoanFilter('loan');
+                          handleSetRawFilter('all');
+                          setHotFilter('all');
+                          setDispatchFilter('all');
+                          setBalanceFilter('all');
+                          setStatusFilter('');
+                        } else {
+                          setLoanFilter('all');
+                          handleSetRawFilter(e.target.value as any);
+                        }
+                      }}
                       className="border border-slate-200 rounded-lg p-2.5 bg-slate-50 focus:outline-none cursor-pointer text-slate-700 font-bold"
                     >
                       <option value="confirmed">⚡ Confirmed Leads ({confirmedLeadsCount})</option>
                       <option value="raw">🌱 Raw Leads ({rawLeadsCount})</option>
                       <option value="process_done_payment_pending">⚠️ Process Done - Payment Due ({processDonePaymentDueCount})</option>
+                      <option value="loan_cases">🏦 Loan Cases ({loanLeadsCount})</option>
                       <option value="all">🌐 All Leads (Raw & Confirmed)</option>
                     </select>
 
@@ -4856,8 +4911,42 @@ export const Leads: React.FC = () => {
                   </div>
                 )}
 
+                {/* Active Filter Banner for Bank Loan Cases */}
+                {loanFilter === 'loan' && (
+                  <div className="bg-gradient-to-r from-indigo-950 via-slate-900 to-indigo-950 border border-indigo-500/40 text-white p-4 rounded-2xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-lg animate-fade-in">
+                    <div className="flex items-center gap-3">
+                      <div className="p-2.5 rounded-xl bg-indigo-500/20 border border-indigo-500/30 text-indigo-300 shrink-0">
+                        <Landmark className="w-5 h-5 text-indigo-300" />
+                      </div>
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <span className="text-[10px] font-black text-indigo-300 uppercase tracking-widest bg-indigo-500/20 px-2.5 py-0.5 rounded-full border border-indigo-400/30">
+                            FILTER ACTIVE
+                          </span>
+                          <span className="text-xs font-black text-white">
+                            All Bank Loan Cases ({filteredLeads.length} Lead{filteredLeads.length === 1 ? '' : 's'})
+                          </span>
+                        </div>
+                        <p className="text-[11px] text-indigo-200/80 font-medium mt-0.5">
+                          Showing all solar customer projects with bank financing across all pipeline stages.
+                        </p>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setLoanFilter('all');
+                        handleSetRawFilter('confirmed');
+                      }}
+                      className="px-3.5 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-bold transition-all cursor-pointer shrink-0 shadow-xs"
+                    >
+                      Back to Confirmed Leads
+                    </button>
+                  </div>
+                )}
+
                 {/* Active Filter Banner for Process Done & Payment Pending */}
-                {rawFilter === 'process_done_payment_pending' && (
+                {rawFilter === 'process_done_payment_pending' && loanFilter !== 'loan' && (
                   <div className="bg-gradient-to-r from-purple-950 via-slate-900 to-purple-950 border border-purple-500/40 text-white p-4 rounded-2xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-lg animate-fade-in">
                     <div className="flex items-center gap-3">
                       <div className="p-2.5 rounded-xl bg-purple-500/20 border border-purple-500/30 text-purple-300 shrink-0">

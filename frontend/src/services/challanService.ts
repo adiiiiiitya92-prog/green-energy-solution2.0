@@ -5,31 +5,38 @@ import { b2bBusinessService } from './b2bBusinessService';
 import { stockTransactionService } from './stockTransactionService';
 
 let lastChallanRemoteSync = 0;
-const CHALLAN_SYNC_INTERVAL = 15 * 60 * 1000;
+const CHALLAN_SYNC_INTERVAL = 30 * 1000; // 30 seconds fresh sync throttle
+let activeChallanSyncPromise: Promise<void> | null = null;
 
 export const challanService = {
-  async getChallans(): Promise<Challan[]> {
+  async getChallans(forceFresh: boolean = false): Promise<Challan[]> {
     const deletedIds = await getDeletedRecordIdsSet();
     const localChallans = await db.challans.orderBy('createdAt').reverse().toArray();
     const validLocal = localChallans.filter(c => !deletedIds.has(c.id) && (!c.leadId || !deletedIds.has(c.leadId)));
 
     const syncRemote = async () => {
-      try {
-        lastChallanRemoteSync = Date.now();
-        const remoteChallans = await fetchCollectionFromFirestore<Challan>('challans');
-        if (remoteChallans && remoteChallans.length > 0) {
-          const freshDeleted = await getDeletedRecordIdsSet();
-          const validRemote = remoteChallans.filter(c => !freshDeleted.has(c.id) && (!c.leadId || !freshDeleted.has(c.leadId)));
-          if (validRemote.length > 0) {
-            await db.challans.bulkPut(validRemote);
+      if (activeChallanSyncPromise) return activeChallanSyncPromise;
+      activeChallanSyncPromise = (async () => {
+        try {
+          lastChallanRemoteSync = Date.now();
+          const remoteChallans = await fetchCollectionFromFirestore<Challan>('challans', 15000);
+          if (remoteChallans && remoteChallans.length > 0) {
+            const freshDeleted = await getDeletedRecordIdsSet();
+            const validRemote = remoteChallans.filter(c => !freshDeleted.has(c.id) && (!c.leadId || !freshDeleted.has(c.leadId)));
+            if (validRemote.length > 0) {
+              await db.challans.bulkPut(validRemote);
+            }
           }
+        } catch (err) {
+          console.warn("Background challans sync note:", err);
+        } finally {
+          activeChallanSyncPromise = null;
         }
-      } catch (err) {
-        console.warn("Background challans sync note:", err);
-      }
+      })();
+      return activeChallanSyncPromise;
     };
 
-    if (validLocal.length === 0) {
+    if (validLocal.length === 0 || forceFresh) {
       await syncRemote();
       const freshDeleted = await getDeletedRecordIdsSet();
       const refreshed = await db.challans.orderBy('createdAt').reverse().toArray();

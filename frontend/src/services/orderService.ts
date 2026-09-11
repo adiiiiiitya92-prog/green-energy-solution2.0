@@ -4,8 +4,12 @@ import { saveRecordToFirestore, deleteRecordFromFirestore, fetchCollectionFromFi
 import { getQuotationTotalAmount } from './quotationService';
 
 let lastOrderRemoteSync = 0;
-const ORDER_SYNC_INTERVAL = 15 * 60 * 1000;
+const ORDER_SYNC_INTERVAL = 30 * 1000; // 30 seconds fresh sync throttle
 let activeOrderSyncPromise: Promise<void> | null = null;
+
+let lastEvidenceRemoteSync = 0;
+const EVIDENCE_SYNC_INTERVAL = 30 * 1000; // 30 seconds fresh sync throttle
+let activeEvidenceSyncPromise: Promise<void> | null = null;
 
 export const orderService = {
   // Order Confirmations
@@ -526,7 +530,7 @@ export const orderService = {
     deleteRecordFromFirestore('releaseDocuments', id);
   },
 
-  async getAllInstallationEvidenceLeadIds(): Promise<Set<string>> {
+  async getAllInstallationEvidenceLeadIds(forceFresh: boolean = false): Promise<Set<string>> {
     const deletedIds = await getDeletedRecordIdsSet();
     const [photos, releases, challans] = await Promise.all([
       db.installationPhotos.toArray().catch(() => []),
@@ -538,28 +542,66 @@ export const orderService = {
     releases.forEach(r => { if (r.leadId && !deletedIds.has(r.leadId) && !deletedIds.has(r.id)) leadIds.add(r.leadId); });
     challans.forEach(c => { if (c.leadId && !deletedIds.has(c.leadId) && !deletedIds.has(c.id)) leadIds.add(c.leadId); });
 
-    // If local caches are completely empty (e.g. fresh device), pull from Firestore in background
-    if (leadIds.size === 0) {
-      try {
-        const [remotePhotos, remoteReleases, remoteChallans] = await Promise.all([
-          fetchCollectionFromFirestore<InstallationPhoto>('installationPhotos', 6000).catch(() => []),
-          fetchCollectionFromFirestore<ReleaseDocument>('releaseDocuments', 6000).catch(() => []),
-          fetchCollectionFromFirestore<any>('challans', 6000).catch(() => [])
-        ]);
-        if (Array.isArray(remotePhotos) && remotePhotos.length > 0) {
-          await db.installationPhotos.bulkPut(remotePhotos).catch(() => {});
-          remotePhotos.forEach(p => { if (p.leadId && !deletedIds.has(p.leadId) && !deletedIds.has(p.id)) leadIds.add(p.leadId); });
+    const syncRemoteEvidence = async () => {
+      if (activeEvidenceSyncPromise) return activeEvidenceSyncPromise;
+      activeEvidenceSyncPromise = (async () => {
+        try {
+          lastEvidenceRemoteSync = Date.now();
+          const freshDeleted = await getDeletedRecordIdsSet();
+          const [remotePhotos, remoteReleases, remoteChallans] = await Promise.all([
+            fetchCollectionFromFirestore<InstallationPhoto>('installationPhotos', 10000).catch(() => []),
+            fetchCollectionFromFirestore<ReleaseDocument>('releaseDocuments', 10000).catch(() => []),
+            fetchCollectionFromFirestore<any>('challans', 10000).catch(() => [])
+          ]);
+          let hasNew = false;
+          if (Array.isArray(remotePhotos) && remotePhotos.length > 0) {
+            const valid = remotePhotos.filter(p => p.id && !freshDeleted.has(p.id) && (!p.leadId || !freshDeleted.has(p.leadId)));
+            await db.installationPhotos.bulkPut(valid).catch(() => {});
+            valid.forEach(p => {
+              if (p.leadId && !leadIds.has(p.leadId)) {
+                leadIds.add(p.leadId);
+                hasNew = true;
+              }
+            });
+          }
+          if (Array.isArray(remoteReleases) && remoteReleases.length > 0) {
+            const valid = remoteReleases.filter(r => r.id && !freshDeleted.has(r.id) && (!r.leadId || !freshDeleted.has(r.leadId)));
+            await db.releaseDocuments.bulkPut(valid).catch(() => {});
+            valid.forEach(r => {
+              if (r.leadId && !leadIds.has(r.leadId)) {
+                leadIds.add(r.leadId);
+                hasNew = true;
+              }
+            });
+          }
+          if (Array.isArray(remoteChallans) && remoteChallans.length > 0) {
+            const valid = remoteChallans.filter(c => c.id && !freshDeleted.has(c.id) && (!c.leadId || !freshDeleted.has(c.leadId)));
+            await db.challans.bulkPut(valid).catch(() => {});
+            valid.forEach(c => {
+              if (c.leadId && !leadIds.has(c.leadId)) {
+                leadIds.add(c.leadId);
+                hasNew = true;
+              }
+            });
+          }
+          if (hasNew && typeof window !== 'undefined') {
+            window.dispatchEvent(new CustomEvent('app-realtime-update'));
+          }
+        } catch (err) {
+          console.warn("Background evidence sync note:", err);
+        } finally {
+          activeEvidenceSyncPromise = null;
         }
-        if (Array.isArray(remoteReleases) && remoteReleases.length > 0) {
-          await db.releaseDocuments.bulkPut(remoteReleases).catch(() => {});
-          remoteReleases.forEach(r => { if (r.leadId && !deletedIds.has(r.leadId) && !deletedIds.has(r.id)) leadIds.add(r.leadId); });
-        }
-        if (Array.isArray(remoteChallans) && remoteChallans.length > 0) {
-          await db.challans.bulkPut(remoteChallans).catch(() => {});
-          remoteChallans.forEach(c => { if (c.leadId && !deletedIds.has(c.leadId) && !deletedIds.has(c.id)) leadIds.add(c.leadId); });
-        }
-      } catch (_) {}
+      })();
+      return activeEvidenceSyncPromise;
+    };
+
+    if (leadIds.size === 0 || forceFresh) {
+      await syncRemoteEvidence();
+    } else if (Date.now() - lastEvidenceRemoteSync > EVIDENCE_SYNC_INTERVAL) {
+      syncRemoteEvidence().catch(() => {});
     }
+
     return leadIds;
   }
 };

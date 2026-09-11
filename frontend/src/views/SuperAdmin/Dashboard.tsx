@@ -54,8 +54,8 @@ export const Dashboard: React.FC = () => {
         visitService.getVisitReports(),
         productService.getProducts(),
         import('../../services/deletionRequestService').then(m => m.deletionRequestService.getPendingRequests()).catch(() => []),
-        challanService.getChallans(),
-        orderService.getAllInstallationEvidenceLeadIds()
+        challanService.getChallans(true),
+        orderService.getAllInstallationEvidenceLeadIds(true)
       ]);
 
       const roleStr = (currentRole || currentUser?.role || '').toLowerCase();

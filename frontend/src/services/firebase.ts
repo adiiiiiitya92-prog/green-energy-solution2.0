@@ -758,7 +758,11 @@ export async function fetchCollectionFromFirestore<T extends { id?: string; isDe
     const snapshot = await Promise.race([getDocs(colRef), timeoutPromise]);
     const rawDocs = snapshot.docs.map(docSnap => ({ id: docSnap.id, ...docSnap.data() }) as unknown as T);
     
-    // Tombstone filtering
+    // Tombstone filtering (Do NOT filter or delete tombstones from deletedRecords collection itself!)
+    if (collectionName === 'deletedRecords') {
+      return rawDocs;
+    }
+
     const { getDeletedRecordIdsSet } = await import('./db');
     const deletedIds = await getDeletedRecordIdsSet();
 

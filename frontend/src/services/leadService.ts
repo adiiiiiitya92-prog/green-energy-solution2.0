@@ -268,6 +268,19 @@ export const leadService = {
       }
     }
 
+    // Rule: Lead can only be confirmed if at least ₹1 payment has been recorded
+    if (leadToUpdate.status === 'confirmed') {
+      const oc = await db.orderConfirmations.where({ leadId: leadToUpdate.id }).first();
+      const totalPaid = oc ? (
+        Array.isArray(oc.payments) && oc.payments.length > 0
+          ? oc.payments.reduce((s, p) => s + (Number(p?.amount) || 0), 0)
+          : (Number(oc.advanceAmount) || 0)
+      ) : 0;
+      if (totalPaid < 1) {
+        throw new Error('Lead cannot be confirmed: At least ₹1 payment must be recorded before setting status to Confirmed.');
+      }
+    }
+
     await db.leads.put(leadToUpdate);
     saveRecordToFirestore('leads', leadToUpdate.id, leadToUpdate);
     window.dispatchEvent(new CustomEvent('app-realtime-update'));
@@ -426,6 +439,17 @@ export const leadService = {
   async updateLeadStatus(leadId: string, status: Lead['status']): Promise<void> {
     const lead = await db.leads.get(leadId);
     if (lead) {
+      if (status === 'confirmed') {
+        const oc = await db.orderConfirmations.where({ leadId }).first();
+        const totalPaid = oc ? (
+          Array.isArray(oc.payments) && oc.payments.length > 0
+            ? oc.payments.reduce((s, p) => s + (Number(p?.amount) || 0), 0)
+            : (Number(oc.advanceAmount) || 0)
+        ) : 0;
+        if (totalPaid < 1) {
+          throw new Error('Lead cannot be confirmed: At least ₹1 payment must be recorded before setting status to Confirmed.');
+        }
+      }
       lead.status = status;
       lead.updatedAt = new Date().toISOString();
       await db.leads.put(lead);

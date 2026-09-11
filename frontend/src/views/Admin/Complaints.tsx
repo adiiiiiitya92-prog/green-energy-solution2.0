@@ -908,7 +908,7 @@ const CreateComplaintModal: React.FC<CreateComplaintModalProps> = ({
                 <UserPlus className={`w-5 h-5 mb-1 ${customerType === 'new_lead' ? 'text-emerald-600' : 'text-slate-400'}`} />
                 <div>
                   <div className="text-xs font-black">New Lead / Customer</div>
-                  <div className="text-[10px] opacity-75">Register & mark as complaint lead</div>
+                  <div className="text-[10px] opacity-75">Direct complaint (Kept in Complaints only)</div>
                 </div>
               </button>
 

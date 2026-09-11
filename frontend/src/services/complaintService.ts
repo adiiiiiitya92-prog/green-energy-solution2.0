@@ -15,7 +15,6 @@ import type {
   Lead
 } from '../types';
 import { saveRecordToFirestore, fetchCollectionFromFirestore, deleteRecordFromFirestore } from './firebase';
-import { leadService } from './leadService';
 
 export const DEFAULT_COMPLAINT_CATEGORIES = [
   'Solar Panel Issue',
@@ -162,29 +161,10 @@ export const complaintService = {
 
     let associatedLeadId = data.leadId;
 
-    // Handle New Customer / Lead flow
-    if (data.customerType === 'new_lead' && !associatedLeadId) {
-      try {
-        const existingCustomer = await this.checkDuplicateCustomer(data.mobileNumber, data.email, data.customerName);
-        if (existingCustomer && existingCustomer.id) {
-          associatedLeadId = existingCustomer.id;
-        } else {
-          const cleanTitle = (data.title || '').replace(/^New Complaint Lead:\s*/i, '').trim();
-          const cleanDesc = data.address ? `Address: ${data.address}` : (data.description || '');
-          const newLeadId = await leadService.createLead({
-            name: data.customerName.trim(),
-            phoneNumber: data.mobileNumber.trim(),
-            email: data.email?.trim() || '',
-            requirement: cleanTitle || 'Service Request',
-            description: cleanDesc,
-            status: 'new',
-            createdBy: currentUser.id
-          });
-          associatedLeadId = newLeadId;
-        }
-      } catch (e) {
-        console.warn("New lead auto-creation note:", e);
-      }
+    // When customerType is 'new_lead', the record stays strictly within Complaints
+    // and is NOT saved as a lead in raw leads.
+    if (data.customerType === 'new_lead') {
+      associatedLeadId = undefined;
     }
 
     // Check overdue status

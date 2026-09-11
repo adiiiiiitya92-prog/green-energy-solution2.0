@@ -128,6 +128,16 @@ export const orderService = {
       return '';
     }
 
+    const pList = (Array.isArray(ocData.payments) && ocData.payments.length > 0)
+      ? ocData.payments
+      : (ocData.advanceAmount && ocData.advanceAmount > 0)
+      ? [{ amount: ocData.advanceAmount }]
+      : [];
+    const initialPayment = pList.reduce((sum, p) => sum + (Number(p?.amount) || 0), 0);
+    if (initialPayment < 1) {
+      throw new Error('Order confirmation requires at least ₹1 payment to confirm the lead.');
+    }
+
     const id = 'oc_' + Math.random().toString(36).substring(2, 11);
     const newOc: OrderConfirmation = {
       ...ocData,

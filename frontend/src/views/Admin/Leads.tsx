@@ -1099,6 +1099,34 @@ export const Leads: React.FC = () => {
 
     setIsSavingEditLead(true);
     try {
+      const isSuperAdmin = currentRole === 'super_admin' || currentUser?.role === 'super_admin';
+      if (!isSuperAdmin && editStatus !== leadToEdit.status) {
+        alert('🔒 Access Restricted: Only Super Admin can manually modify the pipeline stage of a lead.');
+        setIsSavingEditLead(false);
+        return;
+      }
+
+      const effectiveStatus: Lead['status'] = isSuperAdmin ? editStatus : leadToEdit.status;
+
+      if (effectiveStatus === 'confirmed') {
+        const fin = leadFinancialMap[leadToEdit.id];
+        let paidAmt = fin?.paidAmount;
+        if (paidAmt === undefined) {
+          const oc = await orderService.getOrderConfirmationByLeadId(leadToEdit.id);
+          const pList = (Array.isArray(oc?.payments) && oc.payments.length > 0)
+            ? oc.payments
+            : (oc?.advanceAmount && oc.advanceAmount > 0)
+            ? [{ amount: oc.advanceAmount }]
+            : [];
+          paidAmt = pList.reduce((s, p) => s + (Number(p?.amount) || 0), 0);
+        }
+        if ((paidAmt || 0) < 1) {
+          alert('❌ Cannot confirm lead: A lead can only be set to "Confirmed" after at least ₹1 payment has been recorded. Please record a payment via "Book Order & Payment" first.');
+          setIsSavingEditLead(false);
+          return;
+        }
+      }
+
       const formattedEditFollowUpDate = editFollowUpDate ? dayjs(editFollowUpDate).format('YYYY-MM-DD') : undefined;
       const updatedPatch: Partial<Lead> = {
         name: editName.trim(),
@@ -1106,7 +1134,7 @@ export const Leads: React.FC = () => {
         email: editEmail.trim() || undefined,
         requirement: editRequirement.trim(),
         description: editDescription.trim(),
-        status: editStatus,
+        status: effectiveStatus,
         isHot: editIsHot,
         clientRating: editIsHot ? 5 : (leadToEdit.clientRating || 3),
         isLoan: editIsLoan,
@@ -1315,8 +1343,8 @@ export const Leads: React.FC = () => {
       alert('⚠️ Payment collection / Order Confirmation cannot be created without an official saved quotation. Please create and save a quotation first.');
       return;
     }
-    if (advanceAmount <= 0) {
-      alert('Please input a valid advance payment amount.');
+    if (!advanceAmount || advanceAmount < 1) {
+      alert('⚠️ Minimum Advance Payment Requirement: At least ₹1 payment must be recorded to confirm an order booking.');
       return;
     }
 
@@ -4507,11 +4535,6 @@ export const Leads: React.FC = () => {
               })()}
             </div>
           ) : (() => {
-            const pendingBalanceLeadsCount = leads.filter(l => {
-              const fin = leadFinancialMap[l.id];
-              return fin && fin.pendingBalance > 0;
-            }).length;
-
             const rawLeadsCount = leads.filter(l => {
               const fin = leadFinancialMap[l.id];
               const hasNoPayment = !fin || (fin.paidAmount || 0) === 0;
@@ -4524,6 +4547,14 @@ export const Leads: React.FC = () => {
               const isDispatched = dispatchedLeadIds.has(l.id);
               const isRaw = (l.status === 'new' || l.status === 'quotation_sent') && !hasPayment && !isDispatched;
               return !isRaw;
+            }).length;
+
+            const pendingBalanceLeadsCount = leads.filter(l => {
+              const fin = leadFinancialMap[l.id];
+              const hasPayment = !!fin && (fin.paidAmount || 0) > 0;
+              const isDispatched = dispatchedLeadIds.has(l.id);
+              const isRaw = (l.status === 'new' || l.status === 'quotation_sent') && !hasPayment && !isDispatched;
+              return !isRaw && fin && fin.pendingBalance > 0;
             }).length;
 
             const hotLeadsCount = leads.filter(l => {
@@ -4604,11 +4635,11 @@ export const Leads: React.FC = () => {
 
               let matchesBalance = true;
               if (balanceFilter === 'pending') {
-                matchesBalance = !!fin && fin.pendingBalance > 0;
+                matchesBalance = !isRaw && !!fin && fin.pendingBalance > 0;
               } else if (balanceFilter === 'partially_paid') {
                 matchesBalance = !!fin && fin.paidAmount > 0 && fin.pendingBalance > 0;
               } else if (balanceFilter === 'fully_paid') {
-                matchesBalance = !!fin && fin.paymentStatus === 'Fully Paid';
+                matchesBalance = !isRaw && !!fin && fin.paymentStatus === 'Fully Paid';
               } else if (balanceFilter === 'no_quote') {
                 matchesBalance = !fin || fin.paymentStatus === 'No Quote';
               }
@@ -4760,13 +4791,19 @@ export const Leads: React.FC = () => {
                     {/* Quick Remaining Balance Filter Toggle Pill */}
                     <button
                       type="button"
-                      onClick={() => setBalanceFilter(prev => prev === 'pending' ? 'all' : 'pending')}
+                      onClick={() => {
+                        setBalanceFilter(prev => {
+                          if (prev === 'pending') return 'all';
+                          if (rawFilter === 'raw') handleSetRawFilter('confirmed');
+                          return 'pending';
+                        });
+                      }}
                       className={`px-3 py-2 rounded-lg border flex items-center gap-1.5 transition-all cursor-pointer ${
                         balanceFilter === 'pending'
                           ? 'bg-rose-600 text-white border-rose-700 shadow-xs font-black'
                           : 'bg-rose-50 text-rose-800 border-rose-200 hover:bg-rose-100 font-bold'
                       }`}
-                      title="Filter Leads with Pending Balance (> ₹0)"
+                      title="Filter Confirmed Leads with Pending Balance (> ₹0)"
                     >
                       <Wallet className={`w-4 h-4 ${balanceFilter === 'pending' ? 'text-white' : 'text-rose-600'}`} />
                       <span>⏳ Pending Balance</span>
@@ -5704,22 +5741,69 @@ export const Leads: React.FC = () => {
               </div>
 
               {/* Status Select */}
-              <div>
-                <label className="block text-slate-500 mb-1 font-bold">Pipeline Stage</label>
-                <select
-                  value={editStatus}
-                  onChange={(e) => setEditStatus(e.target.value as any)}
-                  className="w-full border border-slate-200 rounded-xl px-3 py-2.5 bg-slate-50 focus:outline-none cursor-pointer text-slate-800 font-bold text-xs"
-                >
-                  <option value="new">🆕 NEW LEAD</option>
-                  <option value="quotation_sent">📄 QUOTATION SENT</option>
-                  <option value="confirmed">⚡ ORDER CONFIRMED</option>
-                  <option value="registered">📋 REGISTERED</option>
-                  <option value="installed">🔧 INSTALLED</option>
-                  <option value="closed">🏆 CLOSED / RELEASED</option>
-                  <option value="lost">❌ LOST</option>
-                </select>
-              </div>
+              {(() => {
+                const isSuperAdmin = currentRole === 'super_admin' || currentUser?.role === 'super_admin';
+                const fin = leadToEdit ? leadFinancialMap[leadToEdit.id] : undefined;
+                const leadPaidAmount = fin?.paidAmount ?? 0;
+                const canConfirm = leadPaidAmount >= 1;
+
+                return (
+                  <div>
+                    <div className="flex items-center justify-between mb-1">
+                      <label className="block text-slate-500 font-bold">Pipeline Stage</label>
+                      {!isSuperAdmin ? (
+                        <span className="inline-flex items-center gap-1 text-[10px] font-extrabold text-amber-800 bg-amber-100/90 px-2 py-0.5 rounded-md border border-amber-300 shadow-2xs">
+                          <Lock className="w-3 h-3 text-amber-700" />
+                          Super Admin Only
+                        </span>
+                      ) : !canConfirm ? (
+                        <span className="inline-flex items-center gap-1 text-[10px] font-extrabold text-rose-700 bg-rose-50 px-2 py-0.5 rounded-md border border-rose-200">
+                          Min ₹1 Payment for Confirmed
+                        </span>
+                      ) : null}
+                    </div>
+
+                    <select
+                      value={editStatus}
+                      disabled={!isSuperAdmin}
+                      onChange={(e) => {
+                        const val = e.target.value as Lead['status'];
+                        if (val === 'confirmed' && !canConfirm) {
+                          alert('⚠️ Cannot set status to Confirmed: A lead can only be confirmed after at least ₹1 payment is recorded. Please record advance payment first.');
+                          return;
+                        }
+                        setEditStatus(val);
+                      }}
+                      className={`w-full border rounded-xl px-3 py-2.5 font-bold text-xs transition-colors ${
+                        !isSuperAdmin
+                          ? 'bg-slate-100/90 text-slate-400 border-slate-200 cursor-not-allowed select-none'
+                          : 'bg-slate-50 border-slate-200 text-slate-800 cursor-pointer focus:outline-none focus:border-blue-500'
+                      }`}
+                    >
+                      <option value="new">🆕 NEW LEAD</option>
+                      <option value="quotation_sent">📄 QUOTATION SENT</option>
+                      <option value="confirmed" disabled={!canConfirm}>
+                        ⚡ ORDER CONFIRMED {canConfirm ? '' : '(Requires ≥ ₹1 Payment)'}
+                      </option>
+                      <option value="registered">📋 REGISTERED</option>
+                      <option value="installed">🔧 INSTALLED</option>
+                      <option value="closed">🏆 CLOSED / RELEASED</option>
+                      <option value="lost">❌ LOST</option>
+                    </select>
+
+                    {!isSuperAdmin ? (
+                      <p className="text-[11px] text-slate-400 font-medium mt-1 flex items-center gap-1">
+                        <Lock className="w-3 h-3 text-slate-400" />
+                        <span>Pipeline stage can only be changed manually by Super Admin.</span>
+                      </p>
+                    ) : !canConfirm ? (
+                      <p className="text-[11px] text-amber-600 font-medium mt-1">
+                        ℹ️ "Order Confirmed" stage requires at least ₹1 advance or installment payment recorded.
+                      </p>
+                    ) : null}
+                  </div>
+                );
+              })()}
 
               {/* Hot Lead Checkbox */}
               <div className="flex items-center space-x-2 pt-1 bg-amber-50/80 border border-amber-200 rounded-xl p-3">

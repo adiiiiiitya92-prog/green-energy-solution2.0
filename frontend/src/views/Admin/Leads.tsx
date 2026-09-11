@@ -71,7 +71,25 @@ export const Leads: React.FC = () => {
   const [leads, setLeads] = useState<Lead[]>([]);
   const [employees, setEmployees] = useState<Profile[]>([]);
   const [employeeNames, setEmployeeNames] = useState<Record<string, string>>({});
+  const [employeeProfiles, setEmployeeProfiles] = useState<Record<string, Profile>>({});
   const [catalogProducts, setCatalogProducts] = useState<Product[]>([]);
+
+  // Staff WhatsApp Reminder Modal State (for Sales Person or Admin Person)
+  const [staffReminderModal, setStaffReminderModal] = useState<{
+    isOpen: boolean;
+    lead: Lead | null;
+    roleType: 'sales' | 'admin';
+    targetName: string;
+    targetPhone: string;
+    customMessage: string;
+  }>({
+    isOpen: false,
+    lead: null,
+    roleType: 'sales',
+    targetName: '',
+    targetPhone: '',
+    customMessage: '',
+  });
   
   // In-memory PDF blob cache for instant download/share (keyed by quotation ID)
   const pdfBlobCache = useRef<Map<string, Blob>>(new Map());
@@ -757,10 +775,13 @@ export const Leads: React.FC = () => {
 
     const profiles = await employeeService.getAllProfiles();
     const names: Record<string, string> = {};
+    const profsMap: Record<string, Profile> = {};
     profiles.forEach(p => {
       names[p.id] = p.fullName;
+      profsMap[p.id] = p;
     });
     setEmployeeNames(names);
+    setEmployeeProfiles(profsMap);
 
     compileReportItems(filteredList, names);
 
@@ -1223,6 +1244,90 @@ export const Leads: React.FC = () => {
       if (updated) setSelectedLead(updated);
       loadData();
     }
+  };
+
+  // Open Staff WhatsApp reminder modal (for Sales Person or Admin Person)
+  const handleOpenStaffWhatsappReminder = (
+    lead: Lead,
+    roleType: 'sales' | 'admin',
+    e?: React.MouseEvent
+  ) => {
+    if (e) {
+      e.stopPropagation();
+    }
+
+    const empId = roleType === 'sales'
+      ? (lead.assignedSalesPersonId || lead.assignedEmployeeId || '')
+      : (lead.assignedAdminId || '');
+
+    const personName = employeeNames[empId] || (roleType === 'sales' ? 'Sales Person' : 'Admin Person');
+    const profile = employeeProfiles[empId];
+    const targetPhone = profile?.phone || '';
+
+    const cleanLeadName = lead.name || 'Customer';
+    const cleanLeadPhone = lead.phoneNumber || 'N/A';
+    const cleanRequirement = formatCleanLeadRequirement(lead.requirement) || lead.requirement || 'Solar Rooftop System';
+    const stageLabel = (lead.status || 'new').replace(/_/g, ' ').toUpperCase();
+
+    const defaultMsg = `Namaste ${personName},\n\n📋 *Lead Update & Follow-up Reminder*\n• Customer: ${cleanLeadName}\n• Phone: ${cleanLeadPhone}\n• Requirement: ${cleanRequirement}\n• Current Stage: ${stageLabel}\n\nKripya is lead par latest progress update karein aur agla step share karein. Shukriya!`;
+
+    setStaffReminderModal({
+      isOpen: true,
+      lead,
+      roleType,
+      targetName: personName,
+      targetPhone,
+      customMessage: defaultMsg,
+    });
+  };
+
+  const handleApplyStaffReminderTemplate = (templateType: 'status_update' | 'urgent' | 'payment' | 'site_visit') => {
+    if (!staffReminderModal.lead) return;
+    const lead = staffReminderModal.lead;
+    const personName = staffReminderModal.targetName || 'Team Member';
+    const cleanLeadName = lead.name || 'Customer';
+    const cleanLeadPhone = lead.phoneNumber || 'N/A';
+    const cleanRequirement = formatCleanLeadRequirement(lead.requirement) || lead.requirement || 'Solar Rooftop System';
+    const stageLabel = (lead.status || 'new').replace(/_/g, ' ').toUpperCase();
+
+    let newMsg = '';
+    if (templateType === 'status_update') {
+      newMsg = `Namaste ${personName},\n\n📋 *Lead Status Update Request*\n• Customer: ${cleanLeadName}\n• Phone: ${cleanLeadPhone}\n• Requirement: ${cleanRequirement}\n• Current Stage: ${stageLabel}\n\nKripya is lead ka latest progress update karein. Shukriya!`;
+    } else if (templateType === 'urgent') {
+      newMsg = `Namaste ${personName},\n\n🚨 *URGENT FOLLOW-UP REQUIRED*\n• Customer: ${cleanLeadName}\n• Phone: ${cleanLeadPhone}\n• Requirement: ${cleanRequirement}\n\nCustomer se turant call par connect karein aur priority par status update provide karein.`;
+    } else if (templateType === 'payment') {
+      newMsg = `Namaste ${personName},\n\n💰 *Payment & Quotation Follow-up*\n• Customer: ${cleanLeadName}\n• Phone: ${cleanLeadPhone}\n• Current Stage: ${stageLabel}\n\nKripya customer se quotation approval / payment update lein aur report karein.`;
+    } else if (templateType === 'site_visit') {
+      const descSnippet = lead.description ? ` (${lead.description.slice(0, 50)})` : '';
+      newMsg = `Namaste ${personName},\n\n☀️ *Site Survey & Visit Follow-up*\n• Customer: ${cleanLeadName}\n• Phone: ${cleanLeadPhone}\n• Requirement: ${cleanRequirement}${descSnippet}\n\nKripya site survey, shadow analysis aur customer meeting ka status update share karein.`;
+    }
+
+    setStaffReminderModal(prev => ({
+      ...prev,
+      customMessage: newMsg,
+    }));
+  };
+
+  const handleSendStaffWhatsapp = () => {
+    if (!staffReminderModal.targetPhone.trim()) {
+      alert(`Please enter a valid WhatsApp number for ${staffReminderModal.targetName}.`);
+      return;
+    }
+    const cleanPhone = getCleanWhatsAppPhone(staffReminderModal.targetPhone);
+    if (!cleanPhone || cleanPhone.length < 10) {
+      alert('Please enter a valid 10-digit mobile number with country code (e.g. 919876543210).');
+      return;
+    }
+
+    const text = staffReminderModal.customMessage.trim();
+    if (!text) {
+      alert('Please enter a message before sending.');
+      return;
+    }
+
+    const whatsappUrl = `https://api.whatsapp.com/send?phone=${cleanPhone}&text=${encodeURIComponent(text)}`;
+    window.open(whatsappUrl, '_blank');
+    setStaffReminderModal(prev => ({ ...prev, isOpen: false }));
   };
 
   // WhatsApp share PDF document via dual-strategy
@@ -2186,7 +2291,20 @@ export const Leads: React.FC = () => {
             {currentRole !== 'field_employee' && (
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 w-full md:w-auto">
                 <div className="space-y-1">
-                  <label className="block text-[11px] font-bold text-slate-500 uppercase tracking-wider">💼 Sales Person</label>
+                  <div className="flex items-center justify-between">
+                    <label className="block text-[11px] font-bold text-slate-500 uppercase tracking-wider">💼 Sales Person</label>
+                    {(selectedLead.assignedSalesPersonId || selectedLead.assignedEmployeeId) && (
+                      <button
+                        type="button"
+                        onClick={(e) => handleOpenStaffWhatsappReminder(selectedLead, 'sales', e)}
+                        className="text-[10px] text-emerald-700 hover:text-emerald-800 font-bold inline-flex items-center gap-1 cursor-pointer bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-200 hover:bg-emerald-100 transition-colors"
+                        title="Send WhatsApp update reminder to Sales Person"
+                      >
+                        <MessageSquare className="w-3 h-3" />
+                        <span>WhatsApp</span>
+                      </button>
+                    )}
+                  </div>
                   <select
                     value={selectedLead.assignedSalesPersonId || selectedLead.assignedEmployeeId || ''}
                     onChange={(e) => handleAssignSalesPerson(e.target.value)}
@@ -2199,7 +2317,20 @@ export const Leads: React.FC = () => {
                   </select>
                 </div>
                 <div className="space-y-1">
-                  <label className="block text-[11px] font-bold text-slate-500 uppercase tracking-wider">🏢 Administration Person</label>
+                  <div className="flex items-center justify-between">
+                    <label className="block text-[11px] font-bold text-slate-500 uppercase tracking-wider">🏢 Administration Person</label>
+                    {selectedLead.assignedAdminId && (
+                      <button
+                        type="button"
+                        onClick={(e) => handleOpenStaffWhatsappReminder(selectedLead, 'admin', e)}
+                        className="text-[10px] text-indigo-700 hover:text-indigo-800 font-bold inline-flex items-center gap-1 cursor-pointer bg-indigo-50 px-1.5 py-0.5 rounded border border-indigo-200 hover:bg-indigo-100 transition-colors"
+                        title="Send WhatsApp update reminder to Admin Person"
+                      >
+                        <MessageSquare className="w-3 h-3" />
+                        <span>WhatsApp</span>
+                      </button>
+                    )}
+                  </div>
                   <select
                     value={selectedLead.assignedAdminId || ''}
                     onChange={(e) => handleAssignAdmin(e.target.value)}
@@ -5317,12 +5448,61 @@ export const Leads: React.FC = () => {
 
                         <div className="mt-4 pt-4 border-t border-slate-100 flex flex-wrap justify-between items-center text-[10px] text-slate-500 font-bold gap-2">
                           <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-                            <span className="inline-flex items-center gap-1 text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-100">
-                              💼 Sales: {employeeNames[lead.assignedSalesPersonId || lead.assignedEmployeeId || ''] || 'Unassigned'}
-                            </span>
-                            <span className="inline-flex items-center gap-1 text-indigo-700 bg-indigo-50 px-2 py-0.5 rounded border border-indigo-100">
-                              🏢 Admin: {employeeNames[lead.assignedAdminId || ''] || 'Unassigned'}
-                            </span>
+                            {/* Sales Person Pill / WhatsApp Trigger */}
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                const hasSales = Boolean(lead.assignedSalesPersonId || lead.assignedEmployeeId);
+                                if (!hasSales) {
+                                  alert('No Sales person assigned to this lead yet.');
+                                  return;
+                                }
+                                handleOpenStaffWhatsappReminder(lead, 'sales', e);
+                              }}
+                              title="Click to send WhatsApp reminder / message to Sales Person"
+                              className={`inline-flex items-center gap-1 text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded border transition-all cursor-pointer ${
+                                (lead.assignedSalesPersonId || lead.assignedEmployeeId)
+                                  ? 'border-emerald-200 hover:bg-emerald-100 hover:border-emerald-300 hover:shadow-xs active:scale-95'
+                                  : 'border-emerald-100 opacity-80'
+                              }`}
+                            >
+                              <span>💼 Sales:</span>
+                              <span className="font-extrabold underline decoration-dotted underline-offset-2">
+                                {employeeNames[lead.assignedSalesPersonId || lead.assignedEmployeeId || ''] || 'Unassigned'}
+                              </span>
+                              {(lead.assignedSalesPersonId || lead.assignedEmployeeId) && (
+                                <MessageSquare className="w-2.5 h-2.5 ml-0.5 text-emerald-600" />
+                              )}
+                            </button>
+
+                            {/* Admin Person Pill / WhatsApp Trigger */}
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                const hasAdmin = Boolean(lead.assignedAdminId);
+                                if (!hasAdmin) {
+                                  alert('No Admin person assigned to this lead yet.');
+                                  return;
+                                }
+                                handleOpenStaffWhatsappReminder(lead, 'admin', e);
+                              }}
+                              title="Click to send WhatsApp reminder / message to Admin Person"
+                              className={`inline-flex items-center gap-1 text-indigo-700 bg-indigo-50 px-2 py-0.5 rounded border transition-all cursor-pointer ${
+                                lead.assignedAdminId
+                                  ? 'border-indigo-200 hover:bg-indigo-100 hover:border-indigo-300 hover:shadow-xs active:scale-95'
+                                  : 'border-indigo-100 opacity-80'
+                              }`}
+                            >
+                              <span>🏢 Admin:</span>
+                              <span className="font-extrabold underline decoration-dotted underline-offset-2">
+                                {employeeNames[lead.assignedAdminId || ''] || 'Unassigned'}
+                              </span>
+                              {lead.assignedAdminId && (
+                                <MessageSquare className="w-2.5 h-2.5 ml-0.5 text-indigo-600" />
+                              )}
+                            </button>
                           </div>
                           <span className="shrink-0 text-slate-400">{dayjs(lead.createdAt).format('DD MMM YYYY')}</span>
                         </div>
@@ -6512,6 +6692,183 @@ export const Leads: React.FC = () => {
                 </span>
               </div>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* Staff WhatsApp Reminder Modal (Sales Person / Admin Person) */}
+      {staffReminderModal.isOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 backdrop-blur-xs p-3 sm:p-4 animate-in fade-in duration-200">
+          <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-lg overflow-hidden flex flex-col max-h-[92vh] animate-scale-in">
+            {/* Header */}
+            <div className={`px-5 py-4 text-white flex items-center justify-between shrink-0 ${
+              staffReminderModal.roleType === 'sales'
+                ? 'bg-gradient-to-r from-emerald-700 to-teal-800'
+                : 'bg-gradient-to-r from-indigo-700 to-violet-800'
+            }`}>
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-white/15 flex items-center justify-center border border-white/20 shadow-xs">
+                  <MessageSquare className="w-5 h-5 text-white" />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <h3 className="text-base font-black text-white">WhatsApp Reminder</h3>
+                    <span className="px-2 py-0.5 rounded-full text-[10px] font-extrabold uppercase tracking-wide bg-white/20 text-white border border-white/20">
+                      {staffReminderModal.roleType === 'sales' ? '💼 Sales Person' : '🏢 Admin Person'}
+                    </span>
+                  </div>
+                  <p className="text-xs text-white/90 font-medium">
+                    Send updates & instructions directly to {staffReminderModal.targetName}
+                  </p>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setStaffReminderModal(prev => ({ ...prev, isOpen: false }))}
+                className="p-1.5 text-white/80 hover:text-white hover:bg-white/10 rounded-lg transition-colors cursor-pointer"
+                title="Close"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Content Body */}
+            <div className="p-5 space-y-4 overflow-y-auto flex-1 text-xs">
+              {/* Recipient Details & Phone Input */}
+              <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 space-y-2">
+                <div className="flex items-center justify-between text-[11px] font-bold text-slate-500 uppercase tracking-wider">
+                  <span>Recipient Staff Member</span>
+                  <span className="text-slate-400">WhatsApp Mobile</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <div className="flex-1 font-extrabold text-slate-800 text-sm flex items-center gap-2">
+                    <span>{staffReminderModal.targetName}</span>
+                    <span className={`text-[10px] font-bold px-2 py-0.5 rounded ${
+                      staffReminderModal.roleType === 'sales'
+                        ? 'bg-emerald-100 text-emerald-800'
+                        : 'bg-indigo-100 text-indigo-800'
+                    }`}>
+                      {staffReminderModal.roleType === 'sales' ? 'Sales' : 'Admin'}
+                    </span>
+                  </div>
+                  <div className="w-44">
+                    <input
+                      type="tel"
+                      value={staffReminderModal.targetPhone}
+                      onChange={(e) => setStaffReminderModal(prev => ({ ...prev, targetPhone: e.target.value }))}
+                      placeholder="e.g. 919876543210"
+                      className="w-full bg-white border border-slate-300 rounded-lg px-2.5 py-1.5 text-xs font-mono font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                    />
+                  </div>
+                </div>
+                {!staffReminderModal.targetPhone && (
+                  <p className="text-[11px] text-amber-600 font-semibold flex items-center gap-1">
+                    <AlertCircle className="w-3 h-3 shrink-0" />
+                    <span>Phone number not set in profile. Please enter staff WhatsApp number above.</span>
+                  </p>
+                )}
+              </div>
+
+              {/* Lead Reference Summary */}
+              {staffReminderModal.lead && (
+                <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 flex items-start justify-between gap-3">
+                  <div className="space-y-1">
+                    <div className="flex items-center gap-2">
+                      <span className="font-black text-slate-900 text-xs">{staffReminderModal.lead.name}</span>
+                      <span className="font-mono text-slate-500 font-bold text-[11px]">{staffReminderModal.lead.phoneNumber}</span>
+                    </div>
+                    <p className="text-slate-600 text-[11px] leading-tight line-clamp-1">
+                      <span className="font-bold">Req:</span> {formatCleanLeadRequirement(staffReminderModal.lead.requirement)}
+                    </p>
+                  </div>
+                  <span className="shrink-0 text-[10px] font-black uppercase px-2 py-0.5 rounded bg-white text-slate-700 border border-slate-200 shadow-2xs">
+                    {staffReminderModal.lead.status ? staffReminderModal.lead.status.replace(/_/g, ' ') : 'NEW'}
+                  </span>
+                </div>
+              )}
+
+              {/* Quick Template Chips */}
+              <div>
+                <label className="block text-[11px] font-bold text-slate-500 uppercase tracking-wider mb-2">
+                  ⚡ Quick Message Templates
+                </label>
+                <div className="flex flex-wrap gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => handleApplyStaffReminderTemplate('status_update')}
+                    className="px-2.5 py-1 bg-slate-100 hover:bg-emerald-100 hover:text-emerald-800 text-slate-700 font-bold rounded-lg border border-slate-200 transition-colors cursor-pointer text-[11px]"
+                  >
+                    📋 Status Update
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleApplyStaffReminderTemplate('urgent')}
+                    className="px-2.5 py-1 bg-rose-50 hover:bg-rose-100 text-rose-700 font-bold rounded-lg border border-rose-200 transition-colors cursor-pointer text-[11px]"
+                  >
+                    🚨 Urgent Follow-up
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleApplyStaffReminderTemplate('payment')}
+                    className="px-2.5 py-1 bg-amber-50 hover:bg-amber-100 text-amber-800 font-bold rounded-lg border border-amber-200 transition-colors cursor-pointer text-[11px]"
+                  >
+                    💰 Payment / Quote
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleApplyStaffReminderTemplate('site_visit')}
+                    className="px-2.5 py-1 bg-blue-50 hover:bg-blue-100 text-blue-700 font-bold rounded-lg border border-blue-200 transition-colors cursor-pointer text-[11px]"
+                  >
+                    ☀️ Site Survey
+                  </button>
+                </div>
+              </div>
+
+              {/* Message Input Box */}
+              <div>
+                <div className="flex items-center justify-between mb-1.5">
+                  <label className="text-[11px] font-bold text-slate-700 uppercase tracking-wider">
+                    Message Content / Instructions
+                  </label>
+                  <span className="text-[10px] text-slate-400 font-medium">
+                    {staffReminderModal.customMessage.length} characters
+                  </span>
+                </div>
+                <textarea
+                  rows={6}
+                  value={staffReminderModal.customMessage}
+                  onChange={(e) => setStaffReminderModal(prev => ({ ...prev, customMessage: e.target.value }))}
+                  placeholder="Type message, inquiry or instructions for this staff member..."
+                  className="w-full border border-slate-300 rounded-xl p-3 bg-white text-slate-800 font-medium focus:outline-none focus:ring-2 focus:ring-emerald-500 transition-all text-xs leading-relaxed"
+                />
+              </div>
+            </div>
+
+            {/* Footer Actions */}
+            <div className="p-4 bg-slate-50 border-t border-slate-200 flex items-center justify-between shrink-0">
+              <button
+                type="button"
+                onClick={() => setStaffReminderModal(prev => ({ ...prev, isOpen: false }))}
+                className="px-4 py-2 text-slate-600 hover:text-slate-800 font-bold text-xs rounded-xl hover:bg-slate-200/60 transition-colors cursor-pointer"
+              >
+                Cancel
+              </button>
+
+              <button
+                type="button"
+                onClick={handleSendStaffWhatsapp}
+                className={`px-5 py-2.5 active:scale-95 text-white font-extrabold text-xs rounded-xl shadow-md inline-flex items-center gap-2 cursor-pointer transition-all ${
+                  staffReminderModal.roleType === 'sales'
+                    ? 'bg-emerald-600 hover:bg-emerald-700 shadow-emerald-600/20'
+                    : 'bg-indigo-600 hover:bg-indigo-700 shadow-indigo-600/20'
+                }`}
+              >
+                <MessageSquare className="w-4 h-4" />
+                <span>Open in WhatsApp</span>
+                <Send className="w-3.5 h-3.5 ml-0.5 opacity-80" />
+              </button>
+            </div>
           </div>
         </div>
       )}

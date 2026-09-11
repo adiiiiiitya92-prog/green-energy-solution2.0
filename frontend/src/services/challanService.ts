@@ -10,7 +10,7 @@ let activeChallanSyncPromise: Promise<void> | null = null;
 
 export const challanService = {
   async getChallans(forceFresh: boolean = false): Promise<Challan[]> {
-    const deletedIds = await getDeletedRecordIdsSet();
+    const deletedIds = await getDeletedRecordIdsSet(forceFresh);
     const localChallans = await db.challans.orderBy('createdAt').reverse().toArray();
     const validLocal = localChallans.filter(c => !deletedIds.has(c.id) && (!c.leadId || !deletedIds.has(c.leadId)));
 
@@ -20,9 +20,22 @@ export const challanService = {
         try {
           lastChallanRemoteSync = Date.now();
           const remoteChallans = await fetchCollectionFromFirestore<Challan>('challans', 15000);
-          if (remoteChallans && remoteChallans.length > 0) {
-            const freshDeleted = await getDeletedRecordIdsSet();
+          if (Array.isArray(remoteChallans)) {
+            const freshDeleted = await getDeletedRecordIdsSet(true);
             const validRemote = remoteChallans.filter(c => !freshDeleted.has(c.id) && (!c.leadId || !freshDeleted.has(c.leadId)));
+            const validRemoteIds = new Set(validRemote.map(c => c.id));
+
+            // Clean up stale deleted local challans that are missing from remote
+            const currentLocal = await db.challans.toArray().catch(() => []);
+            for (const lc of currentLocal) {
+              if (!validRemoteIds.has(lc.id) || freshDeleted.has(lc.id) || (lc.leadId && freshDeleted.has(lc.leadId))) {
+                const age = Date.now() - new Date(lc.createdAt || 0).getTime();
+                if (age > 2 * 60 * 1000 || freshDeleted.has(lc.id) || (lc.leadId && freshDeleted.has(lc.leadId))) {
+                  await db.challans.delete(lc.id).catch(() => {});
+                }
+              }
+            }
+
             if (validRemote.length > 0) {
               await db.challans.bulkPut(validRemote);
             }

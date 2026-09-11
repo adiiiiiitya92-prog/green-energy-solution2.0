@@ -719,12 +719,8 @@ export const Leads: React.FC = () => {
         quotationService.getAllQuotations().catch(() => []),
         orderService.getAllInstallationEvidenceLeadIds(true).catch(() => new Set<string>())
       ]);
-      if (evidenceIds && evidenceIds.size > 0) {
-        setInstallationEvidenceLeadIds(prev => {
-          const union = new Set(prev);
-          evidenceIds.forEach(id => union.add(id));
-          return union;
-        });
+      if (evidenceIds) {
+        setInstallationEvidenceLeadIds(evidenceIds);
       }
 
       let freshQMap = leadQuotationsMap;

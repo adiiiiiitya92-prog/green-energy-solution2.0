@@ -105,13 +105,7 @@ export const Dashboard: React.FC = () => {
       if (evidenceLeadIdsRes.status === 'fulfilled' && evidenceLeadIdsRes.value instanceof Set) {
         evidenceLeadIdsRes.value.forEach(id => evidenceSet.add(id));
       }
-      if (evidenceSet.size > 0) {
-        setInstallationEvidenceLeadIds(prev => {
-          const union = new Set(prev);
-          evidenceSet.forEach(id => union.add(id));
-          return union;
-        });
-      }
+      setInstallationEvidenceLeadIds(evidenceSet);
 
       if (empsRes.status === 'fulfilled') setEmployees(empsRes.value || []);
       if (visitsRes.status === 'fulfilled') setVisitsCount((visitsRes.value || []).length);
@@ -221,7 +215,9 @@ export const Dashboard: React.FC = () => {
 
     const quoteByLeadId = new Map<string, Quotation>();
     sourceQuotes.forEach(q => {
-      if (q.leadId && !quoteByLeadId.has(q.leadId)) quoteByLeadId.set(q.leadId, q);
+      if (q.leadId && (!quoteByLeadId.has(q.leadId) || (q.items && q.items.length > 0))) {
+        quoteByLeadId.set(q.leadId, q);
+      }
     });
 
     sourceLeads.forEach(l => {

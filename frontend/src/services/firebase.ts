@@ -848,7 +848,12 @@ export async function syncAllLocalDataToFirestore(force: boolean = false): Promi
         }
         const remoteLead = remoteLeadMap.get(l.id);
         if (!remoteLead) {
-          await saveRecordToFirestore('leads', l.id, l);
+          const age = Date.now() - new Date(l.createdAt || 0).getTime();
+          if (age > 3 * 60 * 1000) {
+            await db.leads.delete(l.id);
+          } else {
+            await saveRecordToFirestore('leads', l.id, l);
+          }
         } else if (l.updatedAt && remoteLead.updatedAt && new Date(l.updatedAt).getTime() > new Date(remoteLead.updatedAt).getTime()) {
           await saveRecordToFirestore('leads', l.id, l);
         }
@@ -891,7 +896,12 @@ export async function syncAllLocalDataToFirestore(force: boolean = false): Promi
         }
         const remoteQuote = remoteQuoteMap.get(q.id);
         if (!remoteQuote) {
-          await saveRecordToFirestore('quotations', q.id, q);
+          const age = Date.now() - new Date(q.createdAt || 0).getTime();
+          if (age > 3 * 60 * 1000) {
+            await db.quotations.delete(q.id);
+          } else {
+            await saveRecordToFirestore('quotations', q.id, q);
+          }
         } else if (q.updatedAt && remoteQuote.updatedAt && new Date(q.updatedAt).getTime() > new Date(remoteQuote.updatedAt).getTime()) {
           await saveRecordToFirestore('quotations', q.id, q);
         }
@@ -930,7 +940,12 @@ export async function syncAllLocalDataToFirestore(force: boolean = false): Promi
         }
         const remoteOc = remoteOcMap.get(oc.id);
         if (!remoteOc) {
-          await saveRecordToFirestore('orderConfirmations', oc.id, oc);
+          const age = Date.now() - new Date(oc.createdAt || 0).getTime();
+          if (age > 3 * 60 * 1000) {
+            await db.orderConfirmations.delete(oc.id);
+          } else {
+            await saveRecordToFirestore('orderConfirmations', oc.id, oc);
+          }
         } else {
           const localPayments = oc.payments || [];
           const remotePayments = remoteOc.payments || [];
@@ -981,7 +996,12 @@ export async function syncAllLocalDataToFirestore(force: boolean = false): Promi
           continue;
         }
         if (!remoteChallanMap.has(ch.id)) {
-          await saveRecordToFirestore('challans', ch.id, ch);
+          const age = Date.now() - new Date(ch.createdAt || 0).getTime();
+          if (age > 3 * 60 * 1000) {
+            await db.challans.delete(ch.id);
+          } else {
+            await saveRecordToFirestore('challans', ch.id, ch);
+          }
         }
       }
 

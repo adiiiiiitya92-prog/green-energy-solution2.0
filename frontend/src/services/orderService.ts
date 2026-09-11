@@ -45,8 +45,8 @@ export const orderService = {
     return oc;
   },
 
-  async getAllOrderConfirmations(): Promise<OrderConfirmation[]> {
-    const deletedIds = await getDeletedRecordIdsSet();
+  async getAllOrderConfirmations(forceFresh: boolean = false): Promise<OrderConfirmation[]> {
+    const deletedIds = await getDeletedRecordIdsSet(forceFresh);
     const all = await db.orderConfirmations.toArray();
     const validLocal = all.filter(o => !deletedIds.has(o.id) && !deletedIds.has(o.leadId));
 
@@ -57,8 +57,23 @@ export const orderService = {
           lastOrderRemoteSync = Date.now();
           const remoteOcs = await fetchCollectionFromFirestore<OrderConfirmation>('orderConfirmations', 15000);
           if (Array.isArray(remoteOcs) && remoteOcs.length > 0) {
-            const freshDeleted = await getDeletedRecordIdsSet();
+            const freshDeleted = await getDeletedRecordIdsSet(true);
             const validRemote = remoteOcs.filter(o => !freshDeleted.has(o.id) && !freshDeleted.has(o.leadId));
+            const remoteIds = new Set(validRemote.map(o => o.id));
+
+            // Clean up stale deleted local order confirmations missing from remote
+            const currentLocal = await db.orderConfirmations.toArray();
+            for (const loc of currentLocal) {
+              if (!remoteIds.has(loc.id) || freshDeleted.has(loc.id) || (loc.leadId && freshDeleted.has(loc.leadId))) {
+                const age = Date.now() - new Date(loc.createdAt || 0).getTime();
+                if (age > 2 * 60 * 1000 || freshDeleted.has(loc.id) || (loc.leadId && freshDeleted.has(loc.leadId))) {
+                  await db.orderConfirmations.delete(loc.id).catch(() => {});
+                } else if (!freshDeleted.has(loc.id) && !freshDeleted.has(loc.leadId)) {
+                  // Only push freshly created local drafts (< 2 min old)
+                  saveRecordToFirestore('orderConfirmations', loc.id, loc).catch(() => {});
+                }
+              }
+            }
             
             for (const rOc of validRemote) {
               const local = await db.orderConfirmations.get(rOc.id);
@@ -79,15 +94,6 @@ export const orderService = {
                 }
               }
             }
-
-            // Push any active local order confirmations missing from remote to Firestore
-            const currentLocal = await db.orderConfirmations.toArray();
-            const remoteIds = new Set(validRemote.map(o => o.id));
-            for (const loc of currentLocal) {
-              if (loc.id && !freshDeleted.has(loc.id) && !remoteIds.has(loc.id)) {
-                saveRecordToFirestore('orderConfirmations', loc.id, loc).catch(() => {});
-              }
-            }
           }
         } catch (err) {
           console.warn("Background orderConfirmations sync note:", err);
@@ -98,7 +104,7 @@ export const orderService = {
       return activeOrderSyncPromise;
     };
 
-    if (validLocal.length === 0) {
+    if (validLocal.length === 0 || forceFresh) {
       await syncRemote();
       const refreshed = await db.orderConfirmations.toArray();
       const freshDeleted = await getDeletedRecordIdsSet();
@@ -531,7 +537,7 @@ export const orderService = {
   },
 
   async getAllInstallationEvidenceLeadIds(forceFresh: boolean = false): Promise<Set<string>> {
-    const deletedIds = await getDeletedRecordIdsSet();
+    const deletedIds = await getDeletedRecordIdsSet(forceFresh);
     const [photos, releases, challans] = await Promise.all([
       db.installationPhotos.toArray().catch(() => []),
       db.releaseDocuments.toArray().catch(() => []),
@@ -547,44 +553,77 @@ export const orderService = {
       activeEvidenceSyncPromise = (async () => {
         try {
           lastEvidenceRemoteSync = Date.now();
-          const freshDeleted = await getDeletedRecordIdsSet();
+          const freshDeleted = await getDeletedRecordIdsSet(true);
           const [remotePhotos, remoteReleases, remoteChallans] = await Promise.all([
             fetchCollectionFromFirestore<InstallationPhoto>('installationPhotos', 10000).catch(() => []),
             fetchCollectionFromFirestore<ReleaseDocument>('releaseDocuments', 10000).catch(() => []),
             fetchCollectionFromFirestore<any>('challans', 10000).catch(() => [])
           ]);
-          let hasNew = false;
-          if (Array.isArray(remotePhotos) && remotePhotos.length > 0) {
-            const valid = remotePhotos.filter(p => p.id && !freshDeleted.has(p.id) && (!p.leadId || !freshDeleted.has(p.leadId)));
-            await db.installationPhotos.bulkPut(valid).catch(() => {});
-            valid.forEach(p => {
-              if (p.leadId && !leadIds.has(p.leadId)) {
-                leadIds.add(p.leadId);
-                hasNew = true;
+
+          const freshLeadIds = new Set<string>();
+
+          // 1. Installation Photos reconciliation
+          if (Array.isArray(remotePhotos)) {
+            const valid = remotePhotos.filter(p => p && p.id && !freshDeleted.has(p.id) && (!p.leadId || !freshDeleted.has(p.leadId)));
+            const validIds = new Set(valid.map(p => p.id));
+            const currentLocal = await db.installationPhotos.toArray().catch(() => []);
+            for (const lp of currentLocal) {
+              if (!validIds.has(lp.id) || freshDeleted.has(lp.id) || (lp.leadId && freshDeleted.has(lp.leadId))) {
+                const age = Date.now() - new Date(lp.uploadedAt || lp.createdAt || 0).getTime();
+                if (age > 2 * 60 * 1000 || freshDeleted.has(lp.id) || (lp.leadId && freshDeleted.has(lp.leadId))) {
+                  await db.installationPhotos.delete(lp.id).catch(() => {});
+                }
               }
-            });
+            }
+            if (valid.length > 0) {
+              await db.installationPhotos.bulkPut(valid).catch(() => {});
+            }
+            valid.forEach(p => { if (p.leadId) freshLeadIds.add(p.leadId); });
           }
-          if (Array.isArray(remoteReleases) && remoteReleases.length > 0) {
-            const valid = remoteReleases.filter(r => r.id && !freshDeleted.has(r.id) && (!r.leadId || !freshDeleted.has(r.leadId)));
-            await db.releaseDocuments.bulkPut(valid).catch(() => {});
-            valid.forEach(r => {
-              if (r.leadId && !leadIds.has(r.leadId)) {
-                leadIds.add(r.leadId);
-                hasNew = true;
+
+          // 2. Release Documents reconciliation
+          if (Array.isArray(remoteReleases)) {
+            const valid = remoteReleases.filter(r => r && r.id && !freshDeleted.has(r.id) && (!r.leadId || !freshDeleted.has(r.leadId)));
+            const validIds = new Set(valid.map(r => r.id));
+            const currentLocal = await db.releaseDocuments.toArray().catch(() => []);
+            for (const lr of currentLocal) {
+              if (!validIds.has(lr.id) || freshDeleted.has(lr.id) || (lr.leadId && freshDeleted.has(lr.leadId))) {
+                const age = Date.now() - new Date(lr.uploadedAt || lr.createdAt || 0).getTime();
+                if (age > 2 * 60 * 1000 || freshDeleted.has(lr.id) || (lr.leadId && freshDeleted.has(lr.leadId))) {
+                  await db.releaseDocuments.delete(lr.id).catch(() => {});
+                }
               }
-            });
+            }
+            if (valid.length > 0) {
+              await db.releaseDocuments.bulkPut(valid).catch(() => {});
+            }
+            valid.forEach(r => { if (r.leadId) freshLeadIds.add(r.leadId); });
           }
-          if (Array.isArray(remoteChallans) && remoteChallans.length > 0) {
-            const valid = remoteChallans.filter(c => c.id && !freshDeleted.has(c.id) && (!c.leadId || !freshDeleted.has(c.leadId)));
-            await db.challans.bulkPut(valid).catch(() => {});
-            valid.forEach(c => {
-              if (c.leadId && !leadIds.has(c.leadId)) {
-                leadIds.add(c.leadId);
-                hasNew = true;
+
+          // 3. Challans reconciliation
+          if (Array.isArray(remoteChallans)) {
+            const valid = remoteChallans.filter(c => c && c.id && !freshDeleted.has(c.id) && (!c.leadId || !freshDeleted.has(c.leadId)));
+            const validIds = new Set(valid.map(c => c.id));
+            const currentLocal = await db.challans.toArray().catch(() => []);
+            for (const lc of currentLocal) {
+              if (!validIds.has(lc.id) || freshDeleted.has(lc.id) || (lc.leadId && freshDeleted.has(lc.leadId))) {
+                const age = Date.now() - new Date(lc.createdAt || 0).getTime();
+                if (age > 2 * 60 * 1000 || freshDeleted.has(lc.id) || (lc.leadId && freshDeleted.has(lc.leadId))) {
+                  await db.challans.delete(lc.id).catch(() => {});
+                }
               }
-            });
+            }
+            if (valid.length > 0) {
+              await db.challans.bulkPut(valid).catch(() => {});
+            }
+            valid.forEach(c => { if (c.leadId) freshLeadIds.add(c.leadId); });
           }
-          if (hasNew && typeof window !== 'undefined') {
+
+          const hasDifference = freshLeadIds.size !== leadIds.size || Array.from(freshLeadIds).some(id => !leadIds.has(id));
+          leadIds.clear();
+          freshLeadIds.forEach(id => leadIds.add(id));
+
+          if (hasDifference && typeof window !== 'undefined') {
             window.dispatchEvent(new CustomEvent('app-realtime-update'));
           }
         } catch (err) {

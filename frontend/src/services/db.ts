@@ -157,6 +157,66 @@ export class SolarCRMDatabase extends Dexie {
 
 export const db = new SolarCRMDatabase();
 
+let lastDeletedSyncTime = 0;
+const DELETED_SYNC_INTERVAL = 10 * 1000; // 10 seconds throttle
+
+export async function syncDeletedRecordsFromFirestore(force: boolean = false): Promise<Set<string>> {
+  const now = Date.now();
+  if (!force && now - lastDeletedSyncTime < DELETED_SYNC_INTERVAL) {
+    try {
+      const list = await db.deletedRecords.toArray();
+      return new Set(list.map(item => item.id));
+    } catch (_) {
+      return new Set();
+    }
+  }
+  lastDeletedSyncTime = now;
+  try {
+    const { fetchCollectionFromFirestore } = await import('./firebase');
+    const remoteDeleted = await fetchCollectionFromFirestore<DeletedRecord>('deletedRecords', 10000);
+    if (Array.isArray(remoteDeleted) && remoteDeleted.length > 0) {
+      await db.deletedRecords.bulkPut(remoteDeleted);
+
+      // Immediately purge deleted entities from local Dexie tables
+      for (const rd of remoteDeleted) {
+        if (!rd || !rd.id) continue;
+        const col = rd.collectionName || 'leads';
+        if (col === 'leads') {
+          await db.leads.delete(rd.id).catch(() => {});
+          await db.quotations.where({ leadId: rd.id }).delete().catch(() => {});
+          await db.orderConfirmations.where({ leadId: rd.id }).delete().catch(() => {});
+          await db.clientDocuments.where({ leadId: rd.id }).delete().catch(() => {});
+          await db.clientRegistrations.where({ leadId: rd.id }).delete().catch(() => {});
+          await db.installationPhotos.where({ leadId: rd.id }).delete().catch(() => {});
+          await db.releaseDocuments.where({ leadId: rd.id }).delete().catch(() => {});
+          await db.challans.where({ leadId: rd.id }).delete().catch(() => {});
+        } else if (col === 'challans') {
+          await db.challans.delete(rd.id).catch(() => {});
+        } else if (col === 'quotations') {
+          await db.quotations.delete(rd.id).catch(() => {});
+        } else if (col === 'orderConfirmations') {
+          await db.orderConfirmations.delete(rd.id).catch(() => {});
+        } else if (col === 'installationPhotos') {
+          await db.installationPhotos.delete(rd.id).catch(() => {});
+        } else if (col === 'releaseDocuments') {
+          await db.releaseDocuments.delete(rd.id).catch(() => {});
+        } else if (col === 'products') {
+          await db.products.delete(rd.id).catch(() => {});
+        }
+      }
+    }
+  } catch (err) {
+    console.warn("DeletedRecords remote sync note:", err);
+  }
+
+  try {
+    const list = await db.deletedRecords.toArray();
+    return new Set(list.map(item => item.id));
+  } catch (_) {
+    return new Set();
+  }
+}
+
 export async function markRecordAsDeleted(id: string, collectionName: string): Promise<void> {
   if (!id) return;
   const deletedObj: DeletedRecord = {
@@ -175,7 +235,10 @@ export async function markRecordAsDeleted(id: string, collectionName: string): P
   } catch (_) {}
 }
 
-export async function getDeletedRecordIdsSet(): Promise<Set<string>> {
+export async function getDeletedRecordIdsSet(forceSync: boolean = false): Promise<Set<string>> {
+  if (forceSync || Date.now() - lastDeletedSyncTime > DELETED_SYNC_INTERVAL) {
+    return syncDeletedRecordsFromFirestore(forceSync);
+  }
   try {
     const list = await db.deletedRecords.toArray();
     return new Set(list.map(item => item.id));

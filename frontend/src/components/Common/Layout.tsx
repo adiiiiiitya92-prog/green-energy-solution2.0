@@ -90,13 +90,13 @@ export const Layout: React.FC<LayoutProps> = ({ children }) => {
     {
       name: 'Product Catalog',
       path: '/products',
-      roles: ['super_admin', 'admin', 'inventory_manager'],
+      roles: ['super_admin', 'inventory_manager'],
       icon: FileText
     },
     {
       name: 'Delivery Challans',
       path: '/challans',
-      roles: ['super_admin', 'admin', 'inventory_manager'],
+      roles: ['super_admin', 'inventory_manager'],
       icon: Truck
     },
     {
@@ -108,19 +108,19 @@ export const Layout: React.FC<LayoutProps> = ({ children }) => {
     {
       name: 'Field Visits',
       path: '/visits',
-      roles: ['super_admin', 'admin', 'field_employee', 'dealer'],
+      roles: ['super_admin', 'field_employee', 'dealer'],
       icon: MapPin
     },
     {
       name: 'Shadow Analysis',
       path: '/shadow-analysis',
-      roles: ['super_admin', 'admin'],
+      roles: ['super_admin'],
       icon: Sun
     },
     {
       name: 'Employee Panel',
       path: '/employees',
-      roles: ['super_admin', 'admin'],
+      roles: ['super_admin'],
       icon: Users
     },
     {

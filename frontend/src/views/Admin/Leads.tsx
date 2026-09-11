@@ -917,27 +917,6 @@ export const Leads: React.FC = () => {
         } catch (e) {
           console.warn("OC sync note:", e);
         }
-      } else if (!oc) {
-        const ocId = 'oc_' + Math.random().toString(36).substring(2, 11);
-        const newOc: OrderConfirmation = {
-          id: ocId,
-          leadId: lead.id,
-          quotationId: q.id,
-          itemsConfirmed: q.items || [],
-          subtotal: latestQuoteTotal,
-          advanceAmount: 0,
-          paymentMode: 'transaction_id',
-          clientSignatureBlob: '',
-          payments: [],
-          createdBy: q.createdBy || 'Admin',
-          createdAt: new Date().toISOString()
-        };
-        try {
-          await orderService.createOrderConfirmation(newOc);
-          oc = newOc;
-        } catch (e) {
-          console.warn("Auto OC init note:", e);
-        }
       }
     } else {
       // STRICT RULE: No valid quotation saved => no booking items and no valid OC allowed
@@ -1334,8 +1313,8 @@ export const Leads: React.FC = () => {
 
   // 2. Booking order confirmation
   const handleConfirmOrder = async () => {
-    if (currentRole === 'field_employee') {
-      alert('⚠️ Access Restricted: Field employees are not authorized to collect or record payments.');
+    if (currentRole === 'field_employee' || currentRole === 'dealer' || currentUser?.role === 'dealer') {
+      alert('⚠️ Access Restricted: Dealers and field employees are not authorized to collect or record payments.');
       return;
     }
     if (!selectedLead) return;
@@ -1520,8 +1499,8 @@ export const Leads: React.FC = () => {
   // 2b. Handle subsequent payments (2nd, 3rd, 4th payment installments)
   const handleRecordSubsequentPayment = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (currentRole === 'field_employee') {
-      alert('⚠️ Access Restricted: Field employees are not authorized to collect or record payments.');
+    if (currentRole === 'field_employee' || currentRole === 'dealer' || currentUser?.role === 'dealer') {
+      alert('⚠️ Access Restricted: Dealers and field employees are not authorized to collect or record payments.');
       return;
     }
     if (!selectedLead || !existingOc || !hasAdminQuotation) {
@@ -2270,7 +2249,7 @@ export const Leads: React.FC = () => {
                 <span>Order & KYC Docs</span>
                 {hasAdminQuotation && existingOc && (
                   <span className="px-1.5 py-0.5 rounded-full bg-emerald-100 text-emerald-800 text-[9px] font-black uppercase tracking-wider">
-                    {currentRole === 'field_employee' ? 'Payment Status' : 'Payments Active'}
+                    {currentRole === 'field_employee' || currentRole === 'dealer' || currentUser?.role === 'dealer' ? 'Payment Status' : 'Payments Active'}
                   </span>
                 )}
               </button>
@@ -2401,11 +2380,11 @@ export const Leads: React.FC = () => {
                       <div>
                         <h3 className="text-sm font-bold text-slate-800 uppercase tracking-wider flex items-center gap-2">
                           <Wallet className="w-4 h-4 text-violet-600" />
-                          <span>{currentRole === 'field_employee' ? 'Order Details & Payment Status' : 'Book Order & Installment Payment Management'}</span>
+                          <span>{currentRole === 'field_employee' || currentRole === 'dealer' || currentUser?.role === 'dealer' ? 'Order Details & Payment Status' : 'Book Order & Installment Payment Management'}</span>
                         </h3>
                         <p className="text-[10px] text-slate-400 font-medium mt-0.5">
-                          {currentRole === 'field_employee'
-                            ? 'View installment payment history, remaining balance, and receipts (Collection restricted for field employees).'
+                          {currentRole === 'field_employee' || currentRole === 'dealer' || currentUser?.role === 'dealer'
+                            ? 'View installment payment history, remaining balance, and receipts (Collection restricted for field employees and dealers).'
                             : 'Track 1st advance deposits, 2nd & 3rd installments, remaining balances, and receipts.'}
                         </p>
                       </div>
@@ -2745,7 +2724,7 @@ export const Leads: React.FC = () => {
 
                         {/* Add Subsequent Payment Form (Only when remaining balance > 0) */}
                         {remainingBalance > 0 ? (
-                          currentRole === 'field_employee' ? (
+                          currentRole === 'field_employee' || currentRole === 'dealer' || currentUser?.role === 'dealer' ? (
                             <div className="bg-amber-50/80 border border-amber-200 rounded-xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-2xs">
                               <div className="flex items-center gap-3">
                                 <div className="w-9 h-9 rounded-xl bg-amber-100 border border-amber-300 text-amber-800 flex items-center justify-center font-black shrink-0">
@@ -2756,7 +2735,7 @@ export const Leads: React.FC = () => {
                                     Installment Collection Restricted
                                   </h4>
                                   <p className="text-[11px] text-amber-900/80 font-medium mt-0.5">
-                                    Client has a remaining balance of <strong className="text-amber-950 font-black">₹{remainingBalance.toLocaleString('en-IN')}</strong>. Field employees cannot record installment payments. Only Admin / Accounts team can collect payments.
+                                    Client has a remaining balance of <strong className="text-amber-950 font-black">₹{remainingBalance.toLocaleString('en-IN')}</strong>. {currentRole === 'dealer' || currentUser?.role === 'dealer' ? 'Dealers' : 'Field employees'} cannot record installment payments. Only Admin / Accounts team can collect payments.
                                   </p>
                                 </div>
                               </div>
@@ -3023,16 +3002,16 @@ export const Leads: React.FC = () => {
                       </div>
                     ) : (
                       /* First Time Initial Advance Booking Form */
-                      currentRole === 'field_employee' ? (
+                      (currentRole === 'field_employee' || currentRole === 'dealer' || currentUser?.role === 'dealer') ? (
                         <div className="bg-slate-50 border border-slate-200 rounded-2xl p-6 text-center space-y-3 shadow-2xs">
                           <div className="w-12 h-12 rounded-full bg-amber-100 border border-amber-300 text-amber-700 flex items-center justify-center font-bold mx-auto text-xl">
                             <Lock className="w-5 h-5 text-amber-700" />
                           </div>
                           <h4 className="text-sm font-black text-slate-800 uppercase tracking-wider">
-                            Payment Collection Restricted for Field Employees
+                            Payment Collection Restricted for {currentRole === 'dealer' || currentUser?.role === 'dealer' ? 'Dealers' : 'Field Employees'}
                           </h4>
                           <p className="text-xs text-slate-600 font-medium max-w-md mx-auto leading-relaxed">
-                            Field employees cannot collect or record order booking advance payments. Please contact the Admin or Accounts team to confirm order booking and record the payment deposit.
+                            {currentRole === 'dealer' || currentUser?.role === 'dealer' ? 'Dealers' : 'Field employees'} cannot collect or record order booking advance payments. Please contact the Admin or Accounts team to confirm order booking and record the payment deposit.
                           </p>
                           <div className="text-[11px] text-slate-500 font-semibold pt-1">
                             Contract Value: <strong className="text-slate-800 font-bold">₹{orderSubtotal.toLocaleString('en-IN')}</strong> (Ready for Office Booking)

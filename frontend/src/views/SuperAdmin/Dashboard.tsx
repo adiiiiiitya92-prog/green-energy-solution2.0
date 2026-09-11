@@ -16,6 +16,11 @@ import { TrendingUp, DollarSign, Award, ClipboardList, PackageCheck, ShieldAlert
 
 export const Dashboard: React.FC = () => {
   const { currentRole, currentUser } = useAuthStore();
+  const roleStr = (currentRole || currentUser?.role || '').toLowerCase();
+  const desigStr = (currentUser?.designation || '').toLowerCase();
+  const isSuperAdmin = roleStr === 'super_admin';
+  const hasFullAccess = isSuperAdmin || roleStr === 'operations_admin' || desigStr.includes('operations admin') || desigStr.includes('ops admin');
+
   const [leads, setLeads] = useState<Lead[]>([]);
   const [allCompanyLeads, setAllCompanyLeads] = useState<Lead[]>([]);
   const [quotations, setQuotations] = useState<Quotation[]>([]);
@@ -58,9 +63,6 @@ export const Dashboard: React.FC = () => {
         orderService.getAllInstallationEvidenceLeadIds(true)
       ]);
 
-      const roleStr = (currentRole || currentUser?.role || '').toLowerCase();
-      const desigStr = (currentUser?.designation || '').toLowerCase();
-      const hasFullAccess = roleStr === 'super_admin' || roleStr === 'operations_admin' || desigStr.includes('operations admin');
 
       if (leadsRes.status === 'fulfilled' && Array.isArray(leadsRes.value) && leadsRes.value.length > 0) {
         const rawLeads = leadsRes.value;
@@ -177,15 +179,14 @@ export const Dashboard: React.FC = () => {
   }, 0);
   const outstandingBalance = Math.max(0, totalConfirmedValue - totalPaymentsCollected);
 
-  const isSuperAdmin = currentRole === 'super_admin' || currentUser?.role === 'super_admin';
-
   // 3. Inventory valuation calculation (Unit Price x Available Stock Quantity)
   const grandTotalInventoryValue = products.reduce((sum, p) => sum + ((p.rate || p.bomRate || 0) * (p.stockQuantity || 0)), 0);
   const totalStockUnitsCount = products.reduce((sum, p) => sum + (p.stockQuantity || 0), 0);
 
   // 4. Employee performance metrics
   const employeePerformance = employees.map(emp => {
-    const assignedLeads = leads.filter(l => l.assignedSalesPersonId === emp.id || l.assignedAdminId === emp.id || l.assignedEmployeeId === emp.id);
+    const source = hasFullAccess ? (allCompanyLeads.length > 0 ? allCompanyLeads : leads) : leads;
+    const assignedLeads = source.filter(l => l.assignedSalesPersonId === emp.id || l.assignedAdminId === emp.id || l.assignedEmployeeId === emp.id);
     const convertedLeads = assignedLeads.filter(l => ['confirmed', 'registered', 'installed', 'closed'].includes(l.status));
     const rate = assignedLeads.length > 0 ? (convertedLeads.length / assignedLeads.length) * 100 : 0;
     
@@ -197,14 +198,18 @@ export const Dashboard: React.FC = () => {
     };
   });
 
-  // 5. Process Done (Payment Due) financial totals sum calculation (Executive Company-Wide)
+  // 5. Process Done (Payment Due) financial totals sum calculation
+  // Super Admin / Ops Admin: company-wide calculations across all leads
+  // Admin / other roles: calculations scoped ONLY to leads assigned to them
   const processDoneStats = (() => {
     let count = 0;
     let totalContract = 0;
     let totalPaid = 0;
     let totalRemaining = 0;
 
-    const sourceLeads = allCompanyLeads.length > 0 ? allCompanyLeads : leads;
+    const sourceLeads = hasFullAccess
+      ? (allCompanyLeads.length > 0 ? allCompanyLeads : leads)
+      : leads;
     const sourceQuotes = allCompanyQuotations.length > 0 ? allCompanyQuotations : quotations;
     const sourceOcs = allCompanyConfirmations.length > 0 ? allCompanyConfirmations : confirmations;
 
@@ -381,8 +386,8 @@ export const Dashboard: React.FC = () => {
         </div>
       )}
 
-      {/* Low Stock Warning Alert */}
-      {lowStockProducts.length > 0 && (
+      {/* Low Stock Warning Alert (Super Admin Exclusive) */}
+      {isSuperAdmin && lowStockProducts.length > 0 && (
         <div className="bg-red-50/95 border-l-4 border-red-500 rounded-xl shadow-xs transition-all duration-200 overflow-hidden">
           <div className="p-3 sm:p-3.5 flex items-center justify-between gap-3">
             <div className="flex items-center space-x-2.5 min-w-0">
@@ -536,7 +541,9 @@ export const Dashboard: React.FC = () => {
             <h3 className="text-2xl font-black text-white">
               ₹{processDoneStats.totalContract.toLocaleString('en-IN')}
             </h3>
-            <p className="text-[10px] text-slate-400">Sum of contract value for all process done leads</p>
+            <p className="text-[10px] text-slate-400">
+              {hasFullAccess ? "Sum of contract value for all process done leads" : "Sum of contract value for assigned process done leads"}
+            </p>
           </div>
 
           {/* 2. Total Combined Amount Paid */}
@@ -547,7 +554,9 @@ export const Dashboard: React.FC = () => {
             <h3 className="text-2xl font-black text-emerald-400">
               ₹{processDoneStats.totalPaid.toLocaleString('en-IN')}
             </h3>
-            <p className="text-[10px] text-emerald-400/80">Sum of payments collected</p>
+            <p className="text-[10px] text-emerald-400/80">
+              {hasFullAccess ? "Sum of payments collected" : "Sum of payments collected for assigned leads"}
+            </p>
           </div>
 
           {/* 3. Total Combined Remaining Pending Dues */}
@@ -559,7 +568,9 @@ export const Dashboard: React.FC = () => {
             <h3 className="text-2xl font-black text-amber-400">
               ₹{processDoneStats.totalRemaining.toLocaleString('en-IN')}
             </h3>
-            <p className="text-[10px] text-amber-400/80">Net collectable pending balance</p>
+            <p className="text-[10px] text-amber-400/80">
+              {hasFullAccess ? "Net collectable pending balance" : "Net collectable pending balance for assigned leads"}
+            </p>
           </div>
         </div>
       </div>

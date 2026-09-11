@@ -27,21 +27,25 @@ export const filterLeadsForUser = (
     return leads;
   }
 
+  const userFullNameLower = (currentUser.fullName || '').toLowerCase().trim();
+  const userIdLower = (currentUser.id || '').toLowerCase().trim();
+
   // 2. Strict Assignment Filter for all other users (Admin, Sales, Field, Dealer, etc.):
   // Only leads directly assigned to this user or created by this user are visible.
   return leads.filter((l) => {
     if (!l) return false;
+    const assignedSales = (l.assignedSalesPersonId || '').toLowerCase().trim();
+    const assignedAdmin = (l.assignedAdminId || '').toLowerCase().trim();
+    const assignedEmp = (l.assignedEmployeeId || '').toLowerCase().trim();
+    const createdBy = (l.createdBy || '').toLowerCase().trim();
+    const dealerId = (l.dealerId || '').toLowerCase().trim();
+
     const isAssignedToUser =
-      l.assignedSalesPersonId === currentUser.id ||
-      l.assignedAdminId === currentUser.id ||
-      l.assignedEmployeeId === currentUser.id ||
-      l.dealerId === currentUser.id ||
-      l.createdBy === currentUser.id ||
-      l.createdBy === currentUser.fullName ||
+      (userIdLower && (assignedSales === userIdLower || assignedAdmin === userIdLower || assignedEmp === userIdLower || dealerId === userIdLower || createdBy === userIdLower)) ||
+      (userFullNameLower && (assignedSales === userFullNameLower || assignedAdmin === userFullNameLower || assignedEmp === userFullNameLower || createdBy === userFullNameLower)) ||
       (l.createdByDealer &&
-        (l.createdBy === currentUser.fullName ||
-          l.createdBy === currentUser.id ||
-          l.dealerId === currentUser.id));
+        ((userFullNameLower && createdBy === userFullNameLower) ||
+          (userIdLower && (createdBy === userIdLower || dealerId === userIdLower))));
 
     return Boolean(isAssignedToUser);
   });

@@ -98,7 +98,7 @@ function sanitizeForSnapshot(obj: any): any {
 export const deletionRequestService = {
   async getDeletionRequests(): Promise<DeletionRequest[]> {
     try {
-      const remoteReqs = await fetchCollectionFromFirestore<DeletionRequest>('deletionRequests', 3000);
+      const remoteReqs = await fetchCollectionFromFirestore<DeletionRequest>('deletionRequests', 8000);
       if (Array.isArray(remoteReqs) && remoteReqs.length > 0) {
         await db.deletionRequests.bulkPut(remoteReqs);
       }

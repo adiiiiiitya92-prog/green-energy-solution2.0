@@ -111,15 +111,15 @@ export const AiPalletScannerModal: React.FC<AiPalletScannerModalProps> = ({
     reader.readAsDataURL(file);
 
     setIsScanning(true);
-    setScanStep('Sending label to Groq Vision AI...');
+    setScanStep('Sending label to Gemini Vision AI...');
 
     try {
       setTimeout(() => {
-        setScanStep('Reading model, brand & pallet barcodes...');
+        setScanStep('Gemini reading model, brand & pallet barcodes...');
       }, 1000);
 
       setTimeout(() => {
-        setScanStep('Extracting individual serial numbers table...');
+        setScanStep('Gemini extracting complete serial numbers table...');
       }, 2200);
 
       const result = await extractPalletProductDetailsWithAI(file);
@@ -363,7 +363,7 @@ export const AiPalletScannerModal: React.FC<AiPalletScannerModalProps> = ({
                   AI Pallet & Serial Numbers Scanner
                 </h3>
                 <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-emerald-100 text-emerald-800 border border-emerald-200">
-                  Groq Vision AI
+                  Gemini Vision AI
                 </span>
               </div>
               <p className="text-xs text-slate-500 font-semibold mt-0.5">
@@ -499,14 +499,14 @@ export const AiPalletScannerModal: React.FC<AiPalletScannerModalProps> = ({
                     </div>
                     <div>
                       <h4 className="text-sm font-black text-white tracking-wide">
-                        Groq Vision AI Processing...
+                        Gemini Vision AI Processing...
                       </h4>
                       <p className="text-xs text-emerald-400 font-semibold mt-1">
                         {scanStep || 'Extracting serial numbers & technical specs...'}
                       </p>
                     </div>
                     <span className="text-[10px] text-slate-400 font-medium">
-                      Ultra high-speed Qwen Vision inference on Groq LPU
+                      High-precision multimodal inference powered by Google Gemini
                     </span>
                   </div>
                 ) : scanError ? (

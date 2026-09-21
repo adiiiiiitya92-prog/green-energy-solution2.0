@@ -45,12 +45,26 @@ export interface LeadReportItem {
   assignedSalesName: string;
   assignedAdminName: string;
   createdAt: string;
+  confirmedAt?: string;
   totalValue: number;
   paidAmount: number;
   pendingBalance: number;
   paymentStatus: 'Fully Paid' | 'Partially Paid' | 'Pending' | 'No Quote';
   installmentCount: number;
 }
+
+export const getLeadConfirmationDate = (lead?: Lead | null, oc?: OrderConfirmation | null): string | undefined => {
+  if (!lead) return undefined;
+  if (lead.confirmedAt) return lead.confirmedAt;
+  if (oc?.createdAt) return oc.createdAt;
+  if (Array.isArray(oc?.payments) && oc.payments.length > 0 && oc.payments[0]?.paidAt) {
+    return oc.payments[0].paidAt;
+  }
+  if (['confirmed', 'registered', 'installed', 'closed'].includes(lead.status)) {
+    return lead.updatedAt || lead.createdAt;
+  }
+  return undefined;
+};
 
 export const formatCleanLeadRequirement = (req?: string): string => {
   if (!req) return 'Solar Installation';
@@ -122,6 +136,17 @@ export const Leads: React.FC = () => {
   const [selectedLeadForDispatchModal, setSelectedLeadForDispatchModal] = useState<Lead | null>(null);
   const [showLeadDispatchModal, setShowLeadDispatchModal] = useState(false);
   const [leadQuotationsMap, setLeadQuotationsMap] = useState<Record<string, Quotation>>({});
+  const [orderConfirmationsMap, setOrderConfirmationsMap] = useState<Record<string, OrderConfirmation>>({});
+
+  // Confirmed Leads Date/Month/Year Filter States
+  const [confirmedDateFilterType, setConfirmedDateFilterType] = useState<
+    'all' | 'specific_date' | 'month' | 'year' | 'date_range'
+  >('all');
+  const [confirmedFilterDate, setConfirmedFilterDate] = useState<string>('');
+  const [confirmedFilterMonth, setConfirmedFilterMonth] = useState<string>(() => dayjs().format('YYYY-MM'));
+  const [confirmedFilterYear, setConfirmedFilterYear] = useState<string>(() => dayjs().format('YYYY'));
+  const [confirmedFilterStartDate, setConfirmedFilterStartDate] = useState<string>('');
+  const [confirmedFilterEndDate, setConfirmedFilterEndDate] = useState<string>('');
 
   const handleSetRawFilter = (filter: 'all' | 'raw' | 'process_done_payment_pending' | 'advanced' | 'confirmed') => {
     setRawFilter(filter);
@@ -616,6 +641,7 @@ export const Leads: React.FC = () => {
         }
 
         const empNames = customEmpNames || employeeNames || {};
+        const confDate = getLeadConfirmationDate(l, oc);
         const itemData = {
           leadId: l.id,
           name: l.name || 'Unnamed Client',
@@ -625,6 +651,7 @@ export const Leads: React.FC = () => {
           assignedSalesName: empNames[l.assignedSalesPersonId || l.assignedEmployeeId || ''] || 'Unassigned',
           assignedAdminName: empNames[l.assignedAdminId || ''] || 'Unassigned',
           createdAt: l.createdAt || new Date().toISOString(),
+          confirmedAt: confDate,
           totalValue,
           paidAmount,
           pendingBalance,
@@ -732,13 +759,22 @@ export const Leads: React.FC = () => {
     setLeads(filteredList);
 
     try {
-      const [challans, allQuotes, evidenceIds] = await Promise.all([
+      const [challans, allQuotes, evidenceIds, allOcs] = await Promise.all([
         challanService.getChallans(true),
         quotationService.getAllQuotations().catch(() => []),
-        orderService.getAllInstallationEvidenceLeadIds(true).catch(() => new Set<string>())
+        orderService.getAllInstallationEvidenceLeadIds(true).catch(() => new Set<string>()),
+        orderService.getAllOrderConfirmations().catch(() => [])
       ]);
       if (evidenceIds) {
         setInstallationEvidenceLeadIds(evidenceIds);
+      }
+
+      if (allOcs && allOcs.length > 0) {
+        const ocMap: Record<string, OrderConfirmation> = {};
+        allOcs.forEach(oc => {
+          if (oc.leadId) ocMap[oc.leadId] = oc;
+        });
+        setOrderConfirmationsMap(ocMap);
       }
 
       let freshQMap = leadQuotationsMap;
@@ -1554,12 +1590,14 @@ export const Leads: React.FC = () => {
         };
         await orderService.updateOrderConfirmation(updatedOc);
         setExistingOc(updatedOc);
+        setOrderConfirmationsMap(prev => ({ ...prev, [selectedLead.id]: updatedOc }));
 
         // Background non-blocking upload to Firebase Storage
         uploadImageToFirebase(pdfBlob, `orders/${selectedLead.id}/receipt_${Date.now()}.pdf`).then(async (remotePdfUrl) => {
           if (remotePdfUrl) {
             updatedOc.confirmationPdfBlob = remotePdfUrl;
             await orderService.updateOrderConfirmation(updatedOc);
+            setOrderConfirmationsMap(prev => ({ ...prev, [selectedLead.id]: updatedOc }));
           }
         }).catch(err => console.warn('Background receipt upload note:', err));
       } else {
@@ -1571,10 +1609,12 @@ export const Leads: React.FC = () => {
         const createdOc = await orderService.getOrderConfirmationByLeadId(selectedLead.id);
         if (createdOc) {
           setExistingOc(createdOc);
+          setOrderConfirmationsMap(prev => ({ ...prev, [selectedLead.id]: createdOc }));
           uploadImageToFirebase(pdfBlob, `orders/${selectedLead.id}/receipt_${Date.now()}.pdf`).then(async (remotePdfUrl) => {
             if (remotePdfUrl) {
               createdOc.confirmationPdfBlob = remotePdfUrl;
               await orderService.updateOrderConfirmation(createdOc);
+              setOrderConfirmationsMap(prev => ({ ...prev, [selectedLead.id]: createdOc }));
             }
           }).catch(err => console.warn('Background receipt upload note:', err));
         }
@@ -4251,8 +4291,12 @@ export const Leads: React.FC = () => {
                   const matchesPayment = !reportPaymentFilter || item.paymentStatus === reportPaymentFilter;
 
                   let matchesTime = true;
-                  if (item.createdAt && dayjs(item.createdAt).isValid()) {
-                    const itemDate = dayjs(item.createdAt);
+                  const dateToCheck = (['confirmed', 'registered', 'installed', 'closed'].includes(item.status) && item.confirmedAt)
+                    ? item.confirmedAt
+                    : item.createdAt;
+
+                  if (dateToCheck && dayjs(dateToCheck).isValid()) {
+                    const itemDate = dayjs(dateToCheck);
                     const now = dayjs();
 
                     if (reportTimeFilter === 'today') {
@@ -4582,6 +4626,11 @@ export const Leads: React.FC = () => {
                                 </td>
                                 <td className="py-3.5 px-4">
                                   {renderStatusBadge(item.status)}
+                                  {item.confirmedAt && (
+                                    <span className="text-[10px] text-violet-700 font-bold block mt-1" title={`Confirmed: ${dayjs(item.confirmedAt).format('DD MMM YYYY, hh:mm A')}`}>
+                                      ⚡ {dayjs(item.confirmedAt).format('DD MMM YYYY')}
+                                    </span>
+                                  )}
                                 </td>
                                 <td className="py-3.5 px-4 text-right font-bold text-slate-800">
                                   ₹{item.totalValue.toLocaleString('en-IN')}
@@ -4754,7 +4803,34 @@ export const Leads: React.FC = () => {
                 matchesBalance = !fin || fin.paymentStatus === 'No Quote';
               }
 
-              return matchesSearch && matchesStatus && matchesEmployee && matchesHot && matchesBalance && matchesDispatch && matchesRaw && matchesLoan;
+              // Confirmed Leads Date, Month & Year Filter
+              let matchesConfirmedDate = true;
+              if (confirmedDateFilterType !== 'all') {
+                const confDateStr = getLeadConfirmationDate(lead, orderConfirmationsMap[lead.id]);
+                if (!confDateStr || !dayjs(confDateStr).isValid()) {
+                  matchesConfirmedDate = false;
+                } else {
+                  const d = dayjs(confDateStr);
+                  if (confirmedDateFilterType === 'specific_date') {
+                    matchesConfirmedDate = confirmedFilterDate ? d.isSame(dayjs(confirmedFilterDate), 'day') : true;
+                  } else if (confirmedDateFilterType === 'month') {
+                    matchesConfirmedDate = confirmedFilterMonth ? d.format('YYYY-MM') === confirmedFilterMonth : true;
+                  } else if (confirmedDateFilterType === 'year') {
+                    matchesConfirmedDate = confirmedFilterYear ? d.format('YYYY') === confirmedFilterYear : true;
+                  } else if (confirmedDateFilterType === 'date_range') {
+                    let rangeMatch = true;
+                    if (confirmedFilterStartDate) {
+                      rangeMatch = rangeMatch && (d.isSame(dayjs(confirmedFilterStartDate), 'day') || d.isAfter(dayjs(confirmedFilterStartDate).startOf('day')));
+                    }
+                    if (confirmedFilterEndDate) {
+                      rangeMatch = rangeMatch && (d.isSame(dayjs(confirmedFilterEndDate), 'day') || d.isBefore(dayjs(confirmedFilterEndDate).endOf('day')));
+                    }
+                    matchesConfirmedDate = rangeMatch;
+                  }
+                }
+              }
+
+              return matchesSearch && matchesStatus && matchesEmployee && matchesHot && matchesBalance && matchesDispatch && matchesRaw && matchesLoan && matchesConfirmedDate;
             });
 
             return (
@@ -5021,6 +5097,323 @@ export const Leads: React.FC = () => {
                       </select>
                     )}
                   </div>
+                </div>
+
+                {/* Confirmed Leads Date, Month & Year Filter Toolbar */}
+                <div className="bg-gradient-to-r from-violet-50 via-indigo-50/50 to-emerald-50/40 p-3.5 rounded-xl border border-violet-200/80 shadow-xs flex flex-col gap-3 text-xs">
+                  <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3">
+                    {/* Left: Title and Icon */}
+                    <div className="flex items-center gap-2.5">
+                      <div className="p-2 rounded-xl bg-violet-600 text-white shadow-2xs">
+                        <Calendar className="w-4 h-4" />
+                      </div>
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <span className="font-extrabold text-slate-900 text-xs tracking-tight">
+                            ⚡ Confirmed Date Filter
+                          </span>
+                          {confirmedDateFilterType !== 'all' && (
+                            <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-violet-600 text-white animate-pulse">
+                              FILTER ACTIVE
+                            </span>
+                          )}
+                        </div>
+                        <p className="text-[11px] text-slate-500 font-medium">
+                          Filter confirmed leads by confirmation date, month, or year across all pipeline projects.
+                        </p>
+                      </div>
+                    </div>
+
+                    {/* Quick Presets Pills */}
+                    <div className="flex flex-wrap items-center gap-1.5 font-bold text-[11px]">
+                      {/* All Time */}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setConfirmedDateFilterType('all');
+                          setConfirmedFilterDate('');
+                          setConfirmedFilterStartDate('');
+                          setConfirmedFilterEndDate('');
+                        }}
+                        className={`px-2.5 py-1.5 rounded-lg border transition-all cursor-pointer ${
+                          confirmedDateFilterType === 'all'
+                            ? 'bg-slate-800 text-white border-slate-900 shadow-2xs'
+                            : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100'
+                        }`}
+                        title="Show all confirmed leads (All Time)"
+                      >
+                        ⚡ All Time
+                      </button>
+
+                      {/* Today */}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const today = dayjs().format('YYYY-MM-DD');
+                          setConfirmedDateFilterType('specific_date');
+                          setConfirmedFilterDate(today);
+                        }}
+                        className={`px-2.5 py-1.5 rounded-lg border transition-all cursor-pointer ${
+                          confirmedDateFilterType === 'specific_date' && confirmedFilterDate === dayjs().format('YYYY-MM-DD')
+                            ? 'bg-violet-700 text-white border-violet-800 shadow-2xs'
+                            : 'bg-white text-violet-800 border-violet-200 hover:bg-violet-100/70'
+                        }`}
+                        title="Show leads confirmed today"
+                      >
+                        📅 Today
+                      </button>
+
+                      {/* Yesterday */}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const yesterday = dayjs().subtract(1, 'day').format('YYYY-MM-DD');
+                          setConfirmedDateFilterType('specific_date');
+                          setConfirmedFilterDate(yesterday);
+                        }}
+                        className={`px-2.5 py-1.5 rounded-lg border transition-all cursor-pointer ${
+                          confirmedDateFilterType === 'specific_date' && confirmedFilterDate === dayjs().subtract(1, 'day').format('YYYY-MM-DD')
+                            ? 'bg-violet-700 text-white border-violet-800 shadow-2xs'
+                            : 'bg-white text-violet-800 border-violet-200 hover:bg-violet-100/70'
+                        }`}
+                        title="Show leads confirmed yesterday"
+                      >
+                        🗓️ Yesterday
+                      </button>
+
+                      {/* This Month */}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const currentMonth = dayjs().format('YYYY-MM');
+                          setConfirmedDateFilterType('month');
+                          setConfirmedFilterMonth(currentMonth);
+                        }}
+                        className={`px-2.5 py-1.5 rounded-lg border transition-all cursor-pointer ${
+                          confirmedDateFilterType === 'month' && confirmedFilterMonth === dayjs().format('YYYY-MM')
+                            ? 'bg-emerald-700 text-white border-emerald-800 shadow-2xs'
+                            : 'bg-white text-emerald-800 border-emerald-200 hover:bg-emerald-100/70'
+                        }`}
+                        title="Show leads confirmed in current month"
+                      >
+                        📆 This Month ({dayjs().format('MMM YYYY')})
+                      </button>
+
+                      {/* Last Month */}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const lastMonth = dayjs().subtract(1, 'month').format('YYYY-MM');
+                          setConfirmedDateFilterType('month');
+                          setConfirmedFilterMonth(lastMonth);
+                        }}
+                        className={`px-2.5 py-1.5 rounded-lg border transition-all cursor-pointer ${
+                          confirmedDateFilterType === 'month' && confirmedFilterMonth === dayjs().subtract(1, 'month').format('YYYY-MM')
+                            ? 'bg-emerald-700 text-white border-emerald-800 shadow-2xs'
+                            : 'bg-white text-emerald-800 border-emerald-200 hover:bg-emerald-100/70'
+                        }`}
+                        title="Show leads confirmed in last month"
+                      >
+                        ⏪ Last Month ({dayjs().subtract(1, 'month').format('MMM YYYY')})
+                      </button>
+
+                      {/* This Year */}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const currentYear = dayjs().format('YYYY');
+                          setConfirmedDateFilterType('year');
+                          setConfirmedFilterYear(currentYear);
+                        }}
+                        className={`px-2.5 py-1.5 rounded-lg border transition-all cursor-pointer ${
+                          confirmedDateFilterType === 'year' && confirmedFilterYear === dayjs().format('YYYY')
+                            ? 'bg-indigo-700 text-white border-indigo-800 shadow-2xs'
+                            : 'bg-white text-indigo-800 border-indigo-200 hover:bg-indigo-100/70'
+                        }`}
+                        title="Show leads confirmed in current year"
+                      >
+                        🏆 This Year ({dayjs().format('YYYY')})
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Interactive Controls Bar: Mode selector & Dynamic inputs */}
+                  <div className="flex flex-wrap items-center gap-2.5 pt-2 border-t border-violet-200/60">
+                    <div className="flex items-center gap-2">
+                      <span className="text-[11px] font-black text-slate-700 uppercase tracking-wider">
+                        Filter Mode:
+                      </span>
+                      <select
+                        value={confirmedDateFilterType}
+                        onChange={(e) => {
+                          const val = e.target.value as any;
+                          setConfirmedDateFilterType(val);
+                          if (val === 'specific_date' && !confirmedFilterDate) {
+                            setConfirmedFilterDate(dayjs().format('YYYY-MM-DD'));
+                          }
+                          if (val === 'month' && !confirmedFilterMonth) {
+                            setConfirmedFilterMonth(dayjs().format('YYYY-MM'));
+                          }
+                          if (val === 'year' && !confirmedFilterYear) {
+                            setConfirmedFilterYear(dayjs().format('YYYY'));
+                          }
+                        }}
+                        className="border border-violet-200 rounded-lg p-2 bg-white text-slate-800 font-bold focus:outline-none cursor-pointer text-xs"
+                      >
+                        <option value="all">🌐 All Confirmed Dates</option>
+                        <option value="month">📆 By Month & Year (e.g. Sep 2026)</option>
+                        <option value="specific_date">📅 By Specific Day (e.g. 21-Sep-2026)</option>
+                        <option value="year">🏆 By Year (e.g. 2026)</option>
+                        <option value="date_range">🗓️ Custom Date Range (From - To)</option>
+                      </select>
+                    </div>
+
+                    {/* Mode = Month */}
+                    {confirmedDateFilterType === 'month' && (
+                      <div className="flex items-center gap-2 bg-white px-3 py-1.5 rounded-lg border border-violet-200 shadow-2xs">
+                        <span className="text-slate-500 font-bold text-[11px]">Select Month:</span>
+                        <select
+                          value={confirmedFilterMonth.split('-')[1] || dayjs().format('MM')}
+                          onChange={(e) => {
+                            const year = confirmedFilterMonth.split('-')[0] || dayjs().format('YYYY');
+                            setConfirmedFilterMonth(`${year}-${e.target.value}`);
+                          }}
+                          className="bg-transparent font-black text-slate-900 focus:outline-none cursor-pointer text-xs"
+                        >
+                          <option value="01">January</option>
+                          <option value="02">February</option>
+                          <option value="03">March</option>
+                          <option value="04">April</option>
+                          <option value="05">May</option>
+                          <option value="06">June</option>
+                          <option value="07">July</option>
+                          <option value="08">August</option>
+                          <option value="09">September</option>
+                          <option value="10">October</option>
+                          <option value="11">November</option>
+                          <option value="12">December</option>
+                        </select>
+
+                        <span className="text-slate-400 font-bold">/</span>
+
+                        <select
+                          value={confirmedFilterMonth.split('-')[0] || dayjs().format('YYYY')}
+                          onChange={(e) => {
+                            const month = confirmedFilterMonth.split('-')[1] || dayjs().format('MM');
+                            setConfirmedFilterMonth(`${e.target.value}-${month}`);
+                          }}
+                          className="bg-transparent font-black text-slate-900 focus:outline-none cursor-pointer text-xs"
+                        >
+                          {[2023, 2024, 2025, 2026, 2027, 2028, 2029, 2030].map(y => (
+                            <option key={y} value={String(y)}>{y}</option>
+                          ))}
+                        </select>
+                      </div>
+                    )}
+
+                    {/* Mode = Specific Date */}
+                    {confirmedDateFilterType === 'specific_date' && (
+                      <div className="flex items-center gap-2 bg-white px-3 py-1.5 rounded-lg border border-violet-200 shadow-2xs">
+                        <span className="text-slate-500 font-bold text-[11px]">Date:</span>
+                        <input
+                          type="date"
+                          value={confirmedFilterDate}
+                          onChange={(e) => setConfirmedFilterDate(e.target.value)}
+                          className="bg-transparent font-black text-slate-900 focus:outline-none cursor-pointer text-xs"
+                        />
+                      </div>
+                    )}
+
+                    {/* Mode = Year */}
+                    {confirmedDateFilterType === 'year' && (
+                      <div className="flex items-center gap-2 bg-white px-3 py-1.5 rounded-lg border border-violet-200 shadow-2xs">
+                        <span className="text-slate-500 font-bold text-[11px]">Year:</span>
+                        <select
+                          value={confirmedFilterYear}
+                          onChange={(e) => setConfirmedFilterYear(e.target.value)}
+                          className="bg-transparent font-black text-slate-900 focus:outline-none cursor-pointer text-xs"
+                        >
+                          {[2023, 2024, 2025, 2026, 2027, 2028, 2029, 2030].map(y => (
+                            <option key={y} value={String(y)}>{y}</option>
+                          ))}
+                        </select>
+                      </div>
+                    )}
+
+                    {/* Mode = Date Range */}
+                    {confirmedDateFilterType === 'date_range' && (
+                      <div className="flex flex-wrap items-center gap-2">
+                        <div className="flex items-center gap-1.5 bg-white px-3 py-1.5 rounded-lg border border-violet-200 shadow-2xs">
+                          <span className="text-slate-500 font-bold text-[11px]">From:</span>
+                          <input
+                            type="date"
+                            value={confirmedFilterStartDate}
+                            onChange={(e) => setConfirmedFilterStartDate(e.target.value)}
+                            className="bg-transparent font-black text-slate-900 focus:outline-none cursor-pointer text-xs"
+                          />
+                        </div>
+                        <div className="flex items-center gap-1.5 bg-white px-3 py-1.5 rounded-lg border border-violet-200 shadow-2xs">
+                          <span className="text-slate-500 font-bold text-[11px]">To:</span>
+                          <input
+                            type="date"
+                            value={confirmedFilterEndDate}
+                            onChange={(e) => setConfirmedFilterEndDate(e.target.value)}
+                            className="bg-transparent font-black text-slate-900 focus:outline-none cursor-pointer text-xs"
+                          />
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Active Filter Clear / Reset Button */}
+                    {confirmedDateFilterType !== 'all' && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setConfirmedDateFilterType('all');
+                          setConfirmedFilterDate('');
+                          setConfirmedFilterStartDate('');
+                          setConfirmedFilterEndDate('');
+                        }}
+                        className="px-3 py-1.5 bg-rose-50 hover:bg-rose-100 text-rose-700 rounded-lg text-xs font-bold border border-rose-200 transition-all cursor-pointer flex items-center gap-1 shrink-0 ml-auto shadow-2xs"
+                        title="Clear date filter and view all confirmed leads"
+                      >
+                        <X className="w-3.5 h-3.5 text-rose-600" />
+                        <span>Clear Date Filter</span>
+                      </button>
+                    )}
+                  </div>
+
+                  {/* Active Filter Summary Pill Banner */}
+                  {confirmedDateFilterType !== 'all' && (
+                    <div className="bg-violet-900 text-white px-3.5 py-2 rounded-lg flex items-center justify-between gap-2 shadow-xs">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="text-[10px] font-black uppercase tracking-wider bg-violet-800 px-2 py-0.5 rounded text-violet-200">
+                          ACTIVE CONFIRMED DATE FILTER
+                        </span>
+                        <span className="font-extrabold text-xs text-white">
+                          {confirmedDateFilterType === 'specific_date' && `Date: ${confirmedFilterDate ? dayjs(confirmedFilterDate).format('DD MMMM YYYY') : 'None selected'}`}
+                          {confirmedDateFilterType === 'month' && `Month: ${dayjs(confirmedFilterMonth + '-01').format('MMMM YYYY')}`}
+                          {confirmedDateFilterType === 'year' && `Year: ${confirmedFilterYear}`}
+                          {confirmedDateFilterType === 'date_range' && `Range: ${confirmedFilterStartDate ? dayjs(confirmedFilterStartDate).format('DD MMM YYYY') : 'Start'} to ${confirmedFilterEndDate ? dayjs(confirmedFilterEndDate).format('DD MMM YYYY') : 'Today'}`}
+                        </span>
+                        <span className="text-violet-300 text-[11px] font-medium">
+                          — Showing <strong className="text-white font-black">{filteredLeads.length}</strong> lead{filteredLeads.length === 1 ? '' : 's'} confirmed
+                        </span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setConfirmedDateFilterType('all');
+                          setConfirmedFilterDate('');
+                          setConfirmedFilterStartDate('');
+                          setConfirmedFilterEndDate('');
+                        }}
+                        className="text-violet-300 hover:text-white text-xs font-bold underline cursor-pointer shrink-0"
+                      >
+                        Reset
+                      </button>
+                    </div>
+                  )}
                 </div>
 
                 {/* Active Filter Banner for Raw Leads */}
@@ -5504,7 +5897,24 @@ export const Leads: React.FC = () => {
                               )}
                             </button>
                           </div>
-                          <span className="shrink-0 text-slate-400">{dayjs(lead.createdAt).format('DD MMM YYYY')}</span>
+                          <div className="flex items-center gap-2 shrink-0">
+                            {(() => {
+                              const confDateStr = getLeadConfirmationDate(lead, orderConfirmationsMap[lead.id]);
+                              if (!confDateStr) return null;
+                              return (
+                                <span
+                                  className="inline-flex items-center gap-1 text-[10px] font-bold text-violet-700 bg-violet-50 px-2 py-0.5 rounded-md border border-violet-200 shadow-2xs"
+                                  title={`Order confirmed on ${dayjs(confDateStr).format('DD MMM YYYY, hh:mm A')}`}
+                                >
+                                  <span>⚡ Confirmed:</span>
+                                  <span className="font-extrabold">{dayjs(confDateStr).format('DD MMM YYYY')}</span>
+                                </span>
+                              );
+                            })()}
+                            <span className="shrink-0 text-slate-400 text-[10px]" title={`Lead Created: ${dayjs(lead.createdAt).format('DD MMM YYYY')}`}>
+                              Reg: {dayjs(lead.createdAt).format('DD MMM YYYY')}
+                            </span>
+                          </div>
                         </div>
                       </div>
                     );

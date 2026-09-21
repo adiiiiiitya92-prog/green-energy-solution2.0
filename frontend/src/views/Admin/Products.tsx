@@ -1,13 +1,15 @@
 import React, { useEffect, useState } from 'react';
-import type { Product, ProductUnit } from '../../types';
+import { isMeterUnit, type Product, type ProductUnit } from '../../types';
 import { productService } from '../../services/productService';
 import { useAuthStore } from '../../store/authStore';
 import { PackageManager } from '../../components/Packages/PackageManager';
 import { AiPalletScannerModal } from '../../components/Products/AiPalletScannerModal';
+import { ProductHistoryView } from '../../components/Products/ProductHistoryView';
+import { QuickStockInwardModal } from '../../components/Products/QuickStockInwardModal';
 import {
   Plus, Search, Trash2, Tag, Layers, Package, Filter, Pencil, Check, X,
   Barcode, RefreshCw, Clipboard, CheckCircle2, ChevronDown, ChevronUp, AlertCircle, Boxes, Calendar,
-  List, LayoutGrid, Sparkles
+  List, LayoutGrid, Sparkles, History
 } from 'lucide-react';
 
 const formatBatchDateDisplay = (isoStr?: string): string => {
@@ -54,6 +56,7 @@ const groupUnitsByDate = (
 };
 
 const normalizeProductUnits = (p: Product): ProductUnit[] => {
+  const isMeter = isMeterUnit(p.unit);
   const targetAvailableStock = Math.max(0, Number(p.stockQuantity) || 0);
   const defaultDate = p.createdAt ? new Date(p.createdAt).toISOString() : new Date().toISOString();
   let units: ProductUnit[] = [];
@@ -62,7 +65,7 @@ const normalizeProductUnits = (p: Product): ProductUnit[] => {
     units = p.productUnits.map((u, i) => ({
       id: u.id || `unit_${i + 1}_${Date.now()}_${i}`,
       unitNumber: u.unitNumber || (i + 1),
-      serialNumber: u.serialNumber || '',
+      serialNumber: isMeter ? String(u.unitNumber || (i + 1)) : (u.serialNumber || ''),
       status: u.status || 'available',
       notes: u.notes || '',
       addedAt: u.addedAt || defaultDate,
@@ -72,7 +75,7 @@ const normalizeProductUnits = (p: Product): ProductUnit[] => {
     units = p.serialNumbers.map((sn, i) => ({
       id: `unit_${i + 1}_${Date.now()}_${i}`,
       unitNumber: i + 1,
-      serialNumber: sn || '',
+      serialNumber: isMeter ? String(i + 1) : (sn || ''),
       status: 'available',
       addedAt: defaultDate
     }));
@@ -96,7 +99,7 @@ const normalizeProductUnits = (p: Product): ProductUnit[] => {
       availableUnits.push({
         id: `unit_${uNum}_${Date.now()}_${Math.random().toString(36).substring(2, 5)}`,
         unitNumber: uNum,
-        serialNumber: `${brandPrefix}-${year}-${numStr}`,
+        serialNumber: isMeter ? String(uNum) : `${brandPrefix}-${year}-${numStr}`,
         status: 'available',
         addedAt: nowIso
       });
@@ -111,7 +114,8 @@ const normalizeProductUnits = (p: Product): ProductUnit[] => {
 export const Products: React.FC = () => {
   const [products, setProducts] = useState<Product[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
-  const [activeTab, setActiveTab] = useState<'commercial' | 'bom' | 'packages'>('commercial');
+  const [activeTab, setActiveTab] = useState<'commercial' | 'bom' | 'packages' | 'history'>('commercial');
+  const [quickInwardProduct, setQuickInwardProduct] = useState<Product | null>(null);
   const [selectedBomCategoryFilter, setSelectedBomCategoryFilter] = useState<string>('all');
   const [viewMode, setViewMode] = useState<'list' | 'grid'>(() => {
     try {
@@ -204,13 +208,14 @@ export const Products: React.FC = () => {
   const handleStockQuantityChangeInAdd = (val: number | '') => {
     setStockQuantity(val);
     const count = Math.max(0, Number(val) || 0);
+    const isMeter = isMeterUnit(unit);
     setAddUnitSerials(prev => {
       const next = [...prev];
       if (count > next.length) {
         const prefix = addSerialPrefix.trim() || ((brand || name || 'GES').substring(0, 3).toUpperCase().replace(/[^A-Z0-9]/g, '') + '-');
         const year = new Date().getFullYear();
         for (let i = next.length; i < count; i++) {
-          next.push(`${prefix}${year}-${String(i + 1).padStart(3, '0')}`);
+          next.push(isMeter ? String(i + 1) : `${prefix}${year}-${String(i + 1).padStart(3, '0')}`);
         }
       } else if (count < next.length) {
         return next.slice(0, count);
@@ -225,11 +230,12 @@ export const Products: React.FC = () => {
       alert('Please enter a valid Stock Quantity first.');
       return;
     }
+    const isMeter = isMeterUnit(unit);
     const prefix = addSerialPrefix.trim() || ((brand || name || 'GES').substring(0, 3).toUpperCase().replace(/[^A-Z0-9]/g, '') + '-');
     const year = new Date().getFullYear();
     const list: string[] = [];
     for (let i = 1; i <= qty; i++) {
-      list.push(`${prefix}${year}-${String(i).padStart(3, '0')}`);
+      list.push(isMeter ? String(i) : `${prefix}${year}-${String(i).padStart(3, '0')}`);
     }
     setAddUnitSerials(list);
   };
@@ -262,13 +268,15 @@ export const Products: React.FC = () => {
     const tempName = name;
     const finalStock = Number(stockQuantity) || 0;
     const productUnitsList: ProductUnit[] = [];
+    const isMeter = isMeterUnit(unit);
     const defaultPrefix = (brand || name || 'GES').substring(0, 3).toUpperCase().replace(/[^A-Z0-9]/g, '') + '-';
     const year = new Date().getFullYear();
 
     for (let i = 0; i < finalStock; i++) {
+      const defaultVal = isMeter ? String(i + 1) : `${defaultPrefix}${year}-${String(i + 1).padStart(3, '0')}`;
       const sn = addUnitSerials[i] && addUnitSerials[i].trim()
         ? addUnitSerials[i].trim()
-        : `${defaultPrefix}${year}-${String(i + 1).padStart(3, '0')}`;
+        : defaultVal;
       productUnitsList.push({
         id: `unit_${i + 1}_${Date.now()}_${Math.random().toString(36).substring(2, 5)}`,
         unitNumber: i + 1,
@@ -511,6 +519,7 @@ export const Products: React.FC = () => {
     }
 
     const nowIso = new Date().toISOString();
+    const isMeter = isMeterUnit(managingSerialsProduct?.unit);
     const prefix = manageSerialPrefix.trim() || ((managingSerialsProduct?.brand || managingSerialsProduct?.name || 'GES').substring(0, 3).toUpperCase().replace(/[^A-Z0-9]/g, '') + '-');
     const year = new Date().getFullYear();
 
@@ -524,7 +533,7 @@ export const Products: React.FC = () => {
         newUnits.push({
           id: `unit_${uNum}_${Date.now()}_${Math.random().toString(36).substring(2, 5)}`,
           unitNumber: uNum,
-          serialNumber: `${prefix}${year}-${numStr}`,
+          serialNumber: isMeter ? String(uNum) : `${prefix}${year}-${numStr}`,
           status: 'available',
           addedAt: nowIso
         });
@@ -536,7 +545,7 @@ export const Products: React.FC = () => {
       return updated;
     });
 
-    showToast(`Added +${qtyToAdd} units as a new Stock Batch dated ${formatBatchDateDisplay(nowIso)}!`);
+    showToast(`Added +${qtyToAdd} ${managingSerialsProduct?.unit || 'units'} as a new Stock Batch dated ${formatBatchDateDisplay(nowIso)}!`);
     setAddBatchQty('');
     setSerialModalTab('available');
   };
@@ -548,6 +557,7 @@ export const Products: React.FC = () => {
       const availableUnits = prev.filter(u => u.status === 'available');
       const nonAvailableUnits = prev.filter(u => u.status !== 'available');
       const nowIso = new Date().toISOString();
+      const isMeter = isMeterUnit(managingSerialsProduct?.unit);
 
       if (targetCount > availableUnits.length) {
         const prefix = manageSerialPrefix.trim() || ((managingSerialsProduct?.brand || managingSerialsProduct?.name || 'GES').substring(0, 3).toUpperCase().replace(/[^A-Z0-9]/g, '') + '-');
@@ -561,7 +571,7 @@ export const Products: React.FC = () => {
           availableUnits.push({
             id: `unit_${uNum}_${Date.now()}_${Math.random().toString(36).substring(2, 5)}`,
             unitNumber: uNum,
-            serialNumber: `${prefix}${year}-${numStr}`,
+            serialNumber: isMeter ? String(uNum) : `${prefix}${year}-${numStr}`,
             status: 'available',
             addedAt: nowIso
           });
@@ -576,12 +586,13 @@ export const Products: React.FC = () => {
 
   const handleAutoGenerateManageSerials = () => {
     if (managingUnits.length === 0) return;
+    const isMeter = isMeterUnit(managingSerialsProduct?.unit);
     const prefix = manageSerialPrefix.trim() || ((managingSerialsProduct?.brand || managingSerialsProduct?.name || 'GES').substring(0, 3).toUpperCase().replace(/[^A-Z0-9]/g, '') + '-');
     const year = new Date().getFullYear();
     setManagingUnits(prev =>
       prev.map((u, idx) => ({
         ...u,
-        serialNumber: `${prefix}${year}-${String(idx + 1).padStart(3, '0')}`
+        serialNumber: isMeter ? String(idx + 1) : `${prefix}${year}-${String(idx + 1).padStart(3, '0')}`
       }))
     );
   };
@@ -832,10 +843,24 @@ export const Products: React.FC = () => {
           <Boxes className="w-4 h-4" />
           <span>Packages Builder</span>
         </button>
+
+        <button
+          onClick={() => setActiveTab('history')}
+          className={`pb-3 px-4 text-xs font-black flex items-center gap-2 transition-all cursor-pointer border-b-2 shrink-0 ${
+            activeTab === 'history'
+              ? 'border-emerald-600 text-emerald-700'
+              : 'border-transparent text-slate-400 hover:text-slate-600'
+          }`}
+        >
+          <History className="w-4 h-4" />
+          <span>Stock & Catalog History</span>
+        </button>
       </div>
 
-      {/* Packages Tab Content */}
-      {activeTab === 'packages' ? (
+      {/* Tab Content: History vs Packages vs Commercial/BOM */}
+      {activeTab === 'history' ? (
+        <ProductHistoryView products={products} />
+      ) : activeTab === 'packages' ? (
         <PackageManager products={products} showToast={showToast} />
       ) : (
         <>
@@ -1060,17 +1085,29 @@ export const Products: React.FC = () => {
                             </div>
                           </td>
 
-                          {/* Serials Button */}
+                          {/* Serials & Inward Stock Buttons */}
                           {activeTab === 'commercial' && (
                             <td className="py-3.5 px-4 text-center whitespace-nowrap">
-                              <button
-                                type="button"
-                                onClick={() => handleOpenManageSerialsModal(p)}
-                                className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-blue-50 hover:bg-blue-100 text-blue-700 font-extrabold text-[11px] rounded-lg border border-blue-200 transition-colors cursor-pointer"
-                              >
-                                <Barcode className="w-3.5 h-3.5" />
-                                <span>Serials ({totalUnits})</span>
-                              </button>
+                              <div className="flex items-center justify-center gap-1.5">
+                                <button
+                                  type="button"
+                                  onClick={() => handleOpenManageSerialsModal(p)}
+                                  className="inline-flex items-center gap-1 px-2 py-1 bg-blue-50 hover:bg-blue-100 text-blue-700 font-extrabold text-[10.5px] rounded-lg border border-blue-200 transition-colors cursor-pointer"
+                                  title="Manage serial numbers"
+                                >
+                                  <Barcode className="w-3.5 h-3.5" />
+                                  <span>Serials ({totalUnits})</span>
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => setQuickInwardProduct(p)}
+                                  className="inline-flex items-center gap-1 px-2 py-1 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 font-extrabold text-[10.5px] rounded-lg border border-emerald-200 transition-colors cursor-pointer"
+                                  title="Inward new stock batch with date partition"
+                                >
+                                  <Plus className="w-3 h-3" />
+                                  <span>+ Inward Stock</span>
+                                </button>
+                              </div>
                             </td>
                           )}
 
@@ -1217,13 +1254,24 @@ export const Products: React.FC = () => {
                         </div>
 
                         {p.category !== 'bom_item' && (
-                          <button
-                            onClick={() => handleOpenManageSerialsModal(p)}
-                            className="px-2.5 py-1 bg-blue-50 hover:bg-blue-100 text-blue-700 font-extrabold text-[10px] rounded-lg border border-blue-200 transition-colors flex items-center gap-1 cursor-pointer"
-                          >
-                            <Barcode className="w-3.5 h-3.5" />
-                            <span>Serials ({totalUnits})</span>
-                          </button>
+                          <div className="flex items-center gap-1.5">
+                            <button
+                              onClick={() => handleOpenManageSerialsModal(p)}
+                              className="px-2 py-1 bg-blue-50 hover:bg-blue-100 text-blue-700 font-extrabold text-[10px] rounded-lg border border-blue-200 transition-colors flex items-center gap-1 cursor-pointer"
+                              title="Manage serial numbers"
+                            >
+                              <Barcode className="w-3 h-3" />
+                              <span>Serials ({totalUnits})</span>
+                            </button>
+                            <button
+                              onClick={() => setQuickInwardProduct(p)}
+                              className="px-2 py-1 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 font-extrabold text-[10px] rounded-lg border border-emerald-200 transition-colors flex items-center gap-1 cursor-pointer"
+                              title="Inward new stock batch with date partition"
+                            >
+                              <Plus className="w-3 h-3" />
+                              <span>+ Inward</span>
+                            </button>
+                          </div>
                         )}
                       </div>
 
@@ -2076,17 +2124,20 @@ export const Products: React.FC = () => {
                 return groupedByDate.map((group) => (
                   <div key={group.dateKey} className="space-y-2">
                     {/* Stock Entry Date Partition Bar */}
-                    <div className="sticky top-0 z-10 bg-slate-100/95 backdrop-blur-xs border-l-4 border-emerald-600 px-3.5 py-2 rounded-xl flex justify-between items-center shadow-2xs border border-slate-200/80">
+                    <div className="sticky top-0 z-10 bg-slate-900 text-white px-3.5 py-2.5 rounded-xl flex justify-between items-center shadow-md border border-slate-700">
                       <div className="flex items-center gap-2">
-                        <Calendar className="w-4 h-4 text-emerald-700" />
-                        <span className="text-xs font-black text-slate-800 uppercase tracking-wide">
-                          Stock Entry Date: {group.displayDate}
+                        <Calendar className="w-4 h-4 text-emerald-400" />
+                        <span className="text-xs font-black uppercase tracking-wide">
+                          Stock Added On: {group.displayDate}
                         </span>
-                        <span className="text-[10px] font-extrabold bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded-full border border-emerald-200">
+                        <span className="text-[10px] font-extrabold bg-emerald-500/20 text-emerald-300 px-2 py-0.5 rounded-full border border-emerald-500/30">
                           Batch ({group.items.length} Units)
                         </span>
+                        <span className="text-[10px] font-bold text-slate-300 hidden sm:inline">
+                          • Active from this date onwards
+                        </span>
                       </div>
-                      <span className="text-[10px] font-bold text-slate-500 hidden sm:inline">
+                      <span className="text-[10px] font-bold text-slate-400 hidden sm:inline">
                         Units #{group.items[0].unit.unitNumber} - #{group.items[group.items.length - 1].unit.unitNumber}
                       </span>
                     </div>
@@ -2223,6 +2274,19 @@ export const Products: React.FC = () => {
               setManagingUnits(norm);
               setManagingStockQty(norm.filter(u => u.status === 'available').length);
             }
+          }}
+          showToast={showToast}
+        />
+      )}
+
+      {/* Quick Stock Inward Modal */}
+      {quickInwardProduct && (
+        <QuickStockInwardModal
+          product={quickInwardProduct}
+          isOpen={!!quickInwardProduct}
+          onClose={() => setQuickInwardProduct(null)}
+          onSuccess={(updated) => {
+            setProducts(prev => prev.map(p => p.id === updated.id ? updated : p));
           }}
           showToast={showToast}
         />

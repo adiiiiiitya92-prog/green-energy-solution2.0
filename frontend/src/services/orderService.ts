@@ -153,6 +153,7 @@ export const orderService = {
       const lead = await db.leads.get(ocData.leadId);
       if (lead && (lead.status === 'new' || lead.status === 'quotation_sent')) {
         lead.status = 'confirmed';
+        lead.confirmedAt = lead.confirmedAt || new Date().toISOString();
         lead.updatedAt = new Date().toISOString();
         await db.leads.put(lead);
         updatedLead = lead;

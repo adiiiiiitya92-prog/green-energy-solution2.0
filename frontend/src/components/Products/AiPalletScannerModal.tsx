@@ -268,7 +268,9 @@ export const AiPalletScannerModal: React.FC<AiPalletScannerModalProps> = ({
     };
 
     try {
-      await productService.updateProduct(updatedProduct);
+      await productService.updateProduct(updatedProduct, {
+        logNotes: palletNote ? `AI Pallet Scan: ${palletNote}` : `AI Pallet / Box scan (+${editableSerials.length} units)`
+      });
       onSuccess(updatedProduct, editableSerials.length);
       onClose();
       showToast(`✅ Added +${editableSerials.length} serials to "${updatedProduct.name}"!`);

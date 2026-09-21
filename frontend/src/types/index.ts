@@ -40,6 +40,7 @@ export interface Lead {
   followUpSetBy?: string;
   followUpCompleted?: boolean;
   installationRemark?: string;
+  confirmedAt?: string; // ⚡ Exact date/time when order was confirmed
   createdAt: string;
   updatedAt: string;
 }
@@ -242,6 +243,22 @@ export interface Product {
   createdAt: string;
 }
 
+export const isMeterUnit = (unit?: string): boolean => {
+  if (!unit) return false;
+  const clean = unit.trim().toLowerCase();
+  return (
+    clean === 'meter' ||
+    clean === 'meters' ||
+    clean === 'metre' ||
+    clean === 'metres' ||
+    clean === 'm' ||
+    clean === 'mtr' ||
+    clean === 'mtrs' ||
+    clean.includes('meter') ||
+    clean.includes('metre')
+  );
+};
+
 export interface ChallanItem {
   productId: string;
   productName: string;
@@ -299,12 +316,27 @@ export interface B2BBusiness {
 
 export interface StockTransaction {
   id: string;
-  challanId: string;
-  challanNumber: string;
-  challanType: 'b2b' | 'lead' | string;
+  type?: 'product_created' | 'stock_inward' | 'batch_added' | 'stock_adjustment' | 'stock_dispatch';
   productId: string;
   productName: string;
-  quantityDeducted: number;
+  brand?: string;
+  category?: string;
+  quantityAdded?: number;
+  quantityDeducted?: number;
+  previousStock?: number;
+  newStock?: number;
+  unit?: string;
+  serialNumbers?: string[];
+  batchNumber?: string;
+  notes?: string;
+  performedBy?: {
+    id?: string;
+    name?: string;
+    role?: string;
+  };
+  challanId?: string;
+  challanNumber?: string;
+  challanType?: 'b2b' | 'lead' | string;
   timestamp: string;
 }
 

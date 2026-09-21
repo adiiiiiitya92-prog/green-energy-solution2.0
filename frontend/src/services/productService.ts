@@ -77,13 +77,26 @@ export const productService = {
       body: JSON.stringify(newProduct)
     }).catch(err => console.warn("Express Backend API product sync note:", err));
 
+    // 3. Automatically record Product Creation & Initial Stock History
+    try {
+      const { stockTransactionService } = await import('./stockTransactionService');
+      const { useAuthStore } = await import('../store/authStore');
+      const currentUser = useAuthStore.getState().currentUser;
+      const userSummary = currentUser ? { id: currentUser.id, name: currentUser.fullName, role: currentUser.role } : undefined;
+      await stockTransactionService.logProductCreated(newProduct, newProduct.stockQuantity || 0, userSummary);
+    } catch (logErr) {
+      console.warn("Stock transaction log on create note:", logErr);
+    }
+
     window.dispatchEvent(new CustomEvent('app-realtime-update'));
     return id;
   },
 
-  async updateProduct(product: Product): Promise<void> {
+  async updateProduct(product: Product, options?: { skipHistoryLog?: boolean; logNotes?: string }): Promise<void> {
     const deletedIds = await getDeletedRecordIdsSet();
     if (deletedIds.has(product.id)) return;
+
+    const previousData = await db.products.get(product.id);
 
     // 1. Instant local IndexedDB storage
     await db.products.put(product);
@@ -95,6 +108,40 @@ export const productService = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(product)
     }).catch(err => console.warn("Express Backend API product update note:", err));
+
+    // 3. Automatically record Stock Changes if not explicitly skipped
+    if (!options?.skipHistoryLog && previousData && previousData.stockQuantity !== product.stockQuantity) {
+      try {
+        const { stockTransactionService } = await import('./stockTransactionService');
+        const { useAuthStore } = await import('../store/authStore');
+        const currentUser = useAuthStore.getState().currentUser;
+        const userSummary = currentUser ? { id: currentUser.id, name: currentUser.fullName, role: currentUser.role } : undefined;
+        const prevQty = previousData.stockQuantity || 0;
+        const newQty = product.stockQuantity || 0;
+        const diff = newQty - prevQty;
+
+        if (diff > 0) {
+          await stockTransactionService.logStockInward({
+            product,
+            quantityAdded: diff,
+            previousStock: prevQty,
+            newStock: newQty,
+            notes: options?.logNotes || `Stock updated: +${diff} ${product.unit || 'Nos'} added`,
+            user: userSummary
+          });
+        } else if (diff < 0) {
+          await stockTransactionService.logStockAdjustment({
+            product,
+            previousStock: prevQty,
+            newStock: newQty,
+            notes: options?.logNotes || `Stock adjusted from ${prevQty} to ${newQty}`,
+            user: userSummary
+          });
+        }
+      } catch (logErr) {
+        console.warn("Stock transaction log on update note:", logErr);
+      }
+    }
 
     window.dispatchEvent(new CustomEvent('app-realtime-update'));
   },

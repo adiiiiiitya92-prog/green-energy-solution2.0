@@ -453,6 +453,7 @@ export const leadService = {
         if (totalPaid < 1) {
           throw new Error('Lead cannot be confirmed: At least ₹1 payment must be recorded before setting status to Confirmed.');
         }
+        lead.confirmedAt = lead.confirmedAt || new Date().toISOString();
       }
       lead.status = status;
       lead.updatedAt = new Date().toISOString();

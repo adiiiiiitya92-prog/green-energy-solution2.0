@@ -566,7 +566,7 @@ export const QuotationDocument: React.FC<{
   const handleAddItem = () => {
     if (!newItemName || newItemRate <= 0) return;
     const amount = newItemQty * newItemRate;
-    const matchedProd = products.find(p => p.id === selectedCatalogProdId || p.name.toLowerCase() === newItemName.toLowerCase());
+    const matchedProd = products.find(p => p.id === selectedCatalogProdId || (p.name || '').toLowerCase() === (newItemName || '').toLowerCase());
     setItems([...items, {
       itemName: newItemName,
       brand: matchedProd?.brand || undefined,
@@ -2253,7 +2253,7 @@ export const QuotationDocument: React.FC<{
                   p.category !== 'bom_item' &&
                   (multiCategoryFilter === 'all' || p.category === multiCategoryFilter) &&
                   (!multiProductSearchTerm ||
-                    p.name.toLowerCase().includes(multiProductSearchTerm.toLowerCase()) ||
+                    (p.name || '').toLowerCase().includes(multiProductSearchTerm.toLowerCase()) ||
                     (p.brand && p.brand.toLowerCase().includes(multiProductSearchTerm.toLowerCase())) ||
                     (p.description && p.description.toLowerCase().includes(multiProductSearchTerm.toLowerCase())))
                 )
@@ -2514,7 +2514,7 @@ export const QuotationDocument: React.FC<{
                   p.category === 'bom_item' &&
                   (multiBomCategoryFilter === 'all' || p.bomCategory === multiBomCategoryFilter) &&
                   (!multiBomSearchTerm ||
-                    p.name.toLowerCase().includes(multiBomSearchTerm.toLowerCase()) ||
+                    (p.name || '').toLowerCase().includes(multiBomSearchTerm.toLowerCase()) ||
                     (p.brand && p.brand.toLowerCase().includes(multiBomSearchTerm.toLowerCase())) ||
                     (p.bomCategory && p.bomCategory.toLowerCase().includes(multiBomSearchTerm.toLowerCase())))
                 )
@@ -2697,7 +2697,7 @@ export const QuotationDocument: React.FC<{
                   if (!packageSearchTerm.trim()) return true;
                   const q = packageSearchTerm.toLowerCase();
                   return (
-                    pkg.name.toLowerCase().includes(q) ||
+                    (pkg.name || '').toLowerCase().includes(q) ||
                     (pkg.code && pkg.code.toLowerCase().includes(q)) ||
                     (pkg.description && pkg.description.toLowerCase().includes(q))
                   );

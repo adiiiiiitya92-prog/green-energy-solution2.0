@@ -10,7 +10,7 @@ export const b2bBusinessService = {
 
     const syncFromChallans = async (existing: B2BBusiness[]) => {
       try {
-        const existingNames = new Set(existing.map(b => b.businessName.trim().toLowerCase()));
+        const existingNames = new Set(existing.map(b => (b.businessName || '').trim().toLowerCase()));
         const challans = await db.challans.toArray();
         const now = new Date().toISOString();
 
@@ -173,7 +173,7 @@ export const b2bBusinessService = {
     if (!q) return this.getBusinesses();
     const all = await this.getBusinesses();
     return all.filter(b => 
-      b.businessName.toLowerCase().includes(q) ||
+      (b.businessName && b.businessName.toLowerCase().includes(q)) ||
       (b.mobileNumber && b.mobileNumber.toLowerCase().includes(q)) ||
       (b.gstNumber && b.gstNumber.toLowerCase().includes(q)) ||
       (b.contactPerson && b.contactPerson.toLowerCase().includes(q))

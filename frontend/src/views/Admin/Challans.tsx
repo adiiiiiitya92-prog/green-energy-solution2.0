@@ -369,7 +369,7 @@ export const Challans: React.FC = () => {
     
     if (q.items && q.items.length > 0) {
       q.items.forEach(item => {
-        if (item.itemName && !rawList.some(r => r.name.toLowerCase().trim() === item.itemName.toLowerCase().trim())) {
+        if (item.itemName && !rawList.some(r => (r.name || '').toLowerCase().trim() === item.itemName.toLowerCase().trim())) {
           rawList.push({
             name: item.itemName,
             qty: Number(item.qty) || 1,
@@ -381,9 +381,9 @@ export const Challans: React.FC = () => {
     }
 
     return rawList.map((item, idx) => {
-      const cleanName = item.name.toLowerCase().trim();
+      const cleanName = (item.name || '').toLowerCase().trim();
       const matchedProd = products.find(p => {
-        const pName = p.name.toLowerCase().trim();
+        const pName = (p.name || '').toLowerCase().trim();
         return pName === cleanName || pName.includes(cleanName) || cleanName.includes(pName);
       });
 
@@ -425,7 +425,7 @@ export const Challans: React.FC = () => {
 
     if (pkg.commercialItems && pkg.commercialItems.length > 0) {
       pkg.commercialItems.forEach(c => {
-        if (!rawList.some(r => r.name.toLowerCase().trim() === c.name.toLowerCase().trim())) {
+        if (!rawList.some(r => (r.name || '').toLowerCase().trim() === (c.name || '').toLowerCase().trim())) {
           rawList.push({
             name: c.name,
             qty: Number(c.qty) || 1,
@@ -438,9 +438,9 @@ export const Challans: React.FC = () => {
     }
 
     return rawList.map((item, idx) => {
-      const cleanName = item.name.toLowerCase().trim();
+      const cleanName = (item.name || '').toLowerCase().trim();
       const matchedProd = products.find(p => {
-        const pName = p.name.toLowerCase().trim();
+        const pName = (p.name || '').toLowerCase().trim();
         return pName === cleanName || pName.includes(cleanName) || cleanName.includes(pName);
       });
 
@@ -604,9 +604,9 @@ export const Challans: React.FC = () => {
       let targetProduct = products.find(p => p.id === prodId);
 
       if (!targetProduct) {
-        const cleanName = item.name.toLowerCase().trim();
+        const cleanName = (item.name || '').toLowerCase().trim();
         targetProduct = products.find(p => {
-          const pName = p.name.toLowerCase().trim();
+          const pName = (p.name || '').toLowerCase().trim();
           return pName === cleanName || pName.includes(cleanName) || cleanName.includes(pName);
         });
         if (targetProduct) {
@@ -1310,14 +1310,14 @@ export const Challans: React.FC = () => {
     if (typeFilter === 'b2b' && ch.type !== 'b2b') return false;
     if (typeFilter === 'lead' && ch.type === 'b2b') return false;
 
-    const q = searchTerm.toLowerCase();
+    const q = (searchTerm || '').toLowerCase();
     const custName = (ch.type === 'b2b' ? ch.businessName : ch.leadName) || '';
     const matchesSearch =
-      ch.challanNumber.toLowerCase().includes(q) ||
+      (ch.challanNumber || '').toLowerCase().includes(q) ||
       custName.toLowerCase().includes(q) ||
-      ch.vehicleNumber.toLowerCase().includes(q) ||
-      ch.driverName.toLowerCase().includes(q) ||
-      (ch.gstNumber && ch.gstNumber.toLowerCase().includes(q));
+      (ch.vehicleNumber || '').toLowerCase().includes(q) ||
+      (ch.driverName || '').toLowerCase().includes(q) ||
+      (ch.gstNumber ? ch.gstNumber.toLowerCase().includes(q) : false);
 
     if (!matchesSearch) return false;
 
@@ -1337,11 +1337,11 @@ export const Challans: React.FC = () => {
   });
 
   const filteredStockTxns = stockTxns.filter(st => {
-    const q = stockTxnSearch.toLowerCase();
+    const q = (stockTxnSearch || '').toLowerCase();
     return (
-      st.challanNumber.toLowerCase().includes(q) ||
-      st.productName.toLowerCase().includes(q) ||
-      st.challanType.toLowerCase().includes(q)
+      (st.challanNumber ? st.challanNumber.toLowerCase().includes(q) : false) ||
+      (st.productName ? st.productName.toLowerCase().includes(q) : false) ||
+      (st.challanType ? st.challanType.toLowerCase().includes(q) : false)
     );
   });
 
@@ -3462,7 +3462,7 @@ export const Challans: React.FC = () => {
                         bomItemsToSelect
                           .filter(item => {
                             const matchesCat = bomCategoryFilter === 'all' || item.category === bomCategoryFilter;
-                            const matchesSearch = !bomSearchTerm || item.name.toLowerCase().includes(bomSearchTerm.toLowerCase());
+                            const matchesSearch = !bomSearchTerm || (item.name || '').toLowerCase().includes(bomSearchTerm.toLowerCase());
                             return matchesCat && matchesSearch;
                           })
                           .map((item) => (

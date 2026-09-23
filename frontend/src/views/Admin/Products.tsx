@@ -661,12 +661,12 @@ export const Products: React.FC = () => {
         : bomProducts.filter(p => p.bomCategory === selectedBomCategoryFilter));
 
   const filteredProducts = currentTabProducts.filter(p =>
-    p.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+    (p.name || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
     (p.brand && p.brand.toLowerCase().includes(searchTerm.toLowerCase())) ||
     (p.unit && p.unit.toLowerCase().includes(searchTerm.toLowerCase())) ||
     (p.bomCategory && p.bomCategory.toLowerCase().includes(searchTerm.toLowerCase())) ||
     (p.description && p.description.toLowerCase().includes(searchTerm.toLowerCase())) ||
-    p.category.toLowerCase().includes(searchTerm.toLowerCase())
+    (p.category || '').toLowerCase().includes(searchTerm.toLowerCase())
   );
 
   const lowStockItems = commercialProducts.filter(p => p.stockQuantity <= p.minStockThreshold);
@@ -2101,8 +2101,8 @@ export const Products: React.FC = () => {
                   const term = serialSearchTerm.toLowerCase();
                   const dateStr = formatBatchDateDisplay(unit.addedAt).toLowerCase();
                   return (
-                    unit.serialNumber.toLowerCase().includes(term) ||
-                    String(unit.unitNumber).includes(term) ||
+                    (unit.serialNumber || '').toLowerCase().includes(term) ||
+                    String(unit.unitNumber || '').includes(term) ||
                     dateStr.includes(term)
                   );
                 });

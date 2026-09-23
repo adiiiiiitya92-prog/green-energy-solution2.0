@@ -175,13 +175,13 @@ export const Complaints: React.FC = () => {
     if (searchQuery.trim()) {
       const q = searchQuery.trim().toLowerCase();
       const match =
-        c.complaintNumber.toLowerCase().includes(q) ||
-        c.title.toLowerCase().includes(q) ||
-        c.customerName.toLowerCase().includes(q) ||
-        c.mobileNumber.toLowerCase().includes(q) ||
-        c.address.toLowerCase().includes(q) ||
-        c.category.toLowerCase().includes(q) ||
-        (c.installedCapacityKw && c.installedCapacityKw.toLowerCase().includes(q));
+        (c.complaintNumber || '').toLowerCase().includes(q) ||
+        (c.title || '').toLowerCase().includes(q) ||
+        (c.customerName || '').toLowerCase().includes(q) ||
+        (c.mobileNumber || '').toLowerCase().includes(q) ||
+        (c.address || '').toLowerCase().includes(q) ||
+        (c.category || '').toLowerCase().includes(q) ||
+        (c.installedCapacityKw ? c.installedCapacityKw.toLowerCase().includes(q) : false);
       if (!match) return false;
     }
 

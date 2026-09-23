@@ -170,8 +170,8 @@ export const Employees: React.FC = () => {
   };
 
   const filteredEmployees = employees.filter(emp =>
-    emp.fullName.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    emp.phone.includes(searchTerm) ||
+    (emp.fullName || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
+    (emp.phone || '').includes(searchTerm) ||
     (emp.email && emp.email.toLowerCase().includes(searchTerm.toLowerCase()))
   );
 

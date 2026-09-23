@@ -4737,8 +4737,8 @@ export const Leads: React.FC = () => {
               const hasPayment = !!fin && (fin.paidAmount || 0) > 0;
 
               const matchesSearch = !searchStr || 
-                lead.name.toLowerCase().includes(searchStr) || 
-                lead.phoneNumber.includes(searchStr) ||
+                (lead.name || '').toLowerCase().includes(searchStr) || 
+                (lead.phoneNumber || '').includes(searchStr) ||
                 (lead.requirement || '').toLowerCase().includes(searchStr) ||
                 (lead.isLoan && 'loan case'.includes(searchStr)) ||
                 (lead.loanBankName && lead.loanBankName.toLowerCase().includes(searchStr)) ||
@@ -4746,7 +4746,7 @@ export const Leads: React.FC = () => {
                   fin.pendingBalance.toString().includes(searchStr) ||
                   fin.totalValue.toString().includes(searchStr) ||
                   fin.paidAmount.toString().includes(searchStr) ||
-                  fin.paymentStatus.toLowerCase().includes(searchStr)
+                  (fin.paymentStatus ? fin.paymentStatus.toLowerCase().includes(searchStr) : false)
                 ));
 
               const matchesStatus = !statusFilter || lead.status === statusFilter;

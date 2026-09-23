@@ -80,18 +80,19 @@ export const B2BBusinesses: React.FC = () => {
 
   useEffect(() => {
     if (selectedBusiness) {
+      const targetName = (selectedBusiness.businessName || '').toLowerCase();
       const related = allChallans.filter(
         c => c.b2bBusinessId === selectedBusiness.id ||
-             (c.businessName && c.businessName.toLowerCase() === selectedBusiness.businessName.toLowerCase())
+             (c.businessName && targetName && c.businessName.toLowerCase() === targetName)
       );
       setBusinessChallans(related);
     }
   }, [selectedBusiness, allChallans]);
 
   const filteredBusinesses = businesses.filter(b => {
-    const q = searchTerm.toLowerCase();
+    const q = (searchTerm || '').toLowerCase();
     return (
-      b.businessName.toLowerCase().includes(q) ||
+      (b.businessName || '').toLowerCase().includes(q) ||
       (b.gstNumber && b.gstNumber.toLowerCase().includes(q)) ||
       (b.mobileNumber && b.mobileNumber.toLowerCase().includes(q)) ||
       (b.contactPerson && b.contactPerson.toLowerCase().includes(q)) ||
@@ -325,8 +326,9 @@ export const B2BBusinesses: React.FC = () => {
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
           {filteredBusinesses.map(b => {
+            const bName = (b.businessName || '').toLowerCase();
             const challanCount = allChallans.filter(
-              c => c.b2bBusinessId === b.id || (c.businessName && c.businessName.toLowerCase() === b.businessName.toLowerCase())
+              c => c.b2bBusinessId === b.id || (c.businessName && bName && c.businessName.toLowerCase() === bName)
             ).length;
 
             return (

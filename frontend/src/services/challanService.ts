@@ -1,8 +1,10 @@
 import { db, markRecordAsDeleted, getDeletedRecordIdsSet } from './db';
-import type { Challan, Product } from '../types';
+import type { Challan, Product, ProductUnit } from '../types';
 import { saveRecordToFirestore, fetchCollectionFromFirestore } from './firebase';
 import { b2bBusinessService } from './b2bBusinessService';
 import { stockTransactionService } from './stockTransactionService';
+
+const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || '';
 
 let lastChallanRemoteSync = 0;
 const CHALLAN_SYNC_INTERVAL = 30 * 1000; // 30 seconds fresh sync throttle
@@ -53,14 +55,127 @@ export const challanService = {
       await syncRemote();
       const freshDeleted = await getDeletedRecordIdsSet();
       const refreshed = await db.challans.orderBy('createdAt').reverse().toArray();
-      return refreshed.filter(c => !freshDeleted.has(c.id) && (!c.leadId || !freshDeleted.has(c.leadId)));
+      const finalChallans = refreshed.filter(c => !freshDeleted.has(c.id) && (!c.leadId || !freshDeleted.has(c.leadId)));
+      // Reconcile product stock and serial numbers against active challans in background
+      this.reconcileProductStockWithChallans().catch(err => console.warn("Stock reconciliation note:", err));
+      return finalChallans;
     }
 
     if (Date.now() - lastChallanRemoteSync > CHALLAN_SYNC_INTERVAL) {
       syncRemote().catch(() => {});
     }
 
+    // Ensure reconciliation has run for local data
+    this.reconcileProductStockWithChallans().catch(() => {});
+
     return validLocal;
+  },
+
+  /**
+   * Reconciles product stock & unit serial numbers against all existing active challans.
+   * If any product has serial numbers dispatched in a challan but marked 'available',
+   * or if available stock count does not match the active units count, it fixes them automatically!
+   */
+  async reconcileProductStockWithChallans(): Promise<number> {
+    const deletedIds = await getDeletedRecordIdsSet();
+    const challans = await db.challans.toArray().catch(() => []);
+    const activeChallans = challans.filter(c => !deletedIds.has(c.id) && (!c.leadId || !deletedIds.has(c.leadId)));
+    if (activeChallans.length === 0) return 0;
+
+    // Map serial number (lowercase) -> { challanNumber, dispatchedAt }
+    const dispatchedSerialsMap = new Map<string, { challanNumber: string; dispatchedAt: string }>();
+    for (const ch of activeChallans) {
+      for (const item of ch.items || []) {
+        for (const sn of item.serialNumbers || []) {
+          const clean = (sn || '').trim().toLowerCase();
+          if (clean) {
+            dispatchedSerialsMap.set(clean, {
+              challanNumber: ch.challanNumber,
+              dispatchedAt: ch.createdAt
+            });
+          }
+        }
+      }
+    }
+
+    if (dispatchedSerialsMap.size === 0) return 0;
+
+    const products = await db.products.toArray().catch(() => []);
+    const updatedProducts: Product[] = [];
+
+    for (const p of products) {
+      if (deletedIds.has(p.id)) continue;
+      let hasChange = false;
+
+      let units: ProductUnit[] = p.productUnits && Array.isArray(p.productUnits) && p.productUnits.length > 0
+        ? p.productUnits.map(u => ({ ...u }))
+        : (p.serialNumbers && Array.isArray(p.serialNumbers) && p.serialNumbers.length > 0
+            ? p.serialNumbers.map((sn, idx) => ({
+                id: `unit_${idx + 1}_${Date.now()}_${idx}`,
+                unitNumber: idx + 1,
+                serialNumber: sn,
+                status: 'available' as const,
+                addedAt: p.createdAt || new Date().toISOString()
+              }))
+            : []);
+
+      if (units.length > 0) {
+        units = units.map(u => {
+          const cleanSn = (u.serialNumber || '').trim().toLowerCase();
+          const dispatchInfo = dispatchedSerialsMap.get(cleanSn);
+          if (dispatchInfo && (u.status === 'available' || !u.status)) {
+            hasChange = true;
+            return {
+              ...u,
+              status: 'sold' as const,
+              dispatchedAt: dispatchInfo.dispatchedAt,
+              notes: u.notes || `Dispatched via ${dispatchInfo.challanNumber}`
+            };
+          }
+          return u;
+        });
+
+        const availCount = units.filter(u => u.status === 'available' || !u.status).length;
+        if (p.stockQuantity !== availCount) {
+          hasChange = true;
+        }
+
+        if (hasChange) {
+          updatedProducts.push({
+            ...p,
+            stockQuantity: availCount,
+            productUnits: units,
+            serialNumbers: units.filter(u => u.status === 'available' || !u.status).map(u => u.serialNumber)
+          });
+        }
+      }
+    }
+
+    if (updatedProducts.length > 0) {
+      // Local Dexie save
+      await db.transaction('rw', db.products, async () => {
+        for (const prod of updatedProducts) {
+          await db.products.put(prod);
+        }
+      });
+
+      // Background Non-blocking sync
+      for (const prod of updatedProducts) {
+        saveRecordToFirestore('products', prod.id, prod).catch(() => {});
+        if (BACKEND_URL) {
+          fetch(`${BACKEND_URL}/api/products`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(prod)
+          }).catch(() => {});
+        }
+      }
+
+      window.dispatchEvent(new CustomEvent('app-realtime-update'));
+      console.log(`✅ Auto-reconciled stock & sold units for ${updatedProducts.length} product(s) against active delivery challans.`);
+    }
+
+    return updatedProducts.length;
   },
 
   async createChallan(cData: Omit<Challan, 'id' | 'createdAt' | 'challanNumber'>): Promise<string> {
@@ -107,42 +222,112 @@ export const challanService = {
       createdAt
     };
 
+    // Calculate product stock & serial unit status updates
+    const updatedProducts: Product[] = [];
+    for (const item of cData.items) {
+      if (!item.productId || item.productId.startsWith('custom_')) continue;
+      const product = await db.products.get(item.productId);
+      if (!product) continue;
+
+      const dispatchedSerials = (item.serialNumbers || []).map(s => s.trim().toLowerCase());
+      const dispatchedSet = new Set(dispatchedSerials);
+
+      // Normalize product units if missing
+      let units: ProductUnit[] = product.productUnits && Array.isArray(product.productUnits) && product.productUnits.length > 0
+        ? product.productUnits.map(u => ({ ...u }))
+        : (product.serialNumbers && Array.isArray(product.serialNumbers) && product.serialNumbers.length > 0
+            ? product.serialNumbers.map((sn, idx) => ({
+                id: `unit_${idx + 1}_${Date.now()}_${idx}`,
+                unitNumber: idx + 1,
+                serialNumber: sn,
+                status: 'available' as const,
+                addedAt: product.createdAt || createdAt
+              }))
+            : []);
+
+      if (dispatchedSet.size > 0 && units.length > 0) {
+        units = units.map(u => {
+          const cleanSn = (u.serialNumber || '').trim().toLowerCase();
+          if (dispatchedSet.has(cleanSn)) {
+            return {
+              ...u,
+              status: 'sold' as const,
+              dispatchedAt: createdAt,
+              notes: u.notes || `Dispatched via ${challanNumber}`
+            };
+          }
+          return u;
+        });
+      } else if (units.length > 0) {
+        // If specific serials were not selected, mark first available units as sold
+        let remaining = item.qty;
+        units = units.map(u => {
+          if (remaining > 0 && (u.status === 'available' || !u.status)) {
+            remaining--;
+            return {
+              ...u,
+              status: 'sold' as const,
+              dispatchedAt: createdAt,
+              notes: u.notes || `Dispatched via ${challanNumber}`
+            };
+          }
+          return u;
+        });
+      }
+
+      const availableCount = units.length > 0
+        ? units.filter(u => u.status === 'available' || !u.status).length
+        : Math.max(0, (product.stockQuantity || 0) - item.qty);
+
+      updatedProducts.push({
+        ...product,
+        stockQuantity: availableCount,
+        productUnits: units.length > 0 ? units : undefined,
+        serialNumbers: units.length > 0
+          ? units.filter(u => u.status === 'available' || !u.status).map(u => u.serialNumber)
+          : product.serialNumbers
+      });
+    }
+
+    // 1. Pure Dexie Transaction (NO external asynchronous network awaits inside!)
     try {
       await db.transaction('rw', [db.challans, db.products], async () => {
-        await db.challans.add(newChallan);
-
-        for (const item of cData.items) {
-          if (!item.productId || item.productId.startsWith('custom_')) continue;
-          const product = await db.products.get(item.productId);
-          if (product) {
-            const updatedStock = Math.max(0, product.stockQuantity - item.qty);
-            let updatedUnits = product.productUnits;
-
-            if (item.serialNumbers && item.serialNumbers.length > 0 && product.productUnits) {
-              updatedUnits = product.productUnits.map(u => {
-                if (item.serialNumbers?.includes(u.serialNumber)) {
-                  return { ...u, status: 'sold' as const };
-                }
-                return u;
-              });
-            }
-
-            const updateObj: Partial<Product> = { stockQuantity: updatedStock };
-            if (updatedUnits) updateObj.productUnits = updatedUnits;
-
-            await db.products.update(item.productId, updateObj);
-            try {
-              saveRecordToFirestore('products', item.productId, { ...product, ...updateObj });
-            } catch (err) {
-              console.warn("Firestore product stock sync note:", err);
-            }
-          }
+        await db.challans.put(newChallan);
+        for (const prod of updatedProducts) {
+          await db.products.put(prod);
         }
       });
     } catch (dbErr) {
-      console.warn("Local DB transaction note:", dbErr);
-      // Fallback direct insert if transaction had an issue
+      console.warn("Local DB transaction note, attempting individual updates:", dbErr);
       await db.challans.put(newChallan);
+      for (const prod of updatedProducts) {
+        await db.products.put(prod).catch(() => {});
+      }
+    }
+
+    // 2. Non-blocking Firestore & REST API Sync in background AFTER transaction committed
+    for (const prod of updatedProducts) {
+      saveRecordToFirestore('products', prod.id, prod).catch(err =>
+        console.warn("Firestore product stock sync note:", err)
+      );
+      if (BACKEND_URL) {
+        fetch(`${BACKEND_URL}/api/products`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(prod)
+        }).catch(err => console.warn("Backend API product sync note:", err));
+      }
+    }
+
+    saveRecordToFirestore('challans', id, newChallan).catch(err =>
+      console.warn("Firestore challan save note:", err)
+    );
+    if (BACKEND_URL) {
+      fetch(`${BACKEND_URL}/api/challans`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(newChallan)
+      }).catch(err => console.warn("Backend API challan sync note:", err));
     }
 
     // 3. Log Stock Transaction History
@@ -156,6 +341,7 @@ export const challanService = {
           productId: item.productId || 'custom_item',
           productName: item.productName,
           quantityDeducted: item.qty,
+          serialNumbers: item.serialNumbers,
           timestamp: createdAt
         });
       } catch (err) {
@@ -163,11 +349,9 @@ export const challanService = {
       }
     }
 
-    try {
-      saveRecordToFirestore('challans', id, newChallan);
-    } catch (err) {
-      console.warn("Firestore challan save note:", err);
-    }
+    // 4. Dispatch realtime update so all open pages (Products, Leads, etc.) re-render immediately
+    window.dispatchEvent(new CustomEvent('app-realtime-update'));
+
     return id;
   },
 
@@ -211,55 +395,153 @@ export const challanService = {
       }
     }
 
-    await db.transaction('rw', [db.challans, db.products], async () => {
-      // Step 1: Revert old items stock & serial statuses
-      for (const oldItem of oldChallan.items) {
-        const product = await db.products.get(oldItem.productId);
-        if (product) {
-          const revertedStock = product.stockQuantity + oldItem.qty;
-          let revertedUnits = product.productUnits;
-          if (oldItem.serialNumbers && oldItem.serialNumbers.length > 0 && product.productUnits) {
-            revertedUnits = product.productUnits.map(u => {
-              if (oldItem.serialNumbers?.includes(u.serialNumber)) {
-                return { ...u, status: 'available' as const };
-              }
-              return u;
-            });
+    // Track all products that need updating
+    const productsMap = new Map<string, Product>();
+
+    // Step 1: Revert old items
+    for (const oldItem of oldChallan.items) {
+      if (!oldItem.productId || oldItem.productId.startsWith('custom_')) continue;
+      const product = await db.products.get(oldItem.productId);
+      if (!product) continue;
+
+      let units = product.productUnits && Array.isArray(product.productUnits)
+        ? product.productUnits.map(u => ({ ...u }))
+        : [];
+
+      const oldSerialsSet = new Set((oldItem.serialNumbers || []).map(s => s.trim().toLowerCase()));
+      if (oldSerialsSet.size > 0 && units.length > 0) {
+        units = units.map(u => {
+          const cleanSn = (u.serialNumber || '').trim().toLowerCase();
+          if (oldSerialsSet.has(cleanSn)) {
+            return { ...u, status: 'available' as const, dispatchedAt: undefined };
           }
-          const updateObj: Partial<Product> = { stockQuantity: revertedStock };
-          if (revertedUnits) updateObj.productUnits = revertedUnits;
-          await db.products.update(oldItem.productId, updateObj);
-          saveRecordToFirestore('products', oldItem.productId, { ...product, ...updateObj });
+          return u;
+        });
+      } else if (units.length > 0) {
+        let remainingToRevert = oldItem.qty;
+        for (let i = units.length - 1; i >= 0 && remainingToRevert > 0; i--) {
+          if (units[i].status === 'sold' || units[i].status === 'dispatched') {
+            units[i].status = 'available';
+            units[i].dispatchedAt = undefined;
+            remainingToRevert--;
+          }
         }
       }
 
-      // Step 2: Apply new items stock & serial statuses
-      for (const newItem of updatedChallan.items) {
-        const product = await db.products.get(newItem.productId);
-        if (product) {
-          const finalStock = Math.max(0, product.stockQuantity - newItem.qty);
-          let finalUnits = product.productUnits;
-          if (newItem.serialNumbers && newItem.serialNumbers.length > 0 && product.productUnits) {
-            finalUnits = product.productUnits.map(u => {
-              if (newItem.serialNumbers?.includes(u.serialNumber)) {
-                return { ...u, status: 'sold' as const };
-              }
-              return u;
-            });
-          }
-          const updateObj: Partial<Product> = { stockQuantity: finalStock };
-          if (finalUnits) updateObj.productUnits = finalUnits;
-          await db.products.update(newItem.productId, updateObj);
-          saveRecordToFirestore('products', newItem.productId, { ...product, ...updateObj });
-        }
-      }
+      const availCount = units.length > 0
+        ? units.filter(u => u.status === 'available' || !u.status).length
+        : (product.stockQuantity || 0) + oldItem.qty;
 
-      await db.challans.put(updatedChallan);
-    });
+      productsMap.set(product.id, {
+        ...product,
+        stockQuantity: availCount,
+        productUnits: units.length > 0 ? units : undefined,
+        serialNumbers: units.length > 0
+          ? units.filter(u => u.status === 'available' || !u.status).map(u => u.serialNumber)
+          : product.serialNumbers
+      });
+    }
 
-    // Log Stock Transactions for updated challan items
-    const challanTypeLabel = updatedChallan.type === 'b2b' ? 'B2B' : 'Lead';
+    // Step 2: Apply new items
     const now = new Date().toISOString();
+    for (const newItem of updatedChallan.items) {
+      if (!newItem.productId || newItem.productId.startsWith('custom_')) continue;
+      const baseProduct = productsMap.get(newItem.productId) || await db.products.get(newItem.productId);
+      if (!baseProduct) continue;
+
+      let units = baseProduct.productUnits && Array.isArray(baseProduct.productUnits)
+        ? baseProduct.productUnits.map(u => ({ ...u }))
+        : [];
+
+      const newSerialsSet = new Set((newItem.serialNumbers || []).map(s => s.trim().toLowerCase()));
+      if (newSerialsSet.size > 0 && units.length > 0) {
+        units = units.map(u => {
+          const cleanSn = (u.serialNumber || '').trim().toLowerCase();
+          if (newSerialsSet.has(cleanSn)) {
+            return {
+              ...u,
+              status: 'sold' as const,
+              dispatchedAt: now,
+              notes: u.notes || `Dispatched via ${updatedChallan.challanNumber}`
+            };
+          }
+          return u;
+        });
+      } else if (units.length > 0) {
+        let remainingToMark = newItem.qty;
+        units = units.map(u => {
+          if (remainingToMark > 0 && (u.status === 'available' || !u.status)) {
+            remainingToMark--;
+            return {
+              ...u,
+              status: 'sold' as const,
+              dispatchedAt: now,
+              notes: u.notes || `Dispatched via ${updatedChallan.challanNumber}`
+            };
+          }
+          return u;
+        });
+      }
+
+      const availCount = units.length > 0
+        ? units.filter(u => u.status === 'available' || !u.status).length
+        : Math.max(0, (baseProduct.stockQuantity || 0) - newItem.qty);
+
+      productsMap.set(baseProduct.id, {
+        ...baseProduct,
+        stockQuantity: availCount,
+        productUnits: units.length > 0 ? units : undefined,
+        serialNumbers: units.length > 0
+          ? units.filter(u => u.status === 'available' || !u.status).map(u => u.serialNumber)
+          : baseProduct.serialNumbers
+      });
+    }
+
+    const updatedProductsList = Array.from(productsMap.values());
+
+    // 1. Pure Dexie Transaction (NO external async awaits inside)
+    try {
+      await db.transaction('rw', [db.challans, db.products], async () => {
+        await db.challans.put(updatedChallan);
+        for (const prod of updatedProductsList) {
+          await db.products.put(prod);
+        }
+      });
+    } catch (dbErr) {
+      console.warn("Local DB transaction note in updateChallan:", dbErr);
+      await db.challans.put(updatedChallan);
+      for (const prod of updatedProductsList) {
+        await db.products.put(prod).catch(() => {});
+      }
+    }
+
+    // 2. Background Non-blocking Firestore & REST API Sync
+    for (const prod of updatedProductsList) {
+      saveRecordToFirestore('products', prod.id, prod).catch(err =>
+        console.warn("Firestore product stock sync note:", err)
+      );
+      if (BACKEND_URL) {
+        fetch(`${BACKEND_URL}/api/products`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(prod)
+        }).catch(err => console.warn("Backend API product sync note:", err));
+      }
+    }
+
+    saveRecordToFirestore('challans', id, updatedChallan).catch(err =>
+      console.warn("Firestore challan save note:", err)
+    );
+    if (BACKEND_URL) {
+      fetch(`${BACKEND_URL}/api/challans`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(updatedChallan)
+      }).catch(err => console.warn("Backend API challan sync note:", err));
+    }
+
+    // 3. Log Stock Transactions for updated challan items
+    const challanTypeLabel = updatedChallan.type === 'b2b' ? 'B2B' : 'Lead';
     for (const item of updatedChallan.items) {
       await stockTransactionService.addTransaction({
         challanId: updatedChallan.id,
@@ -268,11 +550,12 @@ export const challanService = {
         productId: item.productId,
         productName: item.productName,
         quantityDeducted: item.qty,
+        serialNumbers: item.serialNumbers,
         timestamp: now
-      });
+      }).catch(() => {});
     }
 
-    saveRecordToFirestore('challans', id, updatedChallan);
+    window.dispatchEvent(new CustomEvent('app-realtime-update'));
   },
 
   async requestChallanEdit(id: string, updatedChallan: Challan, customReason?: string): Promise<{ success: boolean; requiresApproval: boolean; requestId?: string }> {
@@ -337,29 +620,81 @@ export const challanService = {
     await markRecordAsDeleted(id, 'challans');
 
     const challan = await db.challans.get(id);
+    const restoredProducts: Product[] = [];
+
     if (challan) {
-      await db.transaction('rw', [db.challans, db.products], async () => {
-        for (const item of challan.items) {
-          const product = await db.products.get(item.productId);
-          if (product) {
-            const restoredStock = product.stockQuantity + item.qty;
-            let restoredUnits = product.productUnits;
-            if (item.serialNumbers && item.serialNumbers.length > 0 && product.productUnits) {
-              restoredUnits = product.productUnits.map(u => {
-                if (item.serialNumbers?.includes(u.serialNumber)) {
-                  return { ...u, status: 'available' as const };
-                }
-                return u;
-              });
+      for (const item of challan.items) {
+        if (!item.productId || item.productId.startsWith('custom_')) continue;
+        const product = await db.products.get(item.productId);
+        if (!product) continue;
+
+        let units = product.productUnits && Array.isArray(product.productUnits)
+          ? product.productUnits.map(u => ({ ...u }))
+          : [];
+
+        const dispatchedSerialsSet = new Set((item.serialNumbers || []).map(s => s.trim().toLowerCase()));
+        if (dispatchedSerialsSet.size > 0 && units.length > 0) {
+          units = units.map(u => {
+            const cleanSn = (u.serialNumber || '').trim().toLowerCase();
+            if (dispatchedSerialsSet.has(cleanSn)) {
+              return { ...u, status: 'available' as const, dispatchedAt: undefined };
             }
-            const updateObj: Partial<Product> = { stockQuantity: restoredStock };
-            if (restoredUnits) updateObj.productUnits = restoredUnits;
-            await db.products.update(item.productId, updateObj);
-            saveRecordToFirestore('products', item.productId, { ...product, ...updateObj });
+            return u;
+          });
+        } else if (units.length > 0) {
+          let remainingToRevert = item.qty;
+          for (let i = units.length - 1; i >= 0 && remainingToRevert > 0; i--) {
+            if (units[i].status === 'sold' || units[i].status === 'dispatched') {
+              units[i].status = 'available';
+              units[i].dispatchedAt = undefined;
+              remainingToRevert--;
+            }
           }
         }
+
+        const availCount = units.length > 0
+          ? units.filter(u => u.status === 'available' || !u.status).length
+          : (product.stockQuantity || 0) + item.qty;
+
+        restoredProducts.push({
+          ...product,
+          stockQuantity: availCount,
+          productUnits: units.length > 0 ? units : undefined,
+          serialNumbers: units.length > 0
+            ? units.filter(u => u.status === 'available' || !u.status).map(u => u.serialNumber)
+            : product.serialNumbers
+        });
+      }
+
+      // 1. Pure Dexie transaction
+      try {
+        await db.transaction('rw', [db.challans, db.products], async () => {
+          for (const prod of restoredProducts) {
+            await db.products.put(prod);
+          }
+          await db.challans.delete(id);
+        });
+      } catch (dbErr) {
+        console.warn("Local DB transaction note in deleteChallan:", dbErr);
+        for (const prod of restoredProducts) {
+          await db.products.put(prod).catch(() => {});
+        }
         await db.challans.delete(id);
-      });
+      }
+
+      // 2. Background Non-blocking sync AFTER transaction
+      for (const prod of restoredProducts) {
+        saveRecordToFirestore('products', prod.id, prod).catch(err =>
+          console.warn("Firestore product stock sync note:", err)
+        );
+        if (BACKEND_URL) {
+          fetch(`${BACKEND_URL}/api/products`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(prod)
+          }).catch(err => console.warn("Backend API product sync note:", err));
+        }
+      }
     } else {
       await db.challans.delete(id);
     }
@@ -369,6 +704,9 @@ export const challanService = {
       await deleteRecordFromFirestore('challans', id);
     } catch (e) {
       console.warn("Firestore delete challan note:", e);
+    }
+    if (BACKEND_URL) {
+      fetch(`${BACKEND_URL}/api/challans/${id}`, { method: 'DELETE' }).catch(() => {});
     }
 
     window.dispatchEvent(new CustomEvent('app-realtime-update'));

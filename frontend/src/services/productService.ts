@@ -55,6 +55,9 @@ export const productService = {
       syncRemote().catch(() => {});
     }
 
+    // Background reconciliation with active challans
+    import('./challanService').then(m => m.challanService.reconcileProductStockWithChallans()).catch(() => {});
+
     return validLocal;
   },
 

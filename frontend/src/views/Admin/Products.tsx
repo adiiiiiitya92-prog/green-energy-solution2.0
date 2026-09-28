@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { isMeterUnit, type Product, type ProductUnit } from '../../types';
 import { productService } from '../../services/productService';
+import { challanService } from '../../services/challanService';
 import { useAuthStore } from '../../store/authStore';
 import { PackageManager } from '../../components/Packages/PackageManager';
 import { AiPalletScannerModal } from '../../components/Products/AiPalletScannerModal';
@@ -190,8 +191,21 @@ export const Products: React.FC = () => {
   };
 
   const loadProducts = async () => {
+    await challanService.reconcileProductStockWithChallans().catch(() => {});
     const list = await productService.getProducts();
     setProducts(list);
+    // If serials management modal is open, keep its state live and synchronized
+    setManagingSerialsProduct(prev => {
+      if (!prev) return null;
+      const updated = list.find(p => p.id === prev.id);
+      if (updated) {
+        const norm = normalizeProductUnits(updated);
+        setManagingUnits(norm);
+        setManagingStockQty(norm.filter(u => u.status === 'available').length);
+        return updated;
+      }
+      return prev;
+    });
   };
 
   useEffect(() => {
@@ -1996,7 +2010,7 @@ export const Products: React.FC = () => {
                 <div className="flex items-center space-x-2 bg-slate-50 border border-slate-200 px-3 py-1.5 rounded-xl">
                   <span className="text-xs font-extrabold text-slate-600">Total Available Stock:</span>
                   <span className="text-xs font-black text-emerald-800 bg-emerald-100/80 px-2 py-0.5 rounded-md border border-emerald-200">
-                    {managingStockQty} {managingSerialsProduct.unit || 'units'}
+                    {managingUnits.filter(u => u.status === 'available').length} {managingSerialsProduct.unit || 'units'}
                   </span>
                 </div>
 
@@ -2191,6 +2205,7 @@ export const Products: React.FC = () => {
                               setManagingUnits(prev => {
                                 const copy = [...prev];
                                 copy[actualIndex] = { ...copy[actualIndex], status: st };
+                                setManagingStockQty(copy.filter(u => u.status === 'available').length);
                                 return copy;
                               });
                             }}

@@ -58,10 +58,21 @@ export const QuickStockInwardModal: React.FC<QuickStockInwardModalProps> = ({
       selectedDate.setHours(now.getHours(), now.getMinutes(), now.getSeconds(), now.getMilliseconds());
       const dateIso = selectedDate.toISOString();
 
-      const existingUnits: ProductUnit[] = product.productUnits ? [...product.productUnits] : [];
+      const existingUnits: ProductUnit[] = product.productUnits && product.productUnits.length > 0
+        ? [...product.productUnits]
+        : (product.serialNumbers && product.serialNumbers.length > 0
+            ? product.serialNumbers.map((sn, idx) => ({
+                id: `unit_${idx + 1}_${Date.now()}_${idx}`,
+                unitNumber: idx + 1,
+                serialNumber: sn,
+                status: 'available' as const,
+                addedAt: product.createdAt || dateIso
+              }))
+            : []);
+
       const currentMaxNum = existingUnits.length > 0
         ? Math.max(...existingUnits.map(u => u.unitNumber || 0))
-        : 0;
+        : (product.stockQuantity || 0);
 
       // Parse custom pasted serials if any
       const pastedLines = pasteSerialsText
@@ -90,7 +101,7 @@ export const QuickStockInwardModal: React.FC<QuickStockInwardModalProps> = ({
       }
 
       const allUnits = [...existingUnits, ...newUnits];
-      const availableUnits = allUnits.filter(u => u.status === 'available');
+      const availableUnits = allUnits.filter(u => u.status === 'available' || !u.status);
       const newTotalStock = availableUnits.length;
 
       const updatedProduct: Product = {

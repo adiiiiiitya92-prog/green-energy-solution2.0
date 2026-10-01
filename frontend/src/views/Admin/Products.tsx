@@ -83,8 +83,8 @@ const normalizeProductUnits = (p: Product): ProductUnit[] => {
   }
 
   // Separate available vs non-available units
-  const availableUnits = units.filter(u => u.status === 'available');
-  const nonAvailableUnits = units.filter(u => u.status !== 'available');
+  const availableUnits = units.filter(u => u.status === 'available' || !u.status);
+  const nonAvailableUnits = units.filter(u => u.status && u.status !== 'available');
 
   if (availableUnits.length < targetAvailableStock) {
     // We need to add new available units for the stock addition!
@@ -295,7 +295,8 @@ export const Products: React.FC = () => {
         id: `unit_${i + 1}_${Date.now()}_${Math.random().toString(36).substring(2, 5)}`,
         unitNumber: i + 1,
         serialNumber: sn,
-        status: 'available'
+        status: 'available',
+        addedAt: new Date().toISOString()
       });
     }
 
@@ -453,7 +454,7 @@ export const Products: React.FC = () => {
       stockQuantity: newStock,
       minStockThreshold: isBom ? 10 : (Number(editMinStockThreshold) || 0),
       productUnits: existingUnits,
-      serialNumbers: existingUnits.map(u => u.serialNumber)
+      serialNumbers: existingUnits.filter(u => u.status === 'available' || !u.status).map(u => u.serialNumber)
     };
 
     // Immediately close edit modal for 0ms lag
@@ -510,15 +511,17 @@ export const Products: React.FC = () => {
   };
 
   // Dedicated Serial Numbers Management Modal Handlers
-  const handleOpenManageSerialsModal = (p: Product) => {
-    const units = normalizeProductUnits(p);
-    const availCount = units.filter(u => u.status === 'available').length;
-    setManagingSerialsProduct(p);
+  const handleOpenManageSerialsModal = async (p: Product) => {
+    await challanService.reconcileProductStockWithChallans().catch(() => {});
+    const freshProduct = await db.products.get(p.id) || p;
+    const units = normalizeProductUnits(freshProduct);
+    const availCount = units.filter(u => u.status === 'available' || !u.status).length;
+    setManagingSerialsProduct(freshProduct);
     setManagingUnits(units);
     setManagingStockQty(availCount);
     setAddBatchQty('');
     setSerialModalTab('available');
-    const defaultPrefix = (p.brand || p.name || 'GES').substring(0, 3).toUpperCase().replace(/[^A-Z0-9]/g, '') + '-';
+    const defaultPrefix = (freshProduct.brand || freshProduct.name || 'GES').substring(0, 3).toUpperCase().replace(/[^A-Z0-9]/g, '') + '-';
     setManageSerialPrefix(defaultPrefix);
     setSerialSearchTerm('');
     setManageBulkText('');
@@ -554,7 +557,7 @@ export const Products: React.FC = () => {
       }
 
       const updated = [...prev, ...newUnits];
-      const availCount = updated.filter(u => u.status === 'available').length;
+      const availCount = updated.filter(u => u.status === 'available' || !u.status).length;
       setManagingStockQty(availCount);
       return updated;
     });
@@ -568,8 +571,8 @@ export const Products: React.FC = () => {
     const targetCount = Math.max(0, newQty);
     setManagingStockQty(targetCount);
     setManagingUnits(prev => {
-      const availableUnits = prev.filter(u => u.status === 'available');
-      const nonAvailableUnits = prev.filter(u => u.status !== 'available');
+      const availableUnits = prev.filter(u => u.status === 'available' || !u.status);
+      const nonAvailableUnits = prev.filter(u => u.status && u.status !== 'available');
       const nowIso = new Date().toISOString();
       const isMeter = isMeterUnit(managingSerialsProduct?.unit);
 
@@ -644,13 +647,13 @@ export const Products: React.FC = () => {
   const handleSaveManagedSerials = async () => {
     if (!managingSerialsProduct) return;
     const targetProduct = managingSerialsProduct;
-    const availCount = managingUnits.filter(u => u.status === 'available').length;
+    const availCount = managingUnits.filter(u => u.status === 'available' || !u.status).length;
 
     const updatedProduct: Product = {
       ...targetProduct,
       stockQuantity: availCount,
       productUnits: managingUnits,
-      serialNumbers: managingUnits.filter(u => u.status === 'available').map(u => u.serialNumber)
+      serialNumbers: managingUnits.filter(u => u.status === 'available' || !u.status).map(u => u.serialNumber)
     };
 
     setManagingSerialsProduct(null);
@@ -659,6 +662,7 @@ export const Products: React.FC = () => {
 
     try {
       await productService.updateProduct(updatedProduct);
+      await challanService.reconcileProductStockWithChallans().catch(() => {});
     } catch (err) {
       console.error("Error saving managed serial numbers:", err);
       showToast('Error updating serial numbers.');
@@ -1006,7 +1010,9 @@ export const Products: React.FC = () => {
                         ? p.productUnits
                         : (p.serialNumbers || []).map((sn, i) => ({ id: `u_${i}`, unitNumber: i + 1, serialNumber: sn, status: 'available' as const }));
 
-                      const availableCount = unitsList.filter(u => u.status === 'available' || !u.status).length;
+                      const availableCount = unitsList.length > 0
+                        ? unitsList.filter(u => u.status === 'available' || !u.status).length
+                        : (p.stockQuantity || 0);
                       const soldCount = unitsList.filter(u => u.status && u.status !== 'available').length;
                       const totalUnits = unitsList.length || p.stockQuantity || 0;
                       const isLowStock = activeTab === 'commercial' && p.minStockThreshold !== undefined && availableCount <= p.minStockThreshold;
@@ -1179,7 +1185,9 @@ export const Products: React.FC = () => {
                   ? p.productUnits
                   : (p.serialNumbers || []).map((sn, i) => ({ id: `u_${i}`, unitNumber: i + 1, serialNumber: sn, status: 'available' as const }));
 
-                const availableCount = unitsList.filter(u => u.status === 'available' || !u.status).length;
+                const availableCount = unitsList.length > 0
+                  ? unitsList.filter(u => u.status === 'available' || !u.status).length
+                  : (p.stockQuantity || 0);
                 const soldCount = unitsList.filter(u => u.status && u.status !== 'available').length;
                 const totalUnits = unitsList.length || p.stockQuantity || 0;
 
@@ -1936,7 +1944,7 @@ export const Products: React.FC = () => {
                 }`}
               >
                 <CheckCircle2 className="w-3.5 h-3.5" />
-                <span>Available In-Stock ({managingUnits.filter(u => u.status === 'available').length})</span>
+                <span>Available In-Stock ({managingUnits.filter(u => u.status === 'available' || !u.status).length})</span>
               </button>
 
               <button
@@ -1949,7 +1957,7 @@ export const Products: React.FC = () => {
                 }`}
               >
                 <Package className="w-3.5 h-3.5" />
-                <span>Sold / Dispatched ({managingUnits.filter(u => u.status !== 'available').length})</span>
+                <span>Sold / Dispatched ({managingUnits.filter(u => u.status && u.status !== 'available').length})</span>
               </button>
 
               <button
@@ -2010,7 +2018,7 @@ export const Products: React.FC = () => {
                 <div className="flex items-center space-x-2 bg-slate-50 border border-slate-200 px-3 py-1.5 rounded-xl">
                   <span className="text-xs font-extrabold text-slate-600">Total Available Stock:</span>
                   <span className="text-xs font-black text-emerald-800 bg-emerald-100/80 px-2 py-0.5 rounded-md border border-emerald-200">
-                    {managingUnits.filter(u => u.status === 'available').length} {managingSerialsProduct.unit || 'units'}
+                    {managingUnits.filter(u => u.status === 'available' || !u.status).length} {managingSerialsProduct.unit || 'units'}
                   </span>
                 </div>
 
@@ -2105,8 +2113,8 @@ export const Products: React.FC = () => {
               {(() => {
                 const indexedUnits = managingUnits.map((unit, actualIndex) => ({ unit, actualIndex }));
                 const filteredByTab = indexedUnits.filter(({ unit }) => {
-                  if (serialModalTab === 'available') return unit.status === 'available';
-                  if (serialModalTab === 'sold') return unit.status !== 'available';
+                  if (serialModalTab === 'available') return unit.status === 'available' || !unit.status;
+                  if (serialModalTab === 'sold') return Boolean(unit.status && unit.status !== 'available');
                   return true;
                 });
 
@@ -2205,7 +2213,7 @@ export const Products: React.FC = () => {
                               setManagingUnits(prev => {
                                 const copy = [...prev];
                                 copy[actualIndex] = { ...copy[actualIndex], status: st };
-                                setManagingStockQty(copy.filter(u => u.status === 'available').length);
+                                setManagingStockQty(copy.filter(u => u.status === 'available' || !u.status).length);
                                 return copy;
                               });
                             }}
@@ -2236,8 +2244,8 @@ export const Products: React.FC = () => {
             {/* Modal Footer */}
             <div className="pt-4 border-t border-slate-100 flex justify-between items-center shrink-0">
               <div className="text-xs font-extrabold text-slate-500 flex items-center gap-3">
-                <span>Available: <strong className="text-emerald-700">{managingUnits.filter(u => u.status === 'available').length}</strong></span>
-                <span>Sold/Dispatched: <strong className="text-rose-700">{managingUnits.filter(u => u.status !== 'available').length}</strong></span>
+                <span>Available: <strong className="text-emerald-700">{managingUnits.filter(u => u.status === 'available' || !u.status).length}</strong></span>
+                <span>Sold/Dispatched: <strong className="text-rose-700">{managingUnits.filter(u => u.status && u.status !== 'available').length}</strong></span>
                 <span>Total: <strong className="text-slate-900">{managingUnits.length}</strong></span>
               </div>
 

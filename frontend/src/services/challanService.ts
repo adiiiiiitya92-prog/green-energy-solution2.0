@@ -79,26 +79,40 @@ export const challanService = {
   async reconcileProductStockWithChallans(): Promise<number> {
     const deletedIds = await getDeletedRecordIdsSet();
     const challans = await db.challans.toArray().catch(() => []);
-    const activeChallans = challans.filter(c => !deletedIds.has(c.id) && (!c.leadId || !deletedIds.has(c.leadId)));
-    if (activeChallans.length === 0) return 0;
+    const activeChallans = challans.filter(c => !deletedIds.has(c.id) && c.status !== 'cancelled' && (!c.leadId || !deletedIds.has(c.leadId)));
+    // Map: productId -> Map(cleanSerial -> { challanNumber, dispatchedAt })
+    const prodIdDispatchedMap = new Map<string, Map<string, { challanNumber: string; dispatchedAt: string }>>();
+    // Map: productId -> Set of active challan numbers that include this product
+    const prodIdActiveChallans = new Map<string, Set<string>>();
 
-    // Map serial number (lowercase) -> { challanNumber, dispatchedAt }
-    const dispatchedSerialsMap = new Map<string, { challanNumber: string; dispatchedAt: string }>();
     for (const ch of activeChallans) {
       for (const item of ch.items || []) {
+        const prodId = item.productId && !item.productId.startsWith('custom_') ? item.productId.trim() : null;
+        if (!prodId) continue;
+
+        if (ch.challanNumber) {
+          if (!prodIdActiveChallans.has(prodId)) {
+            prodIdActiveChallans.set(prodId, new Set());
+          }
+          prodIdActiveChallans.get(prodId)!.add(ch.challanNumber.trim().toUpperCase());
+        }
+
         for (const sn of item.serialNumbers || []) {
           const clean = (sn || '').trim().toLowerCase();
-          if (clean) {
-            dispatchedSerialsMap.set(clean, {
-              challanNumber: ch.challanNumber,
-              dispatchedAt: ch.createdAt
-            });
+          if (!clean) continue;
+
+          const dispatchInfo = {
+            challanNumber: ch.challanNumber,
+            dispatchedAt: ch.createdAt
+          };
+
+          if (!prodIdDispatchedMap.has(prodId)) {
+            prodIdDispatchedMap.set(prodId, new Map());
           }
+          prodIdDispatchedMap.get(prodId)!.set(clean, dispatchInfo);
         }
       }
     }
-
-    if (dispatchedSerialsMap.size === 0) return 0;
 
     const products = await db.products.toArray().catch(() => []);
     const updatedProducts: Product[] = [];
@@ -120,17 +134,53 @@ export const challanService = {
             : []);
 
       if (units.length > 0) {
+        const thisProdIdMap = prodIdDispatchedMap.get(p.id);
+        const activeChallanNumsForProduct = prodIdActiveChallans.get(p.id);
+
         units = units.map(u => {
           const cleanSn = (u.serialNumber || '').trim().toLowerCase();
-          const dispatchInfo = dispatchedSerialsMap.get(cleanSn);
-          if (dispatchInfo && (u.status === 'available' || !u.status)) {
-            hasChange = true;
-            return {
-              ...u,
-              status: 'sold' as const,
-              dispatchedAt: dispatchInfo.dispatchedAt,
-              notes: u.notes || `Dispatched via ${dispatchInfo.challanNumber}`
-            };
+          const dispatchInfo = cleanSn ? thisProdIdMap?.get(cleanSn) : null;
+
+          if (dispatchInfo) {
+            // Unit is confirmed dispatched in an active delivery challan for THIS specific product
+            if (u.status !== 'sold' || !u.notes?.includes(dispatchInfo.challanNumber)) {
+              hasChange = true;
+              return {
+                ...u,
+                status: 'sold' as const,
+                dispatchedAt: dispatchInfo.dispatchedAt,
+                notes: u.notes
+                  ? (u.notes.includes(dispatchInfo.challanNumber) ? u.notes : `${u.notes} • Dispatched via ${dispatchInfo.challanNumber}`)
+                  : `Dispatched via ${dispatchInfo.challanNumber}`
+              };
+            }
+          } else {
+            // Unit is NOT dispatched with this serial number in any active delivery challan for this product!
+            if (u.status === 'sold' || u.status === 'dispatched') {
+              // Check if it was dispatched via an active challan without specific serials
+              let isLegitimatelyDispatched = false;
+              if (activeChallanNumsForProduct && activeChallanNumsForProduct.size > 0 && u.notes) {
+                for (const chNum of activeChallanNumsForProduct) {
+                  if (u.notes.toUpperCase().includes(chNum)) {
+                    isLegitimatelyDispatched = true;
+                    break;
+                  }
+                }
+              }
+
+              if (!isLegitimatelyDispatched) {
+                // Not in any active delivery challan for this product!
+                // Self-heal: revert status back to available and clear invalid dispatch notes
+                hasChange = true;
+                const cleanNotes = (u.notes || '').replace(/Dispatched via\s+[^\s•,;]+/g, '').replace(/•\s*$/, '').trim();
+                return {
+                  ...u,
+                  status: 'available' as const,
+                  dispatchedAt: undefined,
+                  notes: cleanNotes || undefined
+                };
+              }
+            }
           }
           return u;
         });
@@ -172,7 +222,7 @@ export const challanService = {
       }
 
       window.dispatchEvent(new CustomEvent('app-realtime-update'));
-      console.log(`✅ Auto-reconciled stock & sold units for ${updatedProducts.length} product(s) against active delivery challans.`);
+      console.log(`✅ Auto-reconciled & healed stock for ${updatedProducts.length} product(s) against active delivery challans.`);
     }
 
     return updatedProducts.length;

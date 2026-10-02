@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { db } from '../../services/db';
+import { db, getDeletedRecordIdsSet } from '../../services/db';
 import { leadService, filterLeadsForUser } from '../../services/leadService';
 import { quotationService, getQuotationTotalAmount } from '../../services/quotationService';
 import { orderService } from '../../services/orderService';
@@ -49,6 +49,75 @@ export const Dashboard: React.FC = () => {
 
   const [isLoading, setIsLoading] = useState<boolean>(true);
 
+  // Fast Instant Hydration from local IndexedDB (0ms latency)
+  useEffect(() => {
+    let isMounted = true;
+    const hydrateLocal = async () => {
+      try {
+        const deletedIds = await getDeletedRecordIdsSet();
+        const [localLeads, localQuotes, localOcs, localProds, localEmps] = await Promise.all([
+          db.leads.toArray().catch(() => []),
+          db.quotations.toArray().catch(() => []),
+          db.orderConfirmations.toArray().catch(() => []),
+          db.products.toArray().catch(() => []),
+          db.profiles.toArray().catch(() => [])
+        ]);
+
+        if (!isMounted) return;
+
+        const validLeads = (localLeads || []).filter(l => !deletedIds.has(l.id));
+        if (validLeads.length > 0) {
+          setAllCompanyLeads(validLeads);
+          setLeads(filterLeadsForUser(validLeads, currentUser, currentRole));
+        }
+
+        const validQuotes = (localQuotes || []).filter(q => !deletedIds.has(q.id) && q.items && q.items.length > 0);
+        if (validQuotes.length > 0) {
+          setAllCompanyQuotations(validQuotes);
+          const allLeadIds = new Set(validLeads.map(l => l.id));
+          const activeList = filterLeadsForUser(validLeads, currentUser, currentRole);
+          const activeLeadIds = new Set(activeList.map(l => l.id));
+          if (!hasFullAccess) {
+            setQuotations(validQuotes.filter(q => !!q.leadId && activeLeadIds.has(q.leadId)));
+          } else {
+            setQuotations(validQuotes.filter(q => !q.leadId || allLeadIds.size === 0 || allLeadIds.has(q.leadId)));
+          }
+        }
+
+        const validOcs = (localOcs || []).filter(o => !deletedIds.has(o.id) && !deletedIds.has(o.leadId));
+        if (validOcs.length > 0) {
+          setAllCompanyConfirmations(validOcs);
+          const allLeadIds = new Set(validLeads.map(l => l.id));
+          const activeList = filterLeadsForUser(validLeads, currentUser, currentRole);
+          const activeLeadIds = new Set(activeList.map(l => l.id));
+          const matchedOcs = hasFullAccess
+            ? validOcs.filter(oc => !oc.leadId || allLeadIds.size === 0 || allLeadIds.has(oc.leadId))
+            : validOcs.filter(oc => !!oc.leadId && activeLeadIds.has(oc.leadId));
+          setConfirmations(matchedOcs);
+        }
+
+        const validProds = (localProds || []).filter(p => !deletedIds.has(p.id));
+        if (validProds.length > 0) {
+          setProducts(validProds);
+          setLowStockProducts(validProds.filter(p => p.stockQuantity <= p.minStockThreshold));
+        }
+
+        if (localEmps && localEmps.length > 0) {
+          setEmployees(localEmps);
+        }
+
+        if (validLeads.length > 0 || validQuotes.length > 0 || validOcs.length > 0) {
+          setIsLoading(false);
+        }
+      } catch (err) {
+        console.warn("Hydrate local error note:", err);
+      }
+    };
+
+    hydrateLocal();
+    return () => { isMounted = false; };
+  }, [currentUser, currentRole, hasFullAccess]);
+
   const loadData = async () => {
     try {
       const [leadsRes, quotesRes, ocsRes, empsRes, visitsRes, prodsRes, deleteReqsRes, challansRes, evidenceLeadIdsRes] = await Promise.allSettled([
@@ -59,22 +128,21 @@ export const Dashboard: React.FC = () => {
         visitService.getVisitReports(),
         productService.getProducts(),
         import('../../services/deletionRequestService').then(m => m.deletionRequestService.getPendingRequests()).catch(() => []),
-        challanService.getChallans(true),
-        orderService.getAllInstallationEvidenceLeadIds(true)
+        challanService.getChallans(false),
+        orderService.getAllInstallationEvidenceLeadIds(false)
       ]);
 
-
-      if (leadsRes.status === 'fulfilled' && Array.isArray(leadsRes.value) && leadsRes.value.length > 0) {
+      if (leadsRes.status === 'fulfilled' && Array.isArray(leadsRes.value)) {
         const rawLeads = leadsRes.value;
         setAllCompanyLeads(rawLeads);
         const lList = filterLeadsForUser(rawLeads, currentUser, currentRole);
         setLeads(lList);
       }
 
-      if (quotesRes.status === 'fulfilled' && Array.isArray(quotesRes.value) && quotesRes.value.length > 0) {
+      if (quotesRes.status === 'fulfilled' && Array.isArray(quotesRes.value)) {
         let qList: Quotation[] = quotesRes.value;
         setAllCompanyQuotations(qList);
-        const currentLeads = leadsRes.status === 'fulfilled' && Array.isArray(leadsRes.value) && leadsRes.value.length > 0 ? leadsRes.value : allCompanyLeads;
+        const currentLeads = leadsRes.status === 'fulfilled' && Array.isArray(leadsRes.value) ? leadsRes.value : allCompanyLeads;
         const allValidLeadIds = new Set(currentLeads.map(l => l.id));
         const activeList = filterLeadsForUser(currentLeads, currentUser, currentRole);
         const activeLeadIds = new Set(activeList.map(l => l.id));
@@ -82,20 +150,20 @@ export const Dashboard: React.FC = () => {
         if (!hasFullAccess) {
           setQuotations(qList.filter(q => !!q.leadId && activeLeadIds.has(q.leadId)));
         } else {
-          setQuotations(qList.filter(q => !!q.leadId && allValidLeadIds.has(q.leadId)));
+          setQuotations(qList.filter(q => !q.leadId || allValidLeadIds.size === 0 || allValidLeadIds.has(q.leadId)));
         }
       }
 
-      if (ocsRes.status === 'fulfilled' && Array.isArray(ocsRes.value) && ocsRes.value.length > 0) {
+      if (ocsRes.status === 'fulfilled' && Array.isArray(ocsRes.value)) {
         const allOcs = ocsRes.value;
         setAllCompanyConfirmations(allOcs);
-        const currentLeads = leadsRes.status === 'fulfilled' && Array.isArray(leadsRes.value) && leadsRes.value.length > 0 ? leadsRes.value : allCompanyLeads;
+        const currentLeads = leadsRes.status === 'fulfilled' && Array.isArray(leadsRes.value) ? leadsRes.value : allCompanyLeads;
         const allValidLeadIds = new Set(currentLeads.map(l => l.id));
         const activeList = filterLeadsForUser(currentLeads, currentUser, currentRole);
         const activeLeadIds = new Set(activeList.map(l => l.id));
 
         const matchedOcs = hasFullAccess
-          ? allOcs.filter(oc => !!oc.leadId && allValidLeadIds.has(oc.leadId))
+          ? allOcs.filter(oc => !oc.leadId || allValidLeadIds.size === 0 || allValidLeadIds.has(oc.leadId))
           : allOcs.filter(oc => !!oc.leadId && activeLeadIds.has(oc.leadId));
         setConfirmations(matchedOcs);
       }

@@ -37,6 +37,9 @@ export const productService = {
           const validRemote = remoteProds.filter(p => !freshDeleted.has(p.id));
           if (validRemote.length > 0) {
             await db.products.bulkPut(validRemote);
+            if (typeof window !== 'undefined') {
+              window.dispatchEvent(new CustomEvent('app-realtime-update'));
+            }
           }
         }
       } catch (err) {
@@ -54,9 +57,6 @@ export const productService = {
     if (Date.now() - lastProductRemoteSync > PRODUCT_SYNC_INTERVAL) {
       syncRemote().catch(() => {});
     }
-
-    // Background reconciliation with active challans
-    import('./challanService').then(m => m.challanService.reconcileProductStockWithChallans()).catch(() => {});
 
     return validLocal;
   },

@@ -183,13 +183,6 @@ function b2DevServerPlugin() {
           }
         }
 
-        if (req.url && req.url.startsWith('/api/firestore')) {
-          res.setHeader('Content-Type', 'application/json');
-          res.statusCode = 200;
-          res.end(JSON.stringify({ success: true, offlineFallback: true }));
-          return;
-        }
-
         next();
       });
     }
@@ -198,6 +191,16 @@ function b2DevServerPlugin() {
 
 // https://vite.dev/config/
 export default defineConfig({
+  server: {
+    port: 5173,
+    proxy: {
+      '/api': {
+        target: 'http://localhost:5050',
+        changeOrigin: true,
+        secure: false
+      }
+    }
+  },
   plugins: [
     b2DevServerPlugin(),
     react(),

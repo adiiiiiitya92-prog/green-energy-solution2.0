@@ -40,6 +40,9 @@ export const challanService = {
 
             if (validRemote.length > 0) {
               await db.challans.bulkPut(validRemote);
+              if (typeof window !== 'undefined') {
+                window.dispatchEvent(new CustomEvent('app-realtime-update'));
+              }
             }
           }
         } catch (err) {
@@ -55,18 +58,12 @@ export const challanService = {
       await syncRemote();
       const freshDeleted = await getDeletedRecordIdsSet();
       const refreshed = await db.challans.orderBy('createdAt').reverse().toArray();
-      const finalChallans = refreshed.filter(c => !freshDeleted.has(c.id) && (!c.leadId || !freshDeleted.has(c.leadId)));
-      // Reconcile product stock and serial numbers against active challans in background
-      this.reconcileProductStockWithChallans().catch(err => console.warn("Stock reconciliation note:", err));
-      return finalChallans;
+      return refreshed.filter(c => !freshDeleted.has(c.id) && (!c.leadId || !freshDeleted.has(c.leadId)));
     }
 
     if (Date.now() - lastChallanRemoteSync > CHALLAN_SYNC_INTERVAL) {
       syncRemote().catch(() => {});
     }
-
-    // Ensure reconciliation has run for local data
-    this.reconcileProductStockWithChallans().catch(() => {});
 
     return validLocal;
   },
@@ -209,19 +206,11 @@ export const challanService = {
         }
       });
 
-      // Background Non-blocking sync
+      // Background Non-blocking sync to MongoDB Atlas
       for (const prod of updatedProducts) {
         saveRecordToFirestore('products', prod.id, prod).catch(() => {});
-        if (BACKEND_URL) {
-          fetch(`${BACKEND_URL}/api/products`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(prod)
-          }).catch(() => {});
-        }
       }
 
-      window.dispatchEvent(new CustomEvent('app-realtime-update'));
       console.log(`✅ Auto-reconciled & healed stock for ${updatedProducts.length} product(s) against active delivery challans.`);
     }
 

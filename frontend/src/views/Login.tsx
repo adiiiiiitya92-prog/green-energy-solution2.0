@@ -208,19 +208,19 @@ export const Login: React.FC = () => {
               }`}
             >
               <KeyRound className="w-3.5 h-3.5" />
-              <span>Create Account / Set Password</span>
+              <span>Set / Reset Password</span>
             </button>
           </div>
 
           {/* Headline */}
           <div className="space-y-1.5 text-center lg:text-left">
             <h2 className="text-2xl font-black text-slate-900 tracking-tight">
-              {authMode === 'signin' ? 'Sign in to your account' : 'Set Account Password'}
+              {authMode === 'signin' ? 'Sign in to your account' : 'Set or Reset Password'}
             </h2>
             <p className="text-slate-400 text-xs font-medium">
               {authMode === 'signin'
-                ? 'Enter your pre-approved email address & password to continue.'
-                : 'Enter your Super Admin pre-authorized email to create your password.'}
+                ? 'Enter your pre-approved email, username or phone & password to continue.'
+                : 'Enter your pre-approved email or phone to create or change your password.'}
             </p>
           </div>
 
@@ -244,7 +244,7 @@ export const Login: React.FC = () => {
             <form onSubmit={handleSignIn} className="space-y-4">
               <div className="space-y-1.5">
                 <label htmlFor="login-identity" className="text-[10px] font-extrabold text-slate-500 uppercase tracking-wider block">
-                  Official Email Address or Phone Number
+                  Official Email, Username or Phone Number
                 </label>
                 <div className="relative group">
                   <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-400 group-focus-within:text-emerald-500 transition-colors">
@@ -253,7 +253,7 @@ export const Login: React.FC = () => {
                   <input
                     id="login-identity"
                     type="text"
-                    placeholder="e.g. admin@greenenergysolution.com"
+                    placeholder="e.g. greenergy.ngp@gmail.com, admin, or phone"
                     value={emailOrPhone}
                     onChange={(e) => {
                       setEmailOrPhone(e.target.value);
@@ -270,6 +270,18 @@ export const Login: React.FC = () => {
                   <label htmlFor="login-password" className="text-[10px] font-extrabold text-slate-500 uppercase tracking-wider block">
                     Account Password
                   </label>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setAuthMode('create_account');
+                      setError(null);
+                      setSuccessMsg(null);
+                      if (emailOrPhone) handleVerifyEmail(emailOrPhone);
+                    }}
+                    className="text-[10px] font-bold text-emerald-600 hover:text-emerald-700 cursor-pointer"
+                  >
+                    Forgot / Reset Password?
+                  </button>
                 </div>
                 <div className="relative group">
                   <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-400 group-focus-within:text-emerald-500 transition-colors">

@@ -2,11 +2,15 @@
   "name": "green-energy-solution-crm",
   "version": "1.0.0",
   "private": true,
-  "description": "Green Energy Solution Solar CRM (Frontend + Backblaze B2 Backend)",
+  "description": "Green Energy Solution Solar CRM (Frontend + MongoDB Atlas & Backblaze B2 Backend)",
   "scripts": {
-    "dev": "npm --prefix frontend run dev",
+    "dev": "concurrently -n \"backend,frontend\" -c \"blue,green\" \"npm run backend\" \"npm run frontend\"",
     "start": "node backend/server.js",
     "backend": "node backend/server.js",
-    "frontend": "npm --prefix frontend run dev"
+    "frontend": "npm --prefix frontend run dev",
+    "build": "npm --prefix frontend run build"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.2"
   }
 }

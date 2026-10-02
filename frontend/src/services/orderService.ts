@@ -57,41 +57,12 @@ export const orderService = {
           lastOrderRemoteSync = Date.now();
           const remoteOcs = await fetchCollectionFromFirestore<OrderConfirmation>('orderConfirmations', 15000);
           if (Array.isArray(remoteOcs) && remoteOcs.length > 0) {
-            const freshDeleted = await getDeletedRecordIdsSet(true);
+            const freshDeleted = await getDeletedRecordIdsSet();
             const validRemote = remoteOcs.filter(o => !freshDeleted.has(o.id) && !freshDeleted.has(o.leadId));
-            const remoteIds = new Set(validRemote.map(o => o.id));
-
-            // Clean up stale deleted local order confirmations missing from remote
-            const currentLocal = await db.orderConfirmations.toArray();
-            for (const loc of currentLocal) {
-              if (!remoteIds.has(loc.id) || freshDeleted.has(loc.id) || (loc.leadId && freshDeleted.has(loc.leadId))) {
-                const age = Date.now() - new Date(loc.createdAt || 0).getTime();
-                if (age > 2 * 60 * 1000 || freshDeleted.has(loc.id) || (loc.leadId && freshDeleted.has(loc.leadId))) {
-                  await db.orderConfirmations.delete(loc.id).catch(() => {});
-                } else if (!freshDeleted.has(loc.id) && !freshDeleted.has(loc.leadId)) {
-                  // Only push freshly created local drafts (< 2 min old)
-                  saveRecordToFirestore('orderConfirmations', loc.id, loc).catch(() => {});
-                }
-              }
-            }
-            
-            for (const rOc of validRemote) {
-              const local = await db.orderConfirmations.get(rOc.id);
-              if (!local) {
-                await db.orderConfirmations.put(rOc);
-              } else {
-                const localPayments = local.payments || [];
-                const remotePayments = rOc.payments || [];
-                const localPaid = localPayments.reduce((s, p) => s + (p?.amount || 0), 0) || local.advanceAmount || 0;
-                const remotePaid = remotePayments.reduce((s, p) => s + (p?.amount || 0), 0) || rOc.advanceAmount || 0;
-
-                if (localPaid > remotePaid) {
-                  const merged = { ...rOc, payments: localPayments, advanceAmount: local.advanceAmount || rOc.advanceAmount };
-                  await db.orderConfirmations.put(merged);
-                  saveRecordToFirestore('orderConfirmations', merged.id, merged).catch(() => {});
-                } else {
-                  await db.orderConfirmations.put(rOc);
-                }
+            if (validRemote.length > 0) {
+              await db.orderConfirmations.bulkPut(validRemote);
+              if (typeof window !== 'undefined') {
+                window.dispatchEvent(new CustomEvent('app-realtime-update'));
               }
             }
           }
@@ -104,18 +75,17 @@ export const orderService = {
       return activeOrderSyncPromise;
     };
 
-    if (validLocal.length === 0 || forceFresh) {
-      await syncRemote();
-      const refreshed = await db.orderConfirmations.toArray();
-      const freshDeleted = await getDeletedRecordIdsSet();
-      return refreshed.filter(o => !freshDeleted.has(o.id) && !freshDeleted.has(o.leadId));
+    if (validLocal.length > 0 && !forceFresh) {
+      if (Date.now() - lastOrderRemoteSync > ORDER_SYNC_INTERVAL) {
+        syncRemote().catch(() => {});
+      }
+      return validLocal;
     }
 
-    if (Date.now() - lastOrderRemoteSync > ORDER_SYNC_INTERVAL) {
-      syncRemote().catch(() => {});
-    }
-
-    return validLocal;
+    await syncRemote();
+    const refreshed = await db.orderConfirmations.toArray();
+    const freshDeleted = await getDeletedRecordIdsSet();
+    return refreshed.filter(o => !freshDeleted.has(o.id) && !freshDeleted.has(o.leadId));
   },
 
   async createOrderConfirmation(ocData: Omit<OrderConfirmation, 'id' | 'createdAt'>): Promise<string> {
@@ -630,13 +600,8 @@ export const orderService = {
             valid.forEach(c => { if (c.leadId) freshLeadIds.add(c.leadId); });
           }
 
-          const hasDifference = freshLeadIds.size !== leadIds.size || Array.from(freshLeadIds).some(id => !leadIds.has(id));
           leadIds.clear();
           freshLeadIds.forEach(id => leadIds.add(id));
-
-          if (hasDifference && typeof window !== 'undefined') {
-            window.dispatchEvent(new CustomEvent('app-realtime-update'));
-          }
         } catch (err) {
           console.warn("Background evidence sync note:", err);
         } finally {

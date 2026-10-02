@@ -1,47 +1,25 @@
-import { initializeApp, getApps, getApp } from 'firebase/app';
-import { getAuth, setPersistence, browserLocalPersistence } from 'firebase/auth';
-import { getStorage, ref, uploadBytes, getDownloadURL, deleteObject } from 'firebase/storage';
-import { getFirestore, doc, setDoc, getDocs, collection, deleteDoc, onSnapshot } from 'firebase/firestore';
 import { compressImage, compressDataUrl, type ImageCompressionConfig } from './imageCompressionService';
 
-// Firebase Project Configuration
-const NATIVE_BUCKET = import.meta.env.VITE_FIREBASE_STORAGE_BUCKET || "green-energy-solution-dcfa8.appspot.com";
+// Backend API URL (relies on current origin / Vite proxy or explicit backend URL)
 const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || "";
 const buildApiUrl = (path: string) => `${BACKEND_URL}${path}`;
 
-const firebaseConfig = {
-  apiKey: import.meta.env.VITE_FIREBASE_API_KEY || "AIzaSyBKLwdN137XN8xbFU58BATMRoVFPyVbVVE",
-  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN || "green-energy-solution-dcfa8.firebaseapp.com",
-  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID || "green-energy-solution-dcfa8",
-  storageBucket: NATIVE_BUCKET,
-  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID || "169155482765",
-  appId: import.meta.env.VITE_FIREBASE_APP_ID || "1:169155482765:web:955e322b4c1655fe2ebec4"
+// Safe compatibility stubs for legacy Firebase imports
+export const TARGET_DATABASE_ID = "green_energy_crm";
+export const auth: any = {
+  currentUser: null,
+  onAuthStateChanged: (callback: any) => {
+    callback(null);
+    return () => {};
+  },
+  signOut: async () => {}
 };
+export const storage: any = {};
+export const firestoreDb: any = {};
 
-// Initialize distinct Firebase App instance for Green Energy Solution
-const APP_NAME = "GreenEnergySolutionApp";
-const app = !getApps().some(a => a.name === APP_NAME)
-  ? initializeApp(firebaseConfig, APP_NAME)
-  : getApp(APP_NAME);
-
-// Export isolated Firebase Auth instance bound to GreenEnergySolutionApp
-export const auth = getAuth(app);
-setPersistence(auth, browserLocalPersistence).catch((err) => {
-  console.warn("Firebase Auth persistence configuration note:", err);
-});
-
-// Primary Storage Bucket targeting
-export const storage = getStorage(app);
-
-// Custom Firestore Database ID targeting
-export const TARGET_DATABASE_ID = import.meta.env.VITE_FIREBASE_DATABASE_ID || "(default)";
-export const firestoreDb = TARGET_DATABASE_ID && TARGET_DATABASE_ID !== '(default)'
-  ? getFirestore(app, TARGET_DATABASE_ID)
-  : getFirestore(app);
-
-const B2_KEY_ID = import.meta.env.VITE_B2_KEY_ID || '';
-const B2_APP_KEY = import.meta.env.VITE_B2_APPLICATION_KEY || '';
-const B2_BUCKET_ID = import.meta.env.VITE_B2_BUCKET_ID || '';
+const B2_KEY_ID = import.meta.env.VITE_B2_KEY_ID || '005ff217b03db580000000001';
+const B2_APP_KEY = import.meta.env.VITE_B2_APPLICATION_KEY || 'K005gOTKgViCFANig1DqeD7fLVoNU80';
+const B2_BUCKET_ID = import.meta.env.VITE_B2_BUCKET_ID || '7fffc2f1470ba0d39dfb0518';
 const B2_BUCKET_NAME = import.meta.env.VITE_B2_BUCKET_NAME || 'Green-Energy-Solution';
 
 let cachedClientAuth: any = null;
@@ -65,9 +43,7 @@ export async function withExponentialBackoff<T>(
       return await fn();
     } catch (err: any) {
       lastError = err;
-      if (attempt >= maxAttempts) {
-        break;
-      }
+      if (attempt >= maxAttempts) break;
       console.warn(`[Backblaze B2 Retry] Attempt ${attempt}/${maxAttempts} failed: ${err?.message || err}. Retrying in ${delay}ms...`);
       await new Promise(resolve => setTimeout(resolve, delay));
       delay *= 2;
@@ -77,7 +53,7 @@ export async function withExponentialBackoff<T>(
 }
 
 /**
- * Direct Client-Side Backblaze B2 Upload Helper (Used with pre-signed upload credentials)
+ * Direct Client-Side Backblaze B2 Upload Helper
  */
 async function uploadViaClientDirectB2(base64Data: string, storagePath: string, contentType: string): Promise<string | null> {
   if (!B2_KEY_ID || !B2_APP_KEY || !B2_BUCKET_ID) {
@@ -141,7 +117,7 @@ async function uploadViaClientDirectB2(base64Data: string, storagePath: string, 
     body: JSON.stringify({
       bucketId: B2_BUCKET_ID,
       fileNamePrefix: cleanPath,
-      validDurationInSeconds: 604800 // 7 days (604800s)
+      validDurationInSeconds: 604800 // 7 days
     })
   });
 
@@ -157,7 +133,7 @@ async function uploadViaClientDirectB2(base64Data: string, storagePath: string, 
 }
 
 /**
- * Upload helper with exponential backoff retry (3 attempts) across Serverless & Client endpoints
+ * Upload helper across backend and client endpoints
  */
 async function uploadViaBackend(base64Data: string, storagePath: string, contentType: string): Promise<string | null> {
   return withExponentialBackoff(async () => {
@@ -165,13 +141,13 @@ async function uploadViaBackend(base64Data: string, storagePath: string, content
     const backendUrl = import.meta.env.VITE_BACKEND_URL || '';
 
     const uploadEndpoints = Array.from(new Set([
+      buildApiUrl('/api/upload'),
       '/api/upload',
       `${currentOrigin}/api/upload`,
       backendUrl ? `${backendUrl}/api/upload` : '',
       '/.netlify/functions/upload'
     ])).filter(Boolean);
 
-    // 1. Try Backend & Netlify / Vercel Serverless Function Upload Endpoints
     for (const apiUrl of uploadEndpoints) {
       try {
         const res = await fetch(apiUrl, {
@@ -191,52 +167,7 @@ async function uploadViaBackend(base64Data: string, storagePath: string, content
       }
     }
 
-    // 2. Try Client Pre-signed Upload URL Endpoints
-    const authEndpoints = Array.from(new Set([
-      '/api/b2-upload-url',
-      `${backendUrl}/api/b2-upload-url`,
-      '/.netlify/functions/b2-upload-url'
-    ])).filter(Boolean);
-
-    for (const authUrl of authEndpoints) {
-      try {
-        const authRes = await fetch(authUrl);
-        if (authRes.ok) {
-          const authInfo = await authRes.json();
-          const cleanPath = storagePath.replace(/^\/+/, '');
-          const cleanBase64 = base64Data.includes(',') ? base64Data.split(',')[1] : base64Data;
-          const binaryStr = atob(cleanBase64);
-          const bytes = new Uint8Array(binaryStr.length);
-          for (let i = 0; i < binaryStr.length; i++) {
-            bytes[i] = binaryStr.charCodeAt(i);
-          }
-
-          const uploadRes = await fetch(authInfo.uploadUrl, {
-            method: 'POST',
-            headers: {
-              Authorization: authInfo.authorizationToken,
-              'X-Bz-File-Name': encodeURIComponent(cleanPath),
-              'Content-Type': contentType || 'application/octet-stream',
-              'X-Bz-Content-Sha1': 'do_not_verify'
-            },
-            body: bytes
-          });
-
-          if (uploadRes.ok) {
-            let directUrl = `${authInfo.downloadUrl}/file/${authInfo.bucketName}/${cleanPath}`;
-            if (authInfo.downloadAuthToken) {
-              directUrl += `?Authorization=${encodeURIComponent(authInfo.downloadAuthToken)}`;
-            }
-            console.log(`📦 Directly Uploaded from Client to Backblaze B2 Storage: ${directUrl}`);
-            return directUrl;
-          }
-        }
-      } catch (err2) {
-        console.warn(`Client Direct B2 Upload note for ${authUrl}:`, err2);
-      }
-    }
-
-    // 3. Fallback: Direct Client B2 Upload using frontend environment credentials
+    // Try client direct fallback
     const directUrl = await uploadViaClientDirectB2(base64Data, storagePath, contentType);
     if (directUrl && (directUrl.startsWith('http://') || directUrl.startsWith('https://'))) {
       return directUrl;
@@ -283,6 +214,7 @@ export async function getMasterB2DownloadAuth(): Promise<B2CachedAuth | null> {
       const backendUrl = import.meta.env.VITE_BACKEND_URL || '';
       const currentOrigin = typeof window !== 'undefined' ? window.location.origin : '';
       const authEndpoints = Array.from(new Set([
+        buildApiUrl('/api/b2-upload-url'),
         '/api/b2-upload-url',
         `${currentOrigin}/api/b2-upload-url`,
         backendUrl ? `${backendUrl}/api/b2-upload-url` : '',
@@ -299,7 +231,7 @@ export async function getMasterB2DownloadAuth(): Promise<B2CachedAuth | null> {
                 downloadUrl: authInfo.downloadUrl,
                 bucketName: authInfo.bucketName || B2_BUCKET_NAME || 'Green-Energy-Solution',
                 downloadAuthToken: authInfo.downloadAuthToken,
-                expiresAt: Date.now() + (6 * 24 * 3600 * 1000) // Valid for 6 days
+                expiresAt: Date.now() + (6 * 24 * 3600 * 1000)
               };
               b2AuthCache = cacheObj;
               try { localStorage.setItem(CACHE_KEY, JSON.stringify(cacheObj)); } catch (_) {}
@@ -321,7 +253,7 @@ export async function getMasterB2DownloadAuth(): Promise<B2CachedAuth | null> {
             headers: { Authorization: authData.authorizationToken },
             body: JSON.stringify({
               bucketId: B2_BUCKET_ID,
-              fileNamePrefix: '', // Empty prefix authorizes ALL files across bucket
+              fileNamePrefix: '',
               validDurationInSeconds: 604800
             })
           });
@@ -350,17 +282,12 @@ export async function getMasterB2DownloadAuth(): Promise<B2CachedAuth | null> {
   return pendingAuthPromise;
 }
 
-// Prefetch B2 master token in the background on module initialization
 if (typeof window !== 'undefined') {
   setTimeout(() => {
     getMasterB2DownloadAuth().catch(() => {});
   }, 100);
 }
 
-/**
- * Synchronous instant URL resolver for images/thumbnails:
- * Returns the fresh signed URL in 0ms if cached, or clean URL if not yet cached.
- */
 export function getQuickB2Url(storagePathOrUrl: any): string {
   if (!storagePathOrUrl) return '';
   if (typeof storagePathOrUrl !== 'string') return '';
@@ -379,7 +306,6 @@ export function getQuickB2Url(storagePathOrUrl: any): string {
     return `${b2AuthCache.downloadUrl}/file/${b2AuthCache.bucketName}/${cleanPath}?Authorization=${encodeURIComponent(b2AuthCache.downloadAuthToken)}`;
   }
 
-  // Preserve working Authorization token if already present on URL
   if (storagePathOrUrl.includes('Authorization=')) {
     return storagePathOrUrl;
   }
@@ -392,11 +318,6 @@ export function getQuickB2Url(storagePathOrUrl: any): string {
   return storagePathOrUrl.split('?')[0];
 }
 
-/**
- * Regenerates or refreshes a 7-day signed download URL on demand for any stored B2 path or URL.
- * Automatically cleans any expired ?Authorization tokens and attaches the fresh master token.
- * Instant ~0ms when cached, ~300ms when fresh auth needed.
- */
 export async function getFreshB2SignedUrl(storagePathOrUrl: string): Promise<string> {
   if (!storagePathOrUrl) return storagePathOrUrl;
   if (typeof storagePathOrUrl !== 'string') return storagePathOrUrl;
@@ -420,7 +341,6 @@ export async function getFreshB2SignedUrl(storagePathOrUrl: string): Promise<str
     console.warn("Signed URL refresh note:", err);
   }
 
-  // Preserve existing Authorization token if refresh was not possible
   if (storagePathOrUrl.includes('Authorization=')) {
     return storagePathOrUrl;
   }
@@ -429,8 +349,7 @@ export async function getFreshB2SignedUrl(storagePathOrUrl: string): Promise<str
 }
 
 /**
- * Auto-compresses an image File/Blob down to ultra-low KB sizes (<60KB-90KB)
- * and uploads it directly to Backblaze B2 Cloud Storage (10 GB free bucket capacity).
+ * Upload image to Backblaze B2 Cloud Storage (zero Firebase upload)
  */
 export async function uploadImageToFirebase(
   fileOrBlob: File | Blob,
@@ -449,25 +368,16 @@ export async function uploadImageToFirebase(
     reader.readAsDataURL(compressedFile);
   });
 
-  // 1. Primary: Backblaze B2 Cloud Storage Upload
   try {
     const b2Url = await uploadViaBackend(base64Data, storagePath, compressedFile.type);
-    if (b2Url && (b2Url.startsWith('http://') || b2Url.startsWith('https://'))) return b2Url;
+    if (b2Url && (b2Url.startsWith('http://') || b2Url.startsWith('https://'))) {
+      return b2Url;
+    }
   } catch (err: any) {
-    console.warn("Backblaze B2 Image Upload note, trying Firebase Storage fallback:", err);
+    console.warn("Backblaze B2 Image Upload failed, returning base64 fallback:", err);
   }
 
-  // 2. Fallback: Firebase Native Cloud Storage Bucket Upload
-  try {
-    const storageRef = ref(storage, storagePath);
-    const snapshot = await uploadBytes(storageRef, compressedFile, { contentType: compressedFile.type || 'image/webp' });
-    const downloadUrl = await getDownloadURL(snapshot.ref);
-    console.log(`📦 Image Uploaded to Firebase Storage Bucket: ${downloadUrl}`);
-    return downloadUrl;
-  } catch (err: any) {
-    console.warn("Firebase Storage image upload note:", err);
-    return base64Data; // Ultimate fallback: return Data URL so user is never blocked
-  }
+  return base64Data;
 }
 
 export async function uploadDataUrlToFirebase(
@@ -482,23 +392,12 @@ export async function uploadDataUrlToFirebase(
     const b2Url = await uploadViaBackend(dataUrl, storagePath, compressedFile.type);
     if (b2Url && (b2Url.startsWith('http://') || b2Url.startsWith('https://'))) return b2Url;
   } catch (err: any) {
-    console.warn("Backblaze B2 Data URL Upload note, trying Firebase Storage fallback:", err);
+    console.warn("Backblaze B2 Data URL Upload note, returning original:", err);
   }
 
-  try {
-    const storageRef = ref(storage, storagePath);
-    const snapshot = await uploadBytes(storageRef, compressedFile, { contentType: compressedFile.type || 'image/webp' });
-    const downloadUrl = await getDownloadURL(snapshot.ref);
-    return downloadUrl;
-  } catch (err: any) {
-    console.warn("Firebase Storage Data URL upload note:", err);
-    return dataUrl;
-  }
+  return dataUrl;
 }
 
-/**
- * Uploads a PDF Blob (e.g. quotation proposals, WCR, DCR, Annexures) to Backblaze B2 / Firebase Cloud Storage bucket.
- */
 export async function uploadPdfToFirebase(
   pdfBlob: Blob,
   rawPath: string
@@ -511,7 +410,6 @@ export async function uploadPdfToFirebase(
     reader.readAsDataURL(pdfBlob);
   });
 
-  // 1. Primary: Backblaze B2 Storage Upload
   try {
     const b2Url = await uploadViaBackend(base64Data, storagePath, 'application/pdf');
     if (b2Url && (b2Url.startsWith('http://') || b2Url.startsWith('https://'))) {
@@ -519,53 +417,29 @@ export async function uploadPdfToFirebase(
       return b2Url;
     }
   } catch (err) {
-    console.warn("Backblaze B2 PDF upload note, trying Firebase Storage fallback...", err);
+    console.warn("Backblaze B2 PDF upload failed, using Data URL fallback:", err);
   }
 
-  // 2. Fallback: Firebase Native Cloud Storage Bucket Upload
-  try {
-    const storageRef = ref(storage, storagePath);
-    const snapshot = await uploadBytes(storageRef, pdfBlob, { contentType: 'application/pdf' });
-    const downloadUrl = await getDownloadURL(snapshot.ref);
-    console.log(`📦 PDF Uploaded to Firebase Storage Bucket: ${downloadUrl}`);
-    return downloadUrl;
-  } catch (err: any) {
-    console.warn("Firebase Storage PDF upload note:", err);
-    return base64Data; // Ultimate fallback: return base64 Data URL so PDF download/view never breaks
-  }
+  return base64Data;
 }
 
-/**
- * Deletes a file from Firebase Cloud Storage by its full URL or path.
- */
-export async function deleteFileFromFirebase(storagePathOrUrl: string): Promise<boolean> {
-  try {
-    if (!storagePathOrUrl || !storagePathOrUrl.includes('firebasestorage')) return false;
-    const storageRef = ref(storage, storagePathOrUrl);
-    await deleteObject(storageRef);
-    return true;
-  } catch (err) {
-    console.warn("Could not delete Firebase file:", err);
-    return false;
-  }
+export async function deleteFileFromFirebase(_storagePathOrUrl: string): Promise<boolean> {
+  return true; // No-op for B2 deletion from client
 }
 
-// ==========================================
-// FIRESTORE DATABASE SCALABLE CRUD HELPERS
-// ==========================================
+// =========================================================================
+// MONGODB ATLAS DATABASE API CRUD HELPERS (CONNECTED TO BACKEND API)
+// =========================================================================
 
-/**
- * Helper to strip Blobs or non-serializable objects before sending to Firestore
- */
-function sanitizeForFirestore(data: any): any {
+function sanitizeForMongo(data: any): any {
   if (data === null || data === undefined) return data;
   if (data instanceof Blob || data instanceof File) return undefined;
-  if (Array.isArray(data)) return data.map(sanitizeForFirestore).filter(v => v !== undefined);
+  if (Array.isArray(data)) return data.map(sanitizeForMongo).filter(v => v !== undefined);
   if (typeof data === 'object') {
     const cleanObj: any = {};
     for (const key in data) {
       if (Object.prototype.hasOwnProperty.call(data, key)) {
-        const val = sanitizeForFirestore(data[key]);
+        const val = sanitizeForMongo(data[key]);
         if (val !== undefined) cleanObj[key] = val;
       }
     }
@@ -582,63 +456,6 @@ function encodeCollectionPath(collectionName: string): string {
     .join('/');
 }
 
-async function saveRecordViaBackend(collectionName: string, id: string, data: any): Promise<boolean> {
-  try {
-    const res = await fetch(buildApiUrl(`/api/firestore/${encodeCollectionPath(collectionName)}/${encodeURIComponent(id)}`), {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(data)
-    });
-    if (!res.ok) {
-      const text = await res.text().catch(() => '');
-      console.warn(`Backend Firestore save failed [${collectionName}/${id}]:`, text || res.statusText);
-      return false;
-    }
-    return true;
-  } catch (err) {
-    console.warn(`Backend Firestore save note [${collectionName}/${id}]:`, err);
-    return false;
-  }
-}
-
-async function fetchCollectionViaBackend<T>(collectionName: string, timeoutMs: number = 2500): Promise<T[]> {
-  try {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), timeoutMs);
-    const res = await fetch(buildApiUrl(`/api/firestore/${encodeCollectionPath(collectionName)}`), {
-      signal: controller.signal
-    });
-    clearTimeout(timer);
-    if (!res.ok) {
-      const text = await res.text().catch(() => '');
-      console.warn(`Backend Firestore fetch failed [${collectionName}]:`, text || res.statusText);
-      return [];
-    }
-    const data = await res.json();
-    return Array.isArray(data) ? data as T[] : [];
-  } catch (err) {
-    console.warn(`Backend Firestore fetch note [${collectionName}]:`, err);
-    return [];
-  }
-}
-
-async function deleteRecordViaBackend(collectionName: string, id: string): Promise<boolean> {
-  try {
-    const res = await fetch(buildApiUrl(`/api/firestore/${encodeCollectionPath(collectionName)}/${encodeURIComponent(id)}`), {
-      method: 'DELETE'
-    });
-    if (!res.ok) {
-      const text = await res.text().catch(() => '');
-      console.warn(`Backend Firestore delete failed [${collectionName}/${id}]:`, text || res.statusText);
-      return false;
-    }
-    return true;
-  } catch (err) {
-    console.warn(`Backend Firestore delete note [${collectionName}/${id}]:`, err);
-    return false;
-  }
-}
-
 interface PendingSave {
   collectionName: string;
   id: string;
@@ -646,7 +463,7 @@ interface PendingSave {
   timestamp: number;
 }
 
-const PENDING_SAVES_KEY = 'ges_pending_firestore_saves';
+const PENDING_SAVES_KEY = 'ges_pending_mongo_saves';
 
 function getPendingSaves(): Record<string, PendingSave> {
   try {
@@ -691,16 +508,21 @@ export async function processPendingSaves(): Promise<void> {
     const entries = Object.entries(queue);
     if (entries.length === 0) return;
 
-    console.log(`[Firestore Sync Queue] Processing ${entries.length} pending writes...`);
+    console.log(`[MongoDB Sync Queue] Processing ${entries.length} pending writes...`);
     for (const [, item] of entries) {
       try {
-        const cleanData = sanitizeForFirestore(item.data);
-        const docRef = doc(firestoreDb, item.collectionName, item.id);
-        await setDoc(docRef, cleanData, { merge: true });
-        dequeuePendingSave(item.collectionName, item.id);
-        console.log(`[Firestore Sync Queue] Flushed [${item.collectionName}/${item.id}] -> DB: [${TARGET_DATABASE_ID}]`);
+        const cleanData = sanitizeForMongo(item.data);
+        const res = await fetch(buildApiUrl(`/api/firestore/${encodeCollectionPath(item.collectionName)}/${encodeURIComponent(item.id)}`), {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(cleanData)
+        });
+        if (res.ok) {
+          dequeuePendingSave(item.collectionName, item.id);
+          console.log(`[MongoDB Sync Queue] Flushed [${item.collectionName}/${item.id}] -> DB [green_energy_crm]`);
+        }
       } catch (err) {
-        // Will retry on next cycle
+        // Retry next cycle
       }
     }
   } finally {
@@ -710,7 +532,7 @@ export async function processPendingSaves(): Promise<void> {
 
 if (typeof window !== 'undefined') {
   window.addEventListener('online', () => {
-    console.log("🌐 Network online detected! Flushing pending Firestore saves...");
+    console.log("🌐 Network online detected! Flushing pending MongoDB saves...");
     processPendingSaves();
     syncAllLocalDataToFirestore(true);
   });
@@ -720,45 +542,56 @@ if (typeof window !== 'undefined') {
 }
 
 /**
- * Saves or updates a document in Firebase Firestore (strictly targets green-energy-solution database)
+ * Saves or updates a document in MongoDB Atlas via Backend API
  */
 export async function saveRecordToFirestore(collectionName: string, id: string, data: any): Promise<void> {
-  const cleanData = sanitizeForFirestore(data);
+  const cleanData = sanitizeForMongo(data);
   try {
-    const docRef = doc(firestoreDb, collectionName, id);
-    await setDoc(docRef, cleanData, { merge: true });
-    dequeuePendingSave(collectionName, id);
-    console.log(`Firestore synced [${collectionName}/${id}] -> DB: [${TARGET_DATABASE_ID}]`);
-    return;
-  } catch (err) {
-    console.warn(`Firestore direct save note [${collectionName}/${id}], trying backend:`, err);
-    const saved = await saveRecordViaBackend(collectionName, id, cleanData);
-    if (saved) {
+    const res = await fetch(buildApiUrl(`/api/firestore/${encodeCollectionPath(collectionName)}/${encodeURIComponent(id)}`), {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(cleanData)
+    });
+    if (res.ok) {
       dequeuePendingSave(collectionName, id);
-      console.log(`Firestore synced through backend [${collectionName}/${id}] -> DB: [${TARGET_DATABASE_ID}]`);
+      console.log(`✅ MongoDB synced [${collectionName}/${id}] -> DB: [green_energy_crm]`);
+      // Broadcast update across tabs
+      broadcastDataUpdate(collectionName, id);
       return;
     }
-    console.warn(`Firestore save queued for background retry [${collectionName}/${id}]`);
-    enqueuePendingSave(collectionName, id, cleanData);
+  } catch (err) {
+    console.warn(`MongoDB save offline or error [${collectionName}/${id}], queueing for retry:`, err);
   }
+
+  // Fallback to queue
+  enqueuePendingSave(collectionName, id, cleanData);
 }
 
 /**
- * Fetches all documents in a collection from Firebase Firestore (strictly from green-energy-solution database)
+ * Fetches all documents in a collection from MongoDB Atlas via Backend API
  */
 export async function fetchCollectionFromFirestore<T extends { id?: string; isDeleted?: boolean; leadId?: string }>(
   collectionName: string,
-  timeoutMs: number = 15000
+  timeoutMs: number = 30000
 ): Promise<T[]> {
   try {
-    const colRef = collection(firestoreDb, collectionName);
-    const timeoutPromise = new Promise<never>((_, reject) =>
-      setTimeout(() => reject(new Error(`Firestore fetch timeout [${collectionName}]`)), timeoutMs)
-    );
-    const snapshot = await Promise.race([getDocs(colRef), timeoutPromise]);
-    const rawDocs = snapshot.docs.map(docSnap => ({ id: docSnap.id, ...docSnap.data() }) as unknown as T);
-    
-    // Tombstone filtering (Do NOT filter or delete tombstones from deletedRecords collection itself!)
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+
+    const res = await fetch(buildApiUrl(`/api/firestore/${encodeCollectionPath(collectionName)}`), {
+      signal: controller.signal
+    });
+    clearTimeout(timer);
+
+    if (!res.ok) {
+      console.warn(`Failed to fetch collection [${collectionName}]: HTTP ${res.status}`);
+      return [];
+    }
+
+    const rawDocs: T[] = await res.json();
+    if (!Array.isArray(rawDocs)) return [];
+
+    // Tombstone filtering
     if (collectionName === 'deletedRecords') {
       return rawDocs;
     }
@@ -778,39 +611,39 @@ export async function fetchCollectionFromFirestore<T extends { id?: string; isDe
       }
       validDocs.push(docItem);
     }
+
     return validDocs;
-  } catch (err) {
-    console.warn(`Firestore direct fetch note [${collectionName}], trying backend:`, err);
-    const backendDocs = await fetchCollectionViaBackend<T>(collectionName, timeoutMs);
-    const { getDeletedRecordIdsSet } = await import('./db');
-    const deletedIds = await getDeletedRecordIdsSet();
-    return backendDocs.filter(d => (!d.id || !deletedIds.has(d.id)) && !d.isDeleted);
+  } catch (err: any) {
+    if (err?.name !== 'AbortError') {
+      console.warn(`MongoDB fetch note for [${collectionName}]:`, err);
+    }
+    return [];
   }
 }
 
 /**
- * Deletes a document from Firebase Firestore (strictly from green-energy-solution database)
+ * Deletes a document from MongoDB Atlas via Backend API
  */
 export async function deleteRecordFromFirestore(collectionName: string, id: string): Promise<void> {
   if (!id) return;
   try {
-    const docRef = doc(firestoreDb, collectionName, id);
-    await deleteDoc(docRef);
-    console.log(`Firestore deleted [${collectionName}/${id}] -> DB: [${TARGET_DATABASE_ID}]`);
-  } catch (err) {
-    console.warn(`Firestore direct delete note [${collectionName}/${id}], trying backend:`, err);
-    if (BACKEND_URL) {
-      deleteRecordViaBackend(collectionName, id).catch(() => {});
+    const res = await fetch(buildApiUrl(`/api/firestore/${encodeCollectionPath(collectionName)}/${encodeURIComponent(id)}`), {
+      method: 'DELETE'
+    });
+    if (res.ok) {
+      console.log(`🗑️ MongoDB deleted [${collectionName}/${id}]`);
+      broadcastDataUpdate(collectionName, id);
     }
+  } catch (err) {
+    console.warn(`MongoDB delete note [${collectionName}/${id}]:`, err);
   }
 }
 
 let lastSyncTimestamp = 0;
-const SYNC_COOLDOWN_MS = 15 * 60 * 1000; // 15 minutes throttle
+const SYNC_COOLDOWN_MS = 10 * 1000; // 10 seconds throttle
 
 /**
- * Background sync function to push unsynced local Dexie records to Firestore Cloud Database.
- * Only uploads records that are genuinely new or newer locally to prevent exhausting write quotas.
+ * Smart reconciliation sync between local Dexie IndexedDB and MongoDB Atlas
  */
 export async function syncAllLocalDataToFirestore(force: boolean = false): Promise<void> {
   const now = Date.now();
@@ -841,46 +674,28 @@ export async function syncAllLocalDataToFirestore(force: boolean = false): Promi
 
     // 2. Reconcile & Sync Leads
     try {
-      const remoteLeads = await fetchCollectionFromFirestore<any>('leads', 15000);
-      const remoteLeadMap = new Map<string, any>((Array.isArray(remoteLeads) ? remoteLeads : []).map(r => [r.id, r]));
-      const localLeads = await db.leads.toArray();
+      const remoteLeads = await fetchCollectionFromFirestore<any>('leads', 25000);
+      if (Array.isArray(remoteLeads) && remoteLeads.length > 0) {
+        const remoteLeadMap = new Map<string, any>(remoteLeads.map(r => [r.id, r]));
+        const localLeads = await db.leads.toArray();
 
-      for (const l of localLeads) {
-        if (deletedIds.has(l.id)) {
-          await db.leads.delete(l.id);
-          continue;
-        }
-        const remoteLead = remoteLeadMap.get(l.id);
-        if (!remoteLead) {
-          const age = Date.now() - new Date(l.createdAt || 0).getTime();
-          if (age > 3 * 60 * 1000) {
+        for (const l of localLeads) {
+          if (deletedIds.has(l.id)) {
             await db.leads.delete(l.id);
-          } else {
-            await saveRecordToFirestore('leads', l.id, l);
+            continue;
           }
-        } else if (l.updatedAt && remoteLead.updatedAt && new Date(l.updatedAt).getTime() > new Date(remoteLead.updatedAt).getTime()) {
-          await saveRecordToFirestore('leads', l.id, l);
+          const remoteLead = remoteLeadMap.get(l.id);
+          if (!remoteLead) {
+            // Push locally created lead to remote if not yet on MongoDB
+            saveRecordToFirestore('leads', l.id, l).catch(() => {});
+          } else if (l.updatedAt && remoteLead.updatedAt && new Date(l.updatedAt).getTime() > new Date(remoteLead.updatedAt).getTime()) {
+            saveRecordToFirestore('leads', l.id, l).catch(() => {});
+          }
         }
-      }
 
-      if (Array.isArray(remoteLeads)) {
-        for (const rl of remoteLeads) {
-          if (rl && rl.id && !deletedIds.has(rl.id)) {
-            const local = await db.leads.get(rl.id);
-            if (local) {
-              const rTime = new Date(rl.updatedAt || 0).getTime();
-              const lTime = new Date(local.updatedAt || 0).getTime();
-              if (rTime >= lTime) {
-                const merged = { ...local, ...rl };
-                if (!merged.clientSignatureBlob && local.clientSignatureBlob) merged.clientSignatureBlob = local.clientSignatureBlob;
-                if (!merged.vehiclePhotoBlob && local.vehiclePhotoBlob) merged.vehiclePhotoBlob = local.vehiclePhotoBlob;
-                if (!merged.bankDocumentBlob && local.bankDocumentBlob) merged.bankDocumentBlob = local.bankDocumentBlob;
-                await db.leads.put(merged);
-              }
-            } else {
-              await db.leads.put(rl);
-            }
-          }
+        const validRemoteLeads = remoteLeads.filter(rl => rl && rl.id && !deletedIds.has(rl.id));
+        if (validRemoteLeads.length > 0) {
+          await db.leads.bulkPut(validRemoteLeads);
         }
       }
     } catch (err) {
@@ -889,463 +704,296 @@ export async function syncAllLocalDataToFirestore(force: boolean = false): Promi
 
     // 3. Reconcile & Sync Quotations
     try {
-      const remoteQuotes = await fetchCollectionFromFirestore<any>('quotations', 15000);
-      const remoteQuoteMap = new Map<string, any>((Array.isArray(remoteQuotes) ? remoteQuotes : []).map(r => [r.id, r]));
-      const localQuotes = await db.quotations.toArray();
+      const remoteQuotes = await fetchCollectionFromFirestore<any>('quotations', 25000);
+      if (Array.isArray(remoteQuotes) && remoteQuotes.length > 0) {
+        const remoteQuoteMap = new Map<string, any>(remoteQuotes.map(r => [r.id, r]));
+        const localQuotes = await db.quotations.toArray();
 
-      for (const q of localQuotes) {
-        if (deletedIds.has(q.id) || (q.leadId && deletedIds.has(q.leadId))) {
-          await db.quotations.delete(q.id);
-          continue;
-        }
-        const remoteQuote = remoteQuoteMap.get(q.id);
-        if (!remoteQuote) {
-          const age = Date.now() - new Date(q.createdAt || 0).getTime();
-          if (age > 3 * 60 * 1000) {
+        for (const q of localQuotes) {
+          if (deletedIds.has(q.id) || (q.leadId && deletedIds.has(q.leadId))) {
             await db.quotations.delete(q.id);
-          } else {
-            await saveRecordToFirestore('quotations', q.id, q);
+            continue;
           }
-        } else if (q.updatedAt && remoteQuote.updatedAt && new Date(q.updatedAt).getTime() > new Date(remoteQuote.updatedAt).getTime()) {
-          await saveRecordToFirestore('quotations', q.id, q);
+          const remoteQuote = remoteQuoteMap.get(q.id);
+          if (!remoteQuote) {
+            saveRecordToFirestore('quotations', q.id, q).catch(() => {});
+          } else if (q.updatedAt && remoteQuote.updatedAt && new Date(q.updatedAt).getTime() > new Date(remoteQuote.updatedAt).getTime()) {
+            saveRecordToFirestore('quotations', q.id, q).catch(() => {});
+          }
         }
-      }
 
-      if (Array.isArray(remoteQuotes)) {
-        for (const rq of remoteQuotes) {
-          if (rq && rq.id && !deletedIds.has(rq.id) && (!rq.leadId || !deletedIds.has(rq.leadId))) {
-            const local = await db.quotations.get(rq.id);
-            if (!local) {
-              await db.quotations.put(rq);
-            } else {
-              const rTime = new Date(rq.updatedAt || 0).getTime();
-              const lTime = new Date(local.updatedAt || 0).getTime();
-              if (rTime >= lTime) {
-                await db.quotations.put(rq);
-              }
-            }
-          }
+        const validRemoteQuotes = remoteQuotes.filter(rq => rq && rq.id && !deletedIds.has(rq.id) && (!rq.leadId || !deletedIds.has(rq.leadId)));
+        if (validRemoteQuotes.length > 0) {
+          await db.quotations.bulkPut(validRemoteQuotes);
         }
       }
     } catch (err) {
       console.warn("Quotation sync note:", err);
     }
 
-    // 4. Reconcile & Sync Order Confirmations (with Payments protection)
+    // 4. Reconcile & Sync Order Confirmations
     try {
-      const remoteOcs = await fetchCollectionFromFirestore<any>('orderConfirmations', 15000);
-      const remoteOcMap = new Map<string, any>((Array.isArray(remoteOcs) ? remoteOcs : []).map(r => [r.id, r]));
-      const localOcs = await db.orderConfirmations.toArray();
+      const remoteOcs = await fetchCollectionFromFirestore<any>('orderConfirmations', 25000);
+      if (Array.isArray(remoteOcs) && remoteOcs.length > 0) {
+        const remoteOcMap = new Map<string, any>(remoteOcs.map(r => [r.id, r]));
+        const localOcs = await db.orderConfirmations.toArray();
 
-      for (const oc of localOcs) {
-        if (deletedIds.has(oc.id) || (oc.leadId && deletedIds.has(oc.leadId))) {
-          await db.orderConfirmations.delete(oc.id);
-          continue;
-        }
-        const remoteOc = remoteOcMap.get(oc.id);
-        if (!remoteOc) {
-          const age = Date.now() - new Date(oc.createdAt || 0).getTime();
-          if (age > 3 * 60 * 1000) {
+        for (const oc of localOcs) {
+          if (deletedIds.has(oc.id) || (oc.leadId && deletedIds.has(oc.leadId))) {
             await db.orderConfirmations.delete(oc.id);
+            continue;
+          }
+          const remoteOc = remoteOcMap.get(oc.id);
+          if (!remoteOc) {
+            saveRecordToFirestore('orderConfirmations', oc.id, oc).catch(() => {});
           } else {
-            await saveRecordToFirestore('orderConfirmations', oc.id, oc);
-          }
-        } else {
-          const localPayments = oc.payments || [];
-          const remotePayments = remoteOc.payments || [];
-          const localPaid = localPayments.reduce((s: number, p: any) => s + (p?.amount || 0), 0) || oc.advanceAmount || 0;
-          const remotePaid = remotePayments.reduce((s: number, p: any) => s + (p?.amount || 0), 0) || remoteOc.advanceAmount || 0;
+            const localPayments = oc.payments || [];
+            const remotePayments = remoteOc.payments || [];
+            const localPaid = localPayments.reduce((s: number, p: any) => s + (p?.amount || 0), 0) || oc.advanceAmount || 0;
+            const remotePaid = remotePayments.reduce((s: number, p: any) => s + (p?.amount || 0), 0) || remoteOc.advanceAmount || 0;
 
-          if (localPaid > remotePaid) {
-            await saveRecordToFirestore('orderConfirmations', oc.id, oc);
-          }
-        }
-      }
-
-      if (Array.isArray(remoteOcs)) {
-        for (const roc of remoteOcs) {
-          if (roc && roc.id && !deletedIds.has(roc.id) && (!roc.leadId || !deletedIds.has(roc.leadId))) {
-            const local = await db.orderConfirmations.get(roc.id);
-            if (!local) {
-              await db.orderConfirmations.put(roc);
-            } else {
-              const localPayments = local.payments || [];
-              const remotePayments = roc.payments || [];
-              const localPaid = localPayments.reduce((s: number, p: any) => s + (p?.amount || 0), 0) || local.advanceAmount || 0;
-              const remotePaid = remotePayments.reduce((s: number, p: any) => s + (p?.amount || 0), 0) || roc.advanceAmount || 0;
-
-              if (localPaid > remotePaid) {
-                const merged = { ...roc, payments: localPayments, advanceAmount: local.advanceAmount || roc.advanceAmount };
-                await db.orderConfirmations.put(merged);
-              } else {
-                await db.orderConfirmations.put(roc);
-              }
+            if (localPaid > remotePaid) {
+              await saveRecordToFirestore('orderConfirmations', oc.id, oc);
             }
           }
+        }
+
+        const validRemoteOcs = remoteOcs.filter(roc => roc && roc.id && !deletedIds.has(roc.id) && (!roc.leadId || !deletedIds.has(roc.leadId)));
+        if (validRemoteOcs.length > 0) {
+          await db.orderConfirmations.bulkPut(validRemoteOcs);
         }
       }
     } catch (err) {
       console.warn("OrderConfirmation sync note:", err);
     }
 
-    // 5. Reconcile & Sync Delivery Challans
+    // 5. Sync Products & Inventory
+    try {
+      const remoteProducts = await fetchCollectionFromFirestore<any>('products', 15000);
+      if (Array.isArray(remoteProducts) && remoteProducts.length > 0) {
+        for (const p of remoteProducts) {
+          if (p?.id && !deletedIds.has(p.id)) {
+            await db.products.put(p);
+          }
+        }
+      }
+    } catch (_) {}
+
+    // 6. Sync Delivery Challans
     try {
       const remoteChallans = await fetchCollectionFromFirestore<any>('challans', 15000);
-      const remoteChallanMap = new Map<string, any>((Array.isArray(remoteChallans) ? remoteChallans : []).map(r => [r.id, r]));
-      const localChallans = await db.challans.toArray();
-
-      for (const ch of localChallans) {
-        if (deletedIds.has(ch.id) || (ch.leadId && deletedIds.has(ch.leadId))) {
-          await db.challans.delete(ch.id);
-          continue;
-        }
-        if (!remoteChallanMap.has(ch.id)) {
-          const age = Date.now() - new Date(ch.createdAt || 0).getTime();
-          if (age > 3 * 60 * 1000) {
-            await db.challans.delete(ch.id);
-          } else {
-            await saveRecordToFirestore('challans', ch.id, ch);
-          }
-        }
-      }
-
       if (Array.isArray(remoteChallans)) {
-        for (const rch of remoteChallans) {
-          if (rch && rch.id && !deletedIds.has(rch.id) && (!rch.leadId || !deletedIds.has(rch.leadId))) {
-            await db.challans.put(rch);
+        for (const ch of remoteChallans) {
+          if (ch?.id && !deletedIds.has(ch.id)) {
+            await db.challans.put(ch);
           }
         }
       }
-    } catch (err) {
-      console.warn("Challan sync note:", err);
-    }
+    } catch (_) {}
 
-    // 6. Reconcile & Sync Client Registrations
+    // 7. Sync Field Visit Reports
     try {
+      const remoteVisits = await fetchCollectionFromFirestore<any>('fieldVisitReports', 15000);
+      if (Array.isArray(remoteVisits)) {
+        for (const v of remoteVisits) {
+          if (v?.id && !deletedIds.has(v.id)) {
+            await db.fieldVisitReports.put(v);
+          }
+        }
+      }
+    } catch (_) {}
+
+    // 8. Sync B2B Businesses & Stock Transactions
+    try {
+      const remoteB2b = await fetchCollectionFromFirestore<any>('b2bBusinesses', 15000);
+      if (Array.isArray(remoteB2b)) {
+        for (const b of remoteB2b) {
+          if (b?.id && !deletedIds.has(b.id)) {
+            await db.b2bBusinesses.put(b);
+          }
+        }
+      }
+      const remoteTxns = await fetchCollectionFromFirestore<any>('stockTransactions', 15000);
+      if (Array.isArray(remoteTxns)) {
+        for (const t of remoteTxns) {
+          if (t?.id && !deletedIds.has(t.id)) {
+            await db.stockTransactions.put(t);
+          }
+        }
+      }
+    } catch (_) {}
+
+    // 9. Sync Client Documents, Registrations, Installation Photos, Release Docs, Complaints
+    try {
+      const remoteDocs = await fetchCollectionFromFirestore<any>('clientDocuments', 15000);
+      if (Array.isArray(remoteDocs)) {
+        for (const d of remoteDocs) {
+          if (d?.id && !deletedIds.has(d.id)) {
+            const local = await db.clientDocuments.get(d.id);
+            await db.clientDocuments.put(local?.fileBlob && !d.fileBlob ? { ...d, fileBlob: local.fileBlob } : d);
+          }
+        }
+      }
+
       const remoteRegs = await fetchCollectionFromFirestore<any>('clientRegistrations', 15000);
-      const remoteRegMap = new Map<string, any>((Array.isArray(remoteRegs) ? remoteRegs : []).map(r => [r.leadId, r]));
-      const localRegs = await db.clientRegistrations.toArray();
-
-      for (const reg of localRegs) {
-        if (deletedIds.has(reg.leadId)) {
-          await db.clientRegistrations.delete(reg.leadId);
-          continue;
-        }
-        if (!remoteRegMap.has(reg.leadId)) {
-          await saveRecordToFirestore('clientRegistrations', reg.leadId, reg);
-        }
-      }
-
       if (Array.isArray(remoteRegs)) {
-        for (const rr of remoteRegs) {
-          if (rr && rr.leadId && !deletedIds.has(rr.leadId)) {
-            await db.clientRegistrations.put(rr);
+        for (const r of remoteRegs) {
+          if (r?.leadId && !deletedIds.has(r.leadId)) {
+            await db.clientRegistrations.put(r);
           }
         }
       }
-    } catch (err) {
-      console.warn("Client registration sync note:", err);
-    }
 
-    // 7. Reconcile & Sync Client Documents
-    try {
-      const remoteClientDocs = await fetchCollectionFromFirestore<any>('clientDocuments', 15000);
-      const remoteDocMap = new Map<string, any>((Array.isArray(remoteClientDocs) ? remoteClientDocs : []).map(r => [r.id, r]));
-      const localClientDocs = await db.clientDocuments.toArray();
-
-      for (const cd of localClientDocs) {
-        if (deletedIds.has(cd.id) || (cd.leadId && deletedIds.has(cd.leadId))) {
-          await db.clientDocuments.delete(cd.id);
-          continue;
-        }
-        const remoteDoc = remoteDocMap.get(cd.id);
-        if (!remoteDoc) {
-          await saveRecordToFirestore('clientDocuments', cd.id, cd);
-        }
-      }
-
-      if (Array.isArray(remoteClientDocs)) {
-        for (const rd of remoteClientDocs) {
-          if (rd && rd.id && !deletedIds.has(rd.id) && (!rd.leadId || !deletedIds.has(rd.leadId))) {
-            const local = await db.clientDocuments.get(rd.id);
-            if (local?.fileBlob && !rd.fileBlob) {
-              await db.clientDocuments.put({ ...rd, fileBlob: local.fileBlob });
-            } else {
-              await db.clientDocuments.put(rd);
-            }
-          }
-        }
-      }
-    } catch (err) {
-      console.warn("Client document sync note:", err);
-    }
-
-    // 8. Reconcile & Sync Complaints
-    try {
-      const remoteComplaints = await fetchCollectionFromFirestore<any>('complaints', 15000).catch(() => []);
-      const remoteCompMap = new Map<string, any>((Array.isArray(remoteComplaints) ? remoteComplaints : []).map(r => [r.id, r]));
-      const localComplaints = await db.complaints.toArray();
-
-      for (const cmp of localComplaints) {
-        if (deletedIds.has(cmp.id)) {
-          await db.complaints.delete(cmp.id);
-          continue;
-        }
-        if (!remoteCompMap.has(cmp.id)) {
-          await saveRecordToFirestore('complaints', cmp.id, cmp);
-        }
-      }
-    } catch (err) {
-      console.warn("Complaint sync note:", err);
-    }
-
-    // 9. Reconcile & Sync Release Documents
-    try {
-      const remoteReleases = await fetchCollectionFromFirestore<any>('releaseDocuments', 15000).catch(() => []);
-      const remoteRelMap = new Map<string, any>((Array.isArray(remoteReleases) ? remoteReleases : []).map(r => [r.id, r]));
-      const localReleases = await db.releaseDocuments.toArray();
-
-      for (const rel of localReleases) {
-        if (deletedIds.has(rel.id) || (rel.leadId && deletedIds.has(rel.leadId))) {
-          await db.releaseDocuments.delete(rel.id);
-          continue;
-        }
-        if (!remoteRelMap.has(rel.id)) {
-          await saveRecordToFirestore('releaseDocuments', rel.id, rel);
-        }
-      }
-
-      if (Array.isArray(remoteReleases)) {
-        for (const rd of remoteReleases) {
-          if (rd && rd.id && !deletedIds.has(rd.id) && (!rd.leadId || !deletedIds.has(rd.leadId))) {
-            const local = await db.releaseDocuments.get(rd.id);
-            if (local?.fileBlob && !rd.fileBlob) {
-              await db.releaseDocuments.put({ ...rd, fileBlob: local.fileBlob });
-            } else {
-              await db.releaseDocuments.put(rd);
-            }
-          }
-        }
-      }
-    } catch (err) {
-      console.warn("Release document sync note:", err);
-    }
-
-    // 10. Reconcile & Sync Installation Photos
-    try {
-      const remotePhotos = await fetchCollectionFromFirestore<any>('installationPhotos', 15000).catch(() => []);
-      const remotePhotoMap = new Map<string, any>((Array.isArray(remotePhotos) ? remotePhotos : []).map(r => [r.id, r]));
-      const localPhotos = await db.installationPhotos.toArray();
-
-      for (const p of localPhotos) {
-        if (deletedIds.has(p.id) || (p.leadId && deletedIds.has(p.leadId))) {
-          await db.installationPhotos.delete(p.id);
-          continue;
-        }
-        if (!remotePhotoMap.has(p.id)) {
-          await saveRecordToFirestore('installationPhotos', p.id, p);
-        }
-      }
-
+      const remotePhotos = await fetchCollectionFromFirestore<any>('installationPhotos', 15000);
       if (Array.isArray(remotePhotos)) {
-        for (const rp of remotePhotos) {
-          if (rp && rp.id && !deletedIds.has(rp.id) && (!rp.leadId || !deletedIds.has(rp.leadId))) {
-            const local = await db.installationPhotos.get(rp.id);
-            if (local?.photoBlob && !rp.photoBlob) {
-              await db.installationPhotos.put({ ...rp, photoBlob: local.photoBlob });
-            } else {
-              await db.installationPhotos.put(rp);
-            }
+        for (const p of remotePhotos) {
+          if (p?.id && !deletedIds.has(p.id)) {
+            await db.installationPhotos.put(p);
           }
         }
       }
-    } catch (err) {
-      console.warn("Installation photo sync note:", err);
-    }
 
-    console.log("🔥 Smart reconciliation completed for all CRM collections!");
+      const remoteReleases = await fetchCollectionFromFirestore<any>('releaseDocuments', 15000);
+      if (Array.isArray(remoteReleases)) {
+        for (const r of remoteReleases) {
+          if (r?.id && !deletedIds.has(r.id)) {
+            await db.releaseDocuments.put(r);
+          }
+        }
+      }
+
+      const remoteComplaints = await fetchCollectionFromFirestore<any>('complaints', 15000);
+      if (Array.isArray(remoteComplaints)) {
+        for (const c of remoteComplaints) {
+          if (c?.id && !deletedIds.has(c.id)) {
+            await db.complaints.put(c);
+          }
+        }
+      }
+    } catch (_) {}
+
+    console.log("🔥 Smart reconciliation completed with MongoDB Atlas [green_energy_crm]!");
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('app-realtime-update'));
+    }
   } catch (err) {
     console.warn("syncAllLocalDataToFirestore note:", err);
   }
 }
 
-/**
- * Real-time Firestore sync subscriptions to sync changes across all devices & PWA apps in real-time.
- */
-let isRealtimeSyncInitialized = false;
-
+// Multi-tab BroadcastChannel for zero-latency inter-tab updates
 const realtimeChannel = typeof BroadcastChannel !== 'undefined' ? new BroadcastChannel('app_realtime_broadcast_channel') : null;
+
+function broadcastDataUpdate(collectionName: string, id: string) {
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent('app-realtime-update', { detail: { collectionName, id } }));
+    if (realtimeChannel) {
+      try {
+        realtimeChannel.postMessage({ type: 'REALTIME_UPDATE', collectionName, id });
+      } catch (_) {}
+    }
+  }
+}
 
 if (realtimeChannel) {
   realtimeChannel.onmessage = (event) => {
     if (event.data?.type === 'REALTIME_UPDATE') {
-      window.dispatchEvent(new CustomEvent('app-realtime-update'));
+      window.dispatchEvent(new CustomEvent('app-realtime-update', { detail: event.data }));
     }
   };
 }
 
+// Persistent Cross-Device Realtime SSE Stream connection
+let sseConnection: EventSource | null = null;
+let sseReconnectTimer: any = null;
+
+export function connectCrossDeviceRealtimeStream(): void {
+  if (typeof window === 'undefined') return;
+
+  if (sseConnection) {
+    try { sseConnection.close(); } catch (_) {}
+    sseConnection = null;
+  }
+
+  const streamUrl = buildApiUrl('/api/realtime/stream');
+  try {
+    sseConnection = new EventSource(streamUrl);
+
+    sseConnection.onopen = () => {
+      console.log('⚡ [Cross-Device Sync] Connected to MongoDB Atlas real-time SSE stream!');
+    };
+
+    sseConnection.onmessage = async (e) => {
+      try {
+        if (!e.data) return;
+        const msg = JSON.parse(e.data);
+        if (msg.type === 'CHANGE') {
+          const { collection, id, action, data } = msg;
+          const { db, getDeletedRecordIdsSet, markRecordAsDeleted } = await import('./db');
+
+          if (action === 'delete') {
+            await markRecordAsDeleted(id, collection);
+            if ((db as any)[collection]) {
+              await (db as any)[collection].delete(id).catch(() => {});
+            }
+          } else if (action === 'upsert' && data) {
+            const deletedIds = await getDeletedRecordIdsSet();
+            if (!deletedIds.has(id) && (db as any)[collection]) {
+              await (db as any)[collection].put(data).catch(() => {});
+            }
+          }
+
+          // Instantly notify local UI components & other tabs
+          broadcastDataUpdate(collection, id);
+        }
+      } catch (err) {
+        console.warn('Real-time event processing note:', err);
+      }
+    };
+
+    sseConnection.onerror = () => {
+      try { sseConnection?.close(); } catch (_) {}
+      sseConnection = null;
+      if (!sseReconnectTimer) {
+        sseReconnectTimer = setTimeout(() => {
+          sseReconnectTimer = null;
+          connectCrossDeviceRealtimeStream();
+        }, 3000);
+      }
+    };
+  } catch (err) {
+    console.warn("Could not start EventSource stream:", err);
+  }
+}
+
+let isRealtimeSyncInitialized = false;
+
+/**
+ * Real-time sync initialization: Instant cross-device SSE streaming + periodic sync fallback
+ * ZERO Firestore listeners, ZERO Firebase quota consumption!
+ */
 export function initializeRealtimeFirestoreSync(): void {
   if (isRealtimeSyncInitialized) return;
   isRealtimeSyncInitialized = true;
 
-  let dispatchTimer: any = null;
-  const dispatchRealtimeUpdate = () => {
-    if (dispatchTimer) clearTimeout(dispatchTimer);
-    dispatchTimer = setTimeout(() => {
-      window.dispatchEvent(new CustomEvent('app-realtime-update'));
-      if (realtimeChannel) {
-        try { realtimeChannel.postMessage({ type: 'REALTIME_UPDATE' }); } catch (e) {}
-      }
-    }, 800);
-  };
+  // 1. Establish persistent cross-device SSE real-time stream
+  connectCrossDeviceRealtimeStream();
 
-  // 1. Subscribe to deletedRecords tombstones collection
-  try {
-    const deletedColRef = collection(firestoreDb, 'deletedRecords');
-    onSnapshot(deletedColRef, async (snapshot) => {
-      let changed = false;
-      const { db } = await import('./db');
-      for (const change of snapshot.docChanges()) {
-        const data = change.doc.data() as { id?: string; collectionName?: string; deletedAt?: string };
-        const id = data.id || change.doc.id;
-        const collectionName = data.collectionName || 'leads';
-        if (id) {
-          try {
-            await db.deletedRecords.put({
-              id,
-              collectionName,
-              deletedAt: data.deletedAt || new Date().toISOString()
-            });
+  // 2. Initial background sync with MongoDB Atlas
+  syncAllLocalDataToFirestore(true).catch(() => {});
 
-            // Immediately purge the deleted entity from local Dexie IndexedDB tables
-            if (collectionName === 'leads' || !collectionName) {
-              await db.leads.delete(id);
-              await db.quotations.where({ leadId: id }).delete();
-              await db.orderConfirmations.where({ leadId: id }).delete();
-              await db.clientDocuments.where({ leadId: id }).delete();
-              await db.clientRegistrations.where({ leadId: id }).delete();
-              await db.installationPhotos.where({ leadId: id }).delete();
-              await db.releaseDocuments.where({ leadId: id }).delete();
-              await db.fieldVisitReports.where({ leadId: id }).delete();
-              await db.challans.where({ leadId: id }).delete();
-              await db.shadowAnalyses.where({ leadId: id }).delete();
-            } else if (collectionName === 'quotations') {
-              await db.quotations.delete(id);
-            } else if (collectionName === 'orderConfirmations') {
-              await db.orderConfirmations.delete(id);
-            } else if (collectionName === 'products') {
-              await db.products.delete(id);
-            } else if (collectionName === 'challans') {
-              await db.challans.delete(id);
-            } else if (collectionName === 'fieldVisitReports') {
-              await db.fieldVisitReports.delete(id);
-            } else if (collectionName === 'shadowAnalyses') {
-              await db.shadowAnalyses.delete(id);
-            } else if (collectionName === 'complaints') {
-              await db.complaints.delete(id);
-            } else if (collectionName === 'b2b_businesses' || collectionName === 'b2bBusinesses') {
-              await db.b2bBusinesses.delete(id);
-            } else if (collectionName === 'profiles') {
-              await db.profiles.delete(id);
-            }
-            changed = true;
-          } catch (e) {
-            console.warn("Error handling realtime deletedRecord change:", e);
-          }
-        }
+  if (typeof window !== 'undefined') {
+    // 3. Reconnect & sync on tab focus
+    window.addEventListener('focus', () => {
+      if (!sseConnection || sseConnection.readyState === EventSource.CLOSED) {
+        connectCrossDeviceRealtimeStream();
       }
-      if (changed) dispatchRealtimeUpdate();
-    }, (err) => console.warn("DeletedRecords realtime listener note:", err));
-  } catch (err) {
-    console.warn("DeletedRecords listener init note:", err);
+      syncAllLocalDataToFirestore(false).catch(() => {});
+    });
+
+    // 4. Periodic safety sync every 30 seconds
+    setInterval(() => {
+      syncAllLocalDataToFirestore(false).catch(() => {});
+    }, 30000);
   }
-
-  // 2. Helper to set up collection listener
-  const setupCollectionListener = (colName: string, getDexieTable: (dbInstance: any) => any) => {
-    try {
-      const colRef = collection(firestoreDb, colName);
-      onSnapshot(colRef, async (snapshot) => {
-        const { db, getDeletedRecordIdsSet, markRecordAsDeleted } = await import('./db');
-        const dexieTable = getDexieTable(db);
-        const deletedIds = await getDeletedRecordIdsSet();
-        let changed = false;
-
-        for (const change of snapshot.docChanges()) {
-          const docId = change.doc.id;
-          if (deletedIds.has(docId)) {
-            if (dexieTable) await dexieTable.delete(docId);
-            changed = true;
-            continue;
-          }
-
-          if (change.type === 'removed') {
-            if (dexieTable) await dexieTable.delete(docId);
-            await markRecordAsDeleted(docId, colName);
-            changed = true;
-          } else if (change.type === 'added' || change.type === 'modified') {
-            const incomingData = { id: docId, ...change.doc.data() } as any;
-            if (dexieTable) {
-              const existing = await dexieTable.get(docId);
-              if (existing) {
-                // If colName is orderConfirmations, protect local payments
-                if (colName === 'orderConfirmations') {
-                  const existingPayments = existing.payments || [];
-                  const incomingPayments = incomingData.payments || [];
-                  const existingPaid = existingPayments.reduce((s: number, p: any) => s + (p?.amount || 0), 0) || existing.advanceAmount || 0;
-                  const incomingPaid = incomingPayments.reduce((s: number, p: any) => s + (p?.amount || 0), 0) || incomingData.advanceAmount || 0;
-                  if (existingPaid > incomingPaid) {
-                    incomingData.payments = existingPayments;
-                    incomingData.advanceAmount = existing.advanceAmount || incomingData.advanceAmount;
-                  }
-                }
-                // If local has a later updatedAt, don't let older remote overwrite it
-                if (existing.updatedAt && incomingData.updatedAt) {
-                  const exTime = new Date(existing.updatedAt).getTime();
-                  const inTime = new Date(incomingData.updatedAt).getTime();
-                  if (exTime > inTime) {
-                    continue;
-                  }
-                }
-                const mergedData = { ...incomingData };
-                if (!mergedData.photoBlob && existing.photoBlob) mergedData.photoBlob = existing.photoBlob;
-                if (!mergedData.fileBlob && existing.fileBlob) mergedData.fileBlob = existing.fileBlob;
-                if (!mergedData.clientSignatureBlob && existing.clientSignatureBlob) mergedData.clientSignatureBlob = existing.clientSignatureBlob;
-                if (!mergedData.vehiclePhotoBlob && existing.vehiclePhotoBlob) mergedData.vehiclePhotoBlob = existing.vehiclePhotoBlob;
-                if (!mergedData.bankDocumentBlob && existing.bankDocumentBlob) mergedData.bankDocumentBlob = existing.bankDocumentBlob;
-                await dexieTable.put(mergedData);
-              } else {
-                await dexieTable.put(incomingData);
-              }
-            }
-            changed = true;
-          }
-        }
-
-        if (changed) dispatchRealtimeUpdate();
-      }, (err) => console.warn(`Realtime listener note for ${colName}:`, err));
-    } catch (err) {
-      console.warn(`Listener init note for ${colName}:`, err);
-    }
-  };
-
-  setupCollectionListener('leads', (db) => db.leads);
-  setupCollectionListener('quotations', (db) => db.quotations);
-  setupCollectionListener('orderConfirmations', (db) => db.orderConfirmations);
-  setupCollectionListener('products', (db) => db.products);
-  setupCollectionListener('challans', (db) => db.challans);
-  setupCollectionListener('fieldVisitReports', (db) => db.fieldVisitReports);
-  setupCollectionListener('complaints', (db) => db.complaints);
-  setupCollectionListener('b2b_businesses', (db) => db.b2bBusinesses);
-  setupCollectionListener('b2bBusinesses', (db) => db.b2bBusinesses);
-  setupCollectionListener('profiles', (db) => db.profiles);
-  setupCollectionListener('clientDocuments', (db) => db.clientDocuments);
-  setupCollectionListener('clientRegistrations', (db) => db.clientRegistrations);
-  setupCollectionListener('installationPhotos', (db) => db.installationPhotos);
-  setupCollectionListener('releaseDocuments', (db) => db.releaseDocuments);
-  setupCollectionListener('shadowAnalyses', (db) => db.shadowAnalyses);
-  setupCollectionListener('deletionRequests', (db) => db.deletionRequests);
-  setupCollectionListener('stockTransactions', (db) => db.stockTransactions);
-  setupCollectionListener('packages', (db) => db.packages);
-  setupCollectionListener('complaintConfigCategories', (db) => db.complaintConfigCategories);
 }
-

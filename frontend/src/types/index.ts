@@ -633,3 +633,123 @@ export interface Complaint {
   updatedAt: string;
 }
 
+export type LeaveType =
+  | 'casual'
+  | 'sick'
+  | 'earned'
+  | 'emergency'
+  | 'maternity_paternity'
+  | 'compensatory'
+  | 'other';
+
+export type LeaveDurationType = 'full_day' | 'first_half' | 'second_half';
+export type LeaveStatus = 'pending' | 'approved' | 'rejected';
+
+export interface LeaveRequest {
+  id: string;
+  leaveNumber: string; // e.g. "GES-LV-2026-001"
+  employeeId: string;
+  employeeName: string;
+  employeeEmail?: string;
+  employeePhone: string;
+  employeeRole: string;
+  designation?: string;
+
+  leaveType: LeaveType;
+  durationType: LeaveDurationType;
+  startDate: string; // YYYY-MM-DD
+  endDate: string; // YYYY-MM-DD
+  totalDays: number;
+  reason: string;
+  contactNumberDuringLeave?: string;
+  handoverNotes?: string;
+
+  // Status and review
+  status: LeaveStatus;
+  appliedAt: string; // ISO
+  reviewedAt?: string; // ISO
+  reviewedByUserId?: string;
+  reviewedByUserName?: string;
+
+  // If approved:
+  approvalRemarks?: string;
+  approvalReferenceNumber?: string; // e.g. "GES/HR/LA-2026-1001"
+  approvalLetterGeneratedAt?: string;
+  approvalLetterValidTill?: string;
+
+  // If rejected:
+  rejectionReason?: string;
+  rejectionRemarks?: string;
+
+  // If reapplied:
+  isReapplied?: boolean;
+  previousLeaveId?: string;
+  reapplicationCount?: number;
+
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type ExpenseCategory =
+  | 'travel'
+  | 'fuel'
+  | 'food'
+  | 'tools_hardware'
+  | 'stay_hotel'
+  | 'client_meeting'
+  | 'courier_postage'
+  | 'printing_stationery'
+  | 'emergency_repair'
+  | 'other';
+
+export type ExpensePaymentMode = 'cash' | 'upi_online' | 'bank_transfer' | 'credit_debit_card';
+export type ExpenseStatus = 'pending' | 'approved' | 'rejected';
+
+export interface ExpenseClaim {
+  id: string;
+  expenseNumber: string; // e.g. "GES-EXP-2026-1001"
+  employeeId: string;
+  employeeName: string;
+  employeeEmail?: string;
+  employeePhone: string;
+  employeeRole: string;
+  designation?: string;
+
+  title: string; // Brief purpose
+  category: ExpenseCategory;
+  amount: number; // in INR
+  expenseDate: string; // YYYY-MM-DD
+  paymentMode: ExpensePaymentMode;
+  associatedProject?: string; // Lead / Project / Customer name
+  description?: string; // Detailed reason
+
+  // Bill / Receipt proof image
+  billProofUrl?: string; // Cloud URL
+  billProofBlob?: string; // Local Base64 preview
+
+  // Status & Super Admin Review
+  status: ExpenseStatus;
+  submittedAt: string; // ISO
+  reviewedAt?: string; // ISO
+  reviewedByUserId?: string;
+  reviewedByUserName?: string;
+
+  // If approved:
+  approvedAmount?: number;
+  approvalRemarks?: string;
+  voucherNumber?: string; // e.g. "GES/EXP/2026-1001"
+  reimbursementStatus?: 'pending_payment' | 'paid';
+  reimbursedAt?: string;
+
+  // If rejected:
+  rejectionReason?: string;
+
+  // If reapplied:
+  isReapplied?: boolean;
+  previousExpenseId?: string;
+  reapplicationCount?: number;
+
+  createdAt: string;
+  updatedAt: string;
+}
+

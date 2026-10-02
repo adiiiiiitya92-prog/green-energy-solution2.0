@@ -348,14 +348,38 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   },
   
   initAuth: async () => {
-    set({ isLoading: true });
-    try {
-      await seedDemoData(); // Seeds if empty
-      const savedUserId = localStorage.getItem('ges_user_id');
-      const savedEmail = localStorage.getItem('ges_user_email');
-      const savedAuth = localStorage.getItem('ges_authenticated') === 'true';
-      const savedProfileStr = localStorage.getItem('ges_user_profile');
+    const savedUserId = localStorage.getItem('ges_user_id');
+    const savedEmail = localStorage.getItem('ges_user_email');
+    const savedAuth = localStorage.getItem('ges_authenticated') === 'true';
+    const savedProfileStr = localStorage.getItem('ges_user_profile');
 
+    // 0. Instant Optimistic Unlock: if cached session exists in localStorage, unlock UI immediately (0ms)
+    if (savedAuth && savedProfileStr) {
+      try {
+        const cached = JSON.parse(savedProfileStr) as Profile;
+        if (cached && (cached.id || cached.email) && cached.isActive !== false) {
+          set({
+            currentUser: cached,
+            currentRole: cached.role,
+            isAuthenticated: true,
+            isLoading: false,
+            originalUser: null
+          });
+        }
+      } catch (_) {}
+    } else if (!savedAuth && !savedUserId) {
+      // Not authenticated: show login screen immediately without waiting (0ms)
+      set({
+        currentUser: null,
+        isAuthenticated: false,
+        isLoading: false,
+        originalUser: null
+      });
+    }
+
+    try {
+      // Background verification & Dexie initialization
+      await seedDemoData(); // Seeds if empty
       let profile: Profile | null | undefined = null;
 
       // 1. First check Dexie DB by savedUserId
@@ -389,12 +413,12 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         } catch (_) {}
       }
 
-      // 4. If still not found, search remote Cloud Firestore / Firebase Auth
+      // 4. If still not found, search remote Cloud Firestore / Firebase Auth (fast 3s timeout)
       if (!profile && savedAuth) {
         try {
           const { auth, fetchCollectionFromFirestore } = await import('../services/firebase');
           const fbUser = auth.currentUser;
-          const remoteProfiles = await fetchCollectionFromFirestore<Profile>('profiles');
+          const remoteProfiles = await fetchCollectionFromFirestore<Profile>('profiles', 3000);
           if (remoteProfiles && remoteProfiles.length > 0) {
             profile = remoteProfiles.find(p => 
               (savedUserId && (p.id === savedUserId || p.email?.toLowerCase() === savedUserId.toLowerCase())) ||

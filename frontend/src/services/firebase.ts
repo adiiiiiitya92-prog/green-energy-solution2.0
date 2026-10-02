@@ -719,18 +719,53 @@ if (typeof window !== 'undefined') {
   }, 15000);
 }
 
+let isFirestoreQuotaExhausted = false;
+let quotaExhaustedCooldownUntil = 0;
+
+export function checkFirestoreQuotaAvailable(): boolean {
+  if (isFirestoreQuotaExhausted) {
+    if (Date.now() < quotaExhaustedCooldownUntil) {
+      return false;
+    }
+    isFirestoreQuotaExhausted = false;
+  }
+  return true;
+}
+
+export function handleFirestoreQuotaExhausted(err: any): boolean {
+  const errMsg = String(err?.message || err?.code || '');
+  if (errMsg.includes('resource-exhausted') || errMsg.includes('Quota exceeded') || err?.code === 'resource-exhausted') {
+    if (!isFirestoreQuotaExhausted) {
+      console.warn("⚠️ Firebase Firestore daily free quota (50,000 reads) exceeded for today. CRM is seamlessly operating in fast offline-native mode using local Dexie IndexedDB.");
+    }
+    isFirestoreQuotaExhausted = true;
+    quotaExhaustedCooldownUntil = Date.now() + 15 * 60 * 1000;
+    return true;
+  }
+  return false;
+}
+
 /**
  * Saves or updates a document in Firebase Firestore (strictly targets green-energy-solution database)
  */
 export async function saveRecordToFirestore(collectionName: string, id: string, data: any): Promise<void> {
   const cleanData = sanitizeForFirestore(data);
+  if (!checkFirestoreQuotaAvailable()) {
+    enqueuePendingSave(collectionName, id, cleanData);
+    return;
+  }
+
   try {
     const docRef = doc(firestoreDb, collectionName, id);
     await setDoc(docRef, cleanData, { merge: true });
     dequeuePendingSave(collectionName, id);
     console.log(`Firestore synced [${collectionName}/${id}] -> DB: [${TARGET_DATABASE_ID}]`);
     return;
-  } catch (err) {
+  } catch (err: any) {
+    if (handleFirestoreQuotaExhausted(err)) {
+      enqueuePendingSave(collectionName, id, cleanData);
+      return;
+    }
     console.warn(`Firestore direct save note [${collectionName}/${id}], trying backend:`, err);
     const saved = await saveRecordViaBackend(collectionName, id, cleanData);
     if (saved) {
@@ -748,8 +783,15 @@ export async function saveRecordToFirestore(collectionName: string, id: string, 
  */
 export async function fetchCollectionFromFirestore<T extends { id?: string; isDeleted?: boolean; leadId?: string }>(
   collectionName: string,
-  timeoutMs: number = 15000
+  timeoutMs: number = 4000
 ): Promise<T[]> {
+  if (!checkFirestoreQuotaAvailable()) {
+    const backendDocs = await fetchCollectionViaBackend<T>(collectionName, 1000);
+    const { getDeletedRecordIdsSet } = await import('./db');
+    const deletedIds = await getDeletedRecordIdsSet();
+    return backendDocs.filter(d => (!d.id || !deletedIds.has(d.id)) && !d.isDeleted);
+  }
+
   try {
     const colRef = collection(firestoreDb, collectionName);
     const timeoutPromise = new Promise<never>((_, reject) =>
@@ -779,7 +821,8 @@ export async function fetchCollectionFromFirestore<T extends { id?: string; isDe
       validDocs.push(docItem);
     }
     return validDocs;
-  } catch (err) {
+  } catch (err: any) {
+    handleFirestoreQuotaExhausted(err);
     console.warn(`Firestore direct fetch note [${collectionName}], trying backend:`, err);
     const backendDocs = await fetchCollectionViaBackend<T>(collectionName, timeoutMs);
     const { getDeletedRecordIdsSet } = await import('./db');
@@ -828,7 +871,7 @@ export async function syncAllLocalDataToFirestore(force: boolean = false): Promi
 
     // 1. Fetch remote deletedRecords tombstones first
     try {
-      const remoteDeleted = await fetchCollectionFromFirestore<{ id: string; collectionName: string }>('deletedRecords', 15000);
+      const remoteDeleted = await fetchCollectionFromFirestore<{ id: string; collectionName: string }>('deletedRecords', 4000);
       if (Array.isArray(remoteDeleted)) {
         for (const rd of remoteDeleted) {
           if (rd.id) {
@@ -841,7 +884,7 @@ export async function syncAllLocalDataToFirestore(force: boolean = false): Promi
 
     // 2. Reconcile & Sync Leads
     try {
-      const remoteLeads = await fetchCollectionFromFirestore<any>('leads', 15000);
+      const remoteLeads = await fetchCollectionFromFirestore<any>('leads', 4000);
       const remoteLeadMap = new Map<string, any>((Array.isArray(remoteLeads) ? remoteLeads : []).map(r => [r.id, r]));
       const localLeads = await db.leads.toArray();
 
@@ -889,7 +932,7 @@ export async function syncAllLocalDataToFirestore(force: boolean = false): Promi
 
     // 3. Reconcile & Sync Quotations
     try {
-      const remoteQuotes = await fetchCollectionFromFirestore<any>('quotations', 15000);
+      const remoteQuotes = await fetchCollectionFromFirestore<any>('quotations', 4000);
       const remoteQuoteMap = new Map<string, any>((Array.isArray(remoteQuotes) ? remoteQuotes : []).map(r => [r.id, r]));
       const localQuotes = await db.quotations.toArray();
 
@@ -933,7 +976,7 @@ export async function syncAllLocalDataToFirestore(force: boolean = false): Promi
 
     // 4. Reconcile & Sync Order Confirmations (with Payments protection)
     try {
-      const remoteOcs = await fetchCollectionFromFirestore<any>('orderConfirmations', 15000);
+      const remoteOcs = await fetchCollectionFromFirestore<any>('orderConfirmations', 4000);
       const remoteOcMap = new Map<string, any>((Array.isArray(remoteOcs) ? remoteOcs : []).map(r => [r.id, r]));
       const localOcs = await db.orderConfirmations.toArray();
 
@@ -990,7 +1033,7 @@ export async function syncAllLocalDataToFirestore(force: boolean = false): Promi
 
     // 5. Reconcile & Sync Delivery Challans
     try {
-      const remoteChallans = await fetchCollectionFromFirestore<any>('challans', 15000);
+      const remoteChallans = await fetchCollectionFromFirestore<any>('challans', 4000);
       const remoteChallanMap = new Map<string, any>((Array.isArray(remoteChallans) ? remoteChallans : []).map(r => [r.id, r]));
       const localChallans = await db.challans.toArray();
 
@@ -1022,7 +1065,7 @@ export async function syncAllLocalDataToFirestore(force: boolean = false): Promi
 
     // 6. Reconcile & Sync Client Registrations
     try {
-      const remoteRegs = await fetchCollectionFromFirestore<any>('clientRegistrations', 15000);
+      const remoteRegs = await fetchCollectionFromFirestore<any>('clientRegistrations', 4000);
       const remoteRegMap = new Map<string, any>((Array.isArray(remoteRegs) ? remoteRegs : []).map(r => [r.leadId, r]));
       const localRegs = await db.clientRegistrations.toArray();
 
@@ -1049,7 +1092,7 @@ export async function syncAllLocalDataToFirestore(force: boolean = false): Promi
 
     // 7. Reconcile & Sync Client Documents
     try {
-      const remoteClientDocs = await fetchCollectionFromFirestore<any>('clientDocuments', 15000);
+      const remoteClientDocs = await fetchCollectionFromFirestore<any>('clientDocuments', 4000);
       const remoteDocMap = new Map<string, any>((Array.isArray(remoteClientDocs) ? remoteClientDocs : []).map(r => [r.id, r]));
       const localClientDocs = await db.clientDocuments.toArray();
 
@@ -1082,7 +1125,7 @@ export async function syncAllLocalDataToFirestore(force: boolean = false): Promi
 
     // 8. Reconcile & Sync Complaints
     try {
-      const remoteComplaints = await fetchCollectionFromFirestore<any>('complaints', 15000).catch(() => []);
+      const remoteComplaints = await fetchCollectionFromFirestore<any>('complaints', 4000).catch(() => []);
       const remoteCompMap = new Map<string, any>((Array.isArray(remoteComplaints) ? remoteComplaints : []).map(r => [r.id, r]));
       const localComplaints = await db.complaints.toArray();
 
@@ -1101,7 +1144,7 @@ export async function syncAllLocalDataToFirestore(force: boolean = false): Promi
 
     // 9. Reconcile & Sync Release Documents
     try {
-      const remoteReleases = await fetchCollectionFromFirestore<any>('releaseDocuments', 15000).catch(() => []);
+      const remoteReleases = await fetchCollectionFromFirestore<any>('releaseDocuments', 4000).catch(() => []);
       const remoteRelMap = new Map<string, any>((Array.isArray(remoteReleases) ? remoteReleases : []).map(r => [r.id, r]));
       const localReleases = await db.releaseDocuments.toArray();
 
@@ -1133,7 +1176,7 @@ export async function syncAllLocalDataToFirestore(force: boolean = false): Promi
 
     // 10. Reconcile & Sync Installation Photos
     try {
-      const remotePhotos = await fetchCollectionFromFirestore<any>('installationPhotos', 15000).catch(() => []);
+      const remotePhotos = await fetchCollectionFromFirestore<any>('installationPhotos', 4000).catch(() => []);
       const remotePhotoMap = new Map<string, any>((Array.isArray(remotePhotos) ? remotePhotos : []).map(r => [r.id, r]));
       const localPhotos = await db.installationPhotos.toArray();
 
@@ -1161,6 +1204,86 @@ export async function syncAllLocalDataToFirestore(force: boolean = false): Promi
       }
     } catch (err) {
       console.warn("Installation photo sync note:", err);
+    }
+
+    // 11. Reconcile & Sync Leave Requests
+    try {
+      const remoteLeaves = await fetchCollectionFromFirestore<any>('leaveRequests', 2000).catch(() => []);
+      const remoteLeaveMap = new Map<string, any>((Array.isArray(remoteLeaves) ? remoteLeaves : []).map(r => [r.id, r]));
+      const localLeaves = await db.leaveRequests.toArray();
+
+      for (const lv of localLeaves) {
+        if (deletedIds.has(lv.id)) {
+          await db.leaveRequests.delete(lv.id);
+          continue;
+        }
+        const remoteLv = remoteLeaveMap.get(lv.id);
+        if (!remoteLv) {
+          await saveRecordToFirestore('leaveRequests', lv.id, lv);
+        } else if (lv.updatedAt && remoteLv.updatedAt && new Date(lv.updatedAt).getTime() > new Date(remoteLv.updatedAt).getTime()) {
+          await saveRecordToFirestore('leaveRequests', lv.id, lv);
+        }
+      }
+
+      if (Array.isArray(remoteLeaves)) {
+        for (const rlv of remoteLeaves) {
+          if (rlv && rlv.id && !deletedIds.has(rlv.id)) {
+            const local = await db.leaveRequests.get(rlv.id);
+            if (!local) {
+              await db.leaveRequests.put(rlv);
+            } else {
+              const rTime = new Date(rlv.updatedAt || 0).getTime();
+              const lTime = new Date(local.updatedAt || 0).getTime();
+              if (rTime >= lTime) {
+                await db.leaveRequests.put({ ...local, ...rlv });
+              }
+            }
+          }
+        }
+      }
+    } catch (err) {
+      console.warn("Leave requests sync note:", err);
+    }
+
+    // 12. Reconcile & Sync Expenses
+    try {
+      const remoteExpenses = await fetchCollectionFromFirestore<any>('expenses', 2000).catch(() => []);
+      const remoteExpMap = new Map<string, any>((Array.isArray(remoteExpenses) ? remoteExpenses : []).map(r => [r.id, r]));
+      const localExpenses = await db.expenses.toArray();
+
+      for (const exp of localExpenses) {
+        if (deletedIds.has(exp.id)) {
+          await db.expenses.delete(exp.id);
+          continue;
+        }
+        const remoteExp = remoteExpMap.get(exp.id);
+        if (!remoteExp) {
+          await saveRecordToFirestore('expenses', exp.id, exp);
+        } else if (exp.updatedAt && remoteExp.updatedAt && new Date(exp.updatedAt).getTime() > new Date(remoteExp.updatedAt).getTime()) {
+          await saveRecordToFirestore('expenses', exp.id, exp);
+        }
+      }
+
+      if (Array.isArray(remoteExpenses)) {
+        for (const re of remoteExpenses) {
+          if (re && re.id && !deletedIds.has(re.id)) {
+            const local = await db.expenses.get(re.id);
+            if (!local) {
+              await db.expenses.put(re);
+            } else {
+              const rTime = new Date(re.updatedAt || 0).getTime();
+              const lTime = new Date(local.updatedAt || 0).getTime();
+              if (rTime >= lTime) {
+                const merged = { ...local, ...re };
+                if (!merged.billProofBlob && local.billProofBlob) merged.billProofBlob = local.billProofBlob;
+                await db.expenses.put(merged);
+              }
+            }
+          }
+        }
+      }
+    } catch (err) {
+      console.warn("Expenses sync note:", err);
     }
 
     console.log("🔥 Smart reconciliation completed for all CRM collections!");
@@ -1247,6 +1370,10 @@ export function initializeRealtimeFirestoreSync(): void {
               await db.b2bBusinesses.delete(id);
             } else if (collectionName === 'profiles') {
               await db.profiles.delete(id);
+            } else if (collectionName === 'leaveRequests') {
+              await db.leaveRequests.delete(id);
+            } else if (collectionName === 'expenses') {
+              await db.expenses.delete(id);
             }
             changed = true;
           } catch (e) {
@@ -1322,9 +1449,15 @@ export function initializeRealtimeFirestoreSync(): void {
         }
 
         if (changed) dispatchRealtimeUpdate();
-      }, (err) => console.warn(`Realtime listener note for ${colName}:`, err));
+      }, (err) => {
+        if (!handleFirestoreQuotaExhausted(err)) {
+          console.warn(`Realtime listener note for ${colName}:`, err);
+        }
+      });
     } catch (err) {
-      console.warn(`Listener init note for ${colName}:`, err);
+      if (!handleFirestoreQuotaExhausted(err)) {
+        console.warn(`Listener init note for ${colName}:`, err);
+      }
     }
   };
 
@@ -1347,5 +1480,7 @@ export function initializeRealtimeFirestoreSync(): void {
   setupCollectionListener('stockTransactions', (db) => db.stockTransactions);
   setupCollectionListener('packages', (db) => db.packages);
   setupCollectionListener('complaintConfigCategories', (db) => db.complaintConfigCategories);
+  setupCollectionListener('leaveRequests', (db) => db.leaveRequests);
+  setupCollectionListener('expenses', (db) => db.expenses);
 }
 

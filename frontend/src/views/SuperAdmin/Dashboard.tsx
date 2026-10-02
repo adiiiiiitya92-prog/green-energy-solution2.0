@@ -59,8 +59,8 @@ export const Dashboard: React.FC = () => {
         visitService.getVisitReports(),
         productService.getProducts(),
         import('../../services/deletionRequestService').then(m => m.deletionRequestService.getPendingRequests()).catch(() => []),
-        challanService.getChallans(true),
-        orderService.getAllInstallationEvidenceLeadIds(true)
+        challanService.getChallans(false),
+        orderService.getAllInstallationEvidenceLeadIds(false)
       ]);
 
 

@@ -1,4 +1,4 @@
-import Tesseract from 'tesseract.js';
+// Dynamic import used on-demand to keep initial app bundle ultra-light
 
 /**
  * Multi-Engine AI & OCR Service for Automatic Aadhar & Pallet Scanning
@@ -771,6 +771,7 @@ export async function extractPalletDetailsLocalOCR(
 ): Promise<PalletScanResult> {
   try {
     console.log('🔍 Running Local High-Speed OCR on Pallet image...');
+    const Tesseract = (await import('tesseract.js')).default;
     const result = await Tesseract.recognize(base64DataUrl, 'eng', {
       logger: () => {}
     });

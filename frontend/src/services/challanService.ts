@@ -21,7 +21,7 @@ export const challanService = {
       activeChallanSyncPromise = (async () => {
         try {
           lastChallanRemoteSync = Date.now();
-          const remoteChallans = await fetchCollectionFromFirestore<Challan>('challans', 15000);
+          const remoteChallans = await fetchCollectionFromFirestore<Challan>('challans', 4000);
           if (Array.isArray(remoteChallans)) {
             const freshDeleted = await getDeletedRecordIdsSet(true);
             const validRemote = remoteChallans.filter(c => !freshDeleted.has(c.id) && (!c.leadId || !freshDeleted.has(c.leadId)));

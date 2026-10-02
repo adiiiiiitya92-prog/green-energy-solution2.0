@@ -7,10 +7,13 @@ import { PackageManager } from '../../components/Packages/PackageManager';
 import { AiPalletScannerModal } from '../../components/Products/AiPalletScannerModal';
 import { ProductHistoryView } from '../../components/Products/ProductHistoryView';
 import { QuickStockInwardModal } from '../../components/Products/QuickStockInwardModal';
+import { ProductReportModal } from '../../components/Products/ProductReportModal';
+import { pdfService, exportProductCatalogToCSV } from '../../services/pdfService';
+import dayjs from 'dayjs';
 import {
   Plus, Search, Trash2, Tag, Layers, Package, Filter, Pencil, Check, X,
   Barcode, RefreshCw, Clipboard, CheckCircle2, ChevronDown, ChevronUp, AlertCircle, Boxes, Calendar,
-  List, LayoutGrid, Sparkles, History
+  List, LayoutGrid, Sparkles, History, Download, FileSpreadsheet, FileText, Printer
 } from 'lucide-react';
 
 const formatBatchDateDisplay = (isoStr?: string): string => {
@@ -127,6 +130,7 @@ export const Products: React.FC = () => {
   });
   const [showAddModal, setShowAddModal] = useState(false);
   const [showAddBomModal, setShowAddBomModal] = useState(false);
+  const [showReportModal, setShowReportModal] = useState(false);
 
   // Form states (Commercial Product Add)
   const [name, setName] = useState('');
@@ -742,6 +746,16 @@ export const Products: React.FC = () => {
         </div>
 
         <div className="flex flex-wrap items-center gap-2 self-start sm:self-auto">
+          {/* Download Product Catalog Reports Button */}
+          <button
+            onClick={() => setShowReportModal(true)}
+            className="px-3.5 py-2 bg-slate-900 hover:bg-slate-800 active:scale-[0.98] text-white font-black text-xs rounded-xl shadow-md flex items-center gap-2 cursor-pointer transition-all border border-slate-700/80 hover:border-emerald-500/50"
+            title="Download Product Catalog & Inventory Valuation Reports (PDF & Excel/CSV)"
+          >
+            <Download className="w-4 h-4 text-emerald-400" />
+            <span>📥 Download Reports</span>
+          </button>
+
           {/* AI Pallet / Label Scanner Button */}
           <button
             onClick={() => {
@@ -935,40 +949,108 @@ export const Products: React.FC = () => {
               />
             </div>
 
-            {/* View Mode Switcher (List vs Grid) */}
-            <div className="flex items-center bg-slate-100 p-1 rounded-xl border border-slate-200/80 shrink-0 self-end sm:self-auto">
-              <button
-                type="button"
-                onClick={() => {
-                  setViewMode('list');
-                  try { localStorage.setItem('products_view_mode', 'list'); } catch {}
-                }}
-                className={`px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer ${
-                  viewMode === 'list'
-                    ? 'bg-white text-emerald-700 shadow-xs'
-                    : 'text-slate-500 hover:text-slate-800'
-                }`}
-                title="List View"
-              >
-                <List className="w-3.5 h-3.5" />
-                <span>List View</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setViewMode('grid');
-                  try { localStorage.setItem('products_view_mode', 'grid'); } catch {}
-                }}
-                className={`px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer ${
-                  viewMode === 'grid'
-                    ? 'bg-white text-emerald-700 shadow-xs'
-                    : 'text-slate-500 hover:text-slate-800'
-                }`}
-                title="Grid Cards View"
-              >
-                <LayoutGrid className="w-3.5 h-3.5" />
-                <span>Cards</span>
-              </button>
+            {/* Quick Export & Full Report Options + View Mode Switcher */}
+            <div className="flex items-center gap-2 self-end sm:self-auto shrink-0 flex-wrap">
+              <div className="flex items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={async () => {
+                    try {
+                      showToast('Generating PDF Report...');
+                      const targetItems = activeTab === 'commercial' ? commercialProducts : bomProducts;
+                      const title = activeTab === 'commercial' ? 'COMMERCIAL PRODUCTS CATALOG REPORT' : 'BILL OF MATERIALS (BOM) CATALOG REPORT';
+                      const scopeLabel = activeTab === 'commercial' ? 'Commercial Products' : 'Bill of Materials (BOM)';
+                      const blob = await pdfService.generateProductCatalogReportPDF(targetItems, {
+                        title,
+                        scopeLabel,
+                        includeSerials: true,
+                        includePrices: true
+                      });
+                      const url = URL.createObjectURL(blob);
+                      const a = document.createElement('a');
+                      a.href = url;
+                      a.download = `Green_Energy_${activeTab === 'commercial' ? 'Commercial' : 'BOM'}_Catalog_Report_${dayjs().format('YYYY_MM_DD')}.pdf`;
+                      document.body.appendChild(a);
+                      a.click();
+                      document.body.removeChild(a);
+                      setTimeout(() => URL.revokeObjectURL(url), 10000);
+                      showToast('PDF Report downloaded successfully!');
+                    } catch (e) {
+                      console.error('Quick PDF download error:', e);
+                      alert('Error downloading PDF report.');
+                    }
+                  }}
+                  title={`Quick Download PDF Report for ${activeTab === 'commercial' ? 'Commercial Products' : 'BOM Items'}`}
+                  className="px-2.5 py-1.5 bg-slate-100 hover:bg-rose-50 text-slate-700 hover:text-rose-700 rounded-xl text-xs font-bold flex items-center gap-1.5 cursor-pointer transition-colors border border-slate-200 shadow-2xs"
+                >
+                  <FileText className="w-3.5 h-3.5 text-rose-600" />
+                  <span className="hidden md:inline">Quick PDF</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    try {
+                      const targetItems = activeTab === 'commercial' ? commercialProducts : bomProducts;
+                      const prefix = `Green_Energy_${activeTab === 'commercial' ? 'Commercial' : 'BOM'}_Catalog`;
+                      exportProductCatalogToCSV(targetItems, prefix, true, true);
+                      showToast('Excel/CSV Report downloaded successfully!');
+                    } catch (e) {
+                      console.error('Quick CSV export error:', e);
+                      alert('Error exporting CSV.');
+                    }
+                  }}
+                  title={`Quick Export CSV for ${activeTab === 'commercial' ? 'Commercial Products' : 'BOM Items'}`}
+                  className="px-2.5 py-1.5 bg-slate-100 hover:bg-emerald-50 text-slate-700 hover:text-emerald-700 rounded-xl text-xs font-bold flex items-center gap-1.5 cursor-pointer transition-colors border border-slate-200 shadow-2xs"
+                >
+                  <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-600" />
+                  <span className="hidden md:inline">Quick CSV</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShowReportModal(true)}
+                  title="Open Product Catalog Reports Dialog"
+                  className="px-2.5 py-1.5 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-black flex items-center gap-1.5 cursor-pointer transition-colors shadow-2xs"
+                >
+                  <Download className="w-3.5 h-3.5 text-emerald-400" />
+                  <span>Reports</span>
+                </button>
+              </div>
+
+              {/* View Mode Switcher (List vs Grid) */}
+              <div className="flex items-center bg-slate-100 p-1 rounded-xl border border-slate-200/80 shrink-0">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setViewMode('list');
+                    try { localStorage.setItem('products_view_mode', 'list'); } catch {}
+                  }}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer ${
+                    viewMode === 'list'
+                      ? 'bg-white text-emerald-700 shadow-xs'
+                      : 'text-slate-500 hover:text-slate-800'
+                  }`}
+                  title="List View"
+                >
+                  <List className="w-3.5 h-3.5" />
+                  <span>List View</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setViewMode('grid');
+                    try { localStorage.setItem('products_view_mode', 'grid'); } catch {}
+                  }}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer ${
+                    viewMode === 'grid'
+                      ? 'bg-white text-emerald-700 shadow-xs'
+                      : 'text-slate-500 hover:text-slate-800'
+                  }`}
+                  title="Grid Cards View"
+                >
+                  <LayoutGrid className="w-3.5 h-3.5" />
+                  <span>Cards</span>
+                </button>
+              </div>
             </div>
           </div>
 
@@ -2311,6 +2393,19 @@ export const Products: React.FC = () => {
           onSuccess={(updated) => {
             setProducts(prev => prev.map(p => p.id === updated.id ? updated : p));
           }}
+          showToast={showToast}
+        />
+      )}
+
+      {/* MODAL 6: Product Catalog Reports Download Modal */}
+      {showReportModal && (
+        <ProductReportModal
+          isOpen={showReportModal}
+          onClose={() => setShowReportModal(false)}
+          products={products}
+          currentTab={activeTab}
+          searchTerm={searchTerm}
+          selectedBomCategoryFilter={selectedBomCategoryFilter}
           showToast={showToast}
         />
       )}

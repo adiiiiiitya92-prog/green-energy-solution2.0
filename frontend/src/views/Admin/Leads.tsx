@@ -760,9 +760,9 @@ export const Leads: React.FC = () => {
 
     try {
       const [challans, allQuotes, evidenceIds, allOcs] = await Promise.all([
-        challanService.getChallans(true),
+        challanService.getChallans(false),
         quotationService.getAllQuotations().catch(() => []),
-        orderService.getAllInstallationEvidenceLeadIds(true).catch(() => new Set<string>()),
+        orderService.getAllInstallationEvidenceLeadIds(false).catch(() => new Set<string>()),
         orderService.getAllOrderConfirmations().catch(() => [])
       ]);
       if (evidenceIds) {

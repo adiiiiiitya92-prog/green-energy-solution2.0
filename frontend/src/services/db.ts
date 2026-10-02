@@ -17,7 +17,9 @@ import type {
   StockTransaction,
   Package,
   Complaint,
-  ComplaintConfigCategory
+  ComplaintConfigCategory,
+  LeaveRequest,
+  ExpenseClaim
 } from '../types';
 
 export interface DeletedRecord {
@@ -46,6 +48,8 @@ export class SolarCRMDatabase extends Dexie {
   packages!: Table<Package>;
   complaints!: Table<Complaint>;
   complaintConfigCategories!: Table<ComplaintConfigCategory>;
+  leaveRequests!: Table<LeaveRequest>;
+  expenses!: Table<ExpenseClaim>;
 
   constructor() {
     super('GreenEnergyCRMDatabase');
@@ -151,6 +155,51 @@ export class SolarCRMDatabase extends Dexie {
       packages: 'id, name, code, status, createdAt',
       complaints: 'id, complaintNumber, status, priority, customerType, leadId, assignedToId, assignedDepartment, isOverdue, createdAt',
       complaintConfigCategories: 'id, name'
+    });
+    this.version(9).stores({
+      profiles: 'id, role, isActive',
+      leads: 'id, assignedEmployeeId, status, createdAt',
+      quotations: 'id, leadId, quotationNumber, createdAt',
+      orderConfirmations: 'id, leadId, quotationId',
+      clientDocuments: 'id, leadId, docType',
+      clientRegistrations: 'leadId',
+      installationPhotos: 'id, leadId, photoType',
+      releaseDocuments: 'id, leadId',
+      fieldVisitReports: 'id, employeeId, leadId, visitedAt',
+      products: 'id, name, category',
+      challans: 'id, leadId, assignedEmployeeId, challanNumber, createdAt',
+      shadowAnalyses: 'id, leadId, projectName, createdAt',
+      deletedRecords: 'id, collectionName, deletedAt',
+      deletionRequests: 'id, status, entityType, requestedByUserId, requestedAt',
+      b2bBusinesses: 'id, businessName, mobileNumber, gstNumber, contactPerson, createdAt',
+      stockTransactions: 'id, challanId, challanNumber, productId, timestamp',
+      packages: 'id, name, code, status, createdAt',
+      complaints: 'id, complaintNumber, status, priority, customerType, leadId, assignedToId, assignedDepartment, isOverdue, createdAt',
+      complaintConfigCategories: 'id, name',
+      leaveRequests: 'id, leaveNumber, employeeId, status, startDate, endDate, createdAt'
+    });
+    this.version(10).stores({
+      profiles: 'id, role, isActive',
+      leads: 'id, assignedEmployeeId, status, createdAt',
+      quotations: 'id, leadId, quotationNumber, createdAt',
+      orderConfirmations: 'id, leadId, quotationId',
+      clientDocuments: 'id, leadId, docType',
+      clientRegistrations: 'leadId',
+      installationPhotos: 'id, leadId, photoType',
+      releaseDocuments: 'id, leadId',
+      fieldVisitReports: 'id, employeeId, leadId, visitedAt',
+      products: 'id, name, category',
+      challans: 'id, leadId, assignedEmployeeId, challanNumber, createdAt',
+      shadowAnalyses: 'id, leadId, projectName, createdAt',
+      deletedRecords: 'id, collectionName, deletedAt',
+      deletionRequests: 'id, status, entityType, requestedByUserId, requestedAt',
+      b2bBusinesses: 'id, businessName, mobileNumber, gstNumber, contactPerson, createdAt',
+      stockTransactions: 'id, challanId, challanNumber, productId, timestamp',
+      packages: 'id, name, code, status, createdAt',
+      complaints: 'id, complaintNumber, status, priority, customerType, leadId, assignedToId, assignedDepartment, isOverdue, createdAt',
+      complaintConfigCategories: 'id, name',
+      leaveRequests: 'id, leaveNumber, employeeId, status, startDate, endDate, createdAt',
+      expenses: 'id, expenseNumber, employeeId, status, category, expenseDate, createdAt'
     });
   }
 }

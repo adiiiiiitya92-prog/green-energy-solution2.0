@@ -1,6 +1,6 @@
 import { db, markRecordAsDeleted, getDeletedRecordIdsSet } from './db';
 import type { ExpenseClaim, ExpenseCategory, ExpensePaymentMode, Profile } from '../types';
-import { saveRecordToFirestore, fetchCollectionFromFirestore, uploadImageToFirebase, getQuickB2Url, getFreshB2SignedUrl } from './firebase';
+import { saveRecordToFirestore, fetchCollectionFromFirestore, uploadImageToFirebase, getQuickB2Url, getFreshB2SignedUrl, deleteRecordFromFirestore } from './firebase';
 import { compressImage } from './imageCompressionService';
 
 /**
@@ -431,6 +431,7 @@ export const expenseService = {
   async deleteExpenseClaim(id: string): Promise<void> {
     await markRecordAsDeleted(id, 'expenses');
     await db.expenses.delete(id);
+    deleteRecordFromFirestore('expenses', id).catch(() => {});
     window.dispatchEvent(new CustomEvent('app-realtime-update'));
     try {
       const bc = new BroadcastChannel('ges_crm_realtime');

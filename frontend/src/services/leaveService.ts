@@ -1,6 +1,6 @@
 import { db, markRecordAsDeleted, getDeletedRecordIdsSet } from './db';
 import type { LeaveRequest, LeaveType, LeaveDurationType, Profile } from '../types';
-import { saveRecordToFirestore, fetchCollectionFromFirestore } from './firebase';
+import { saveRecordToFirestore, fetchCollectionFromFirestore, deleteRecordFromFirestore } from './firebase';
 
 let lastLeaveRemoteSync = 0;
 const LEAVE_SYNC_INTERVAL = 30 * 1000; // 30s background sync
@@ -272,6 +272,7 @@ export const leaveService = {
   async deleteLeaveRequest(id: string): Promise<void> {
     await markRecordAsDeleted(id, 'leaveRequests');
     await db.leaveRequests.delete(id);
+    deleteRecordFromFirestore('leaveRequests', id).catch(() => {});
     window.dispatchEvent(new CustomEvent('app-realtime-update'));
   },
 
@@ -282,11 +283,7 @@ export const leaveService = {
       if (demoRecords.length > 0) {
         for (const dr of demoRecords) {
           await db.leaveRequests.delete(dr.id);
-          try {
-            const { deleteDoc, doc } = await import('firebase/firestore');
-            const { firestoreDb } = await import('./firebase');
-            await deleteDoc(doc(firestoreDb, 'leaveRequests', dr.id));
-          } catch (_) {}
+          deleteRecordFromFirestore('leaveRequests', dr.id).catch(() => {});
         }
         window.dispatchEvent(new CustomEvent('app-realtime-update'));
       }

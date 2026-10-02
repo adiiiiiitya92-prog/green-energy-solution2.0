@@ -233,6 +233,8 @@ export async function syncDeletedRecordsFromFirestore(force: boolean = false): P
         const quotationIdsToDelete: string[] = [];
         const orderIdsToDelete: string[] = [];
         const productIdsToDelete: string[] = [];
+        const leaveIdsToDelete: string[] = [];
+        const expenseIdsToDelete: string[] = [];
 
         for (const rd of remoteDeleted) {
           if (!rd?.id) continue;
@@ -242,6 +244,8 @@ export async function syncDeletedRecordsFromFirestore(force: boolean = false): P
           else if (col === 'quotations') quotationIdsToDelete.push(rd.id);
           else if (col === 'orderConfirmations') orderIdsToDelete.push(rd.id);
           else if (col === 'products') productIdsToDelete.push(rd.id);
+          else if (col === 'leaveRequests') leaveIdsToDelete.push(rd.id);
+          else if (col === 'expenses') expenseIdsToDelete.push(rd.id);
         }
 
         if (leadIdsToDelete.length > 0) await db.leads.bulkDelete(leadIdsToDelete).catch(() => {});
@@ -249,6 +253,8 @@ export async function syncDeletedRecordsFromFirestore(force: boolean = false): P
         if (quotationIdsToDelete.length > 0) await db.quotations.bulkDelete(quotationIdsToDelete).catch(() => {});
         if (orderIdsToDelete.length > 0) await db.orderConfirmations.bulkDelete(orderIdsToDelete).catch(() => {});
         if (productIdsToDelete.length > 0) await db.products.bulkDelete(productIdsToDelete).catch(() => {});
+        if (leaveIdsToDelete.length > 0) await db.leaveRequests.bulkDelete(leaveIdsToDelete).catch(() => {});
+        if (expenseIdsToDelete.length > 0) await db.expenses.bulkDelete(expenseIdsToDelete).catch(() => {});
       }
     } catch (err) {
       console.warn("DeletedRecords remote sync note:", err);

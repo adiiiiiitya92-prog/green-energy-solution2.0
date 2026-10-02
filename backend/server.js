@@ -139,11 +139,17 @@ app.get(['/api/firestore/:collection', '/api/db/:collection'], async (req, res) 
     const filter = {};
     if (req.query.leadId) filter.leadId = req.query.leadId;
     if (req.query.assignedEmployeeId) filter.assignedEmployeeId = req.query.assignedEmployeeId;
+    if (req.query.employeeId) filter.employeeId = req.query.employeeId;
     if (req.query.status) filter.status = req.query.status;
+    if (req.query.category) filter.category = req.query.category;
+    if (req.query.leaveType) filter.leaveType = req.query.leaveType;
+    if (req.query.paymentMode) filter.paymentMode = req.query.paymentMode;
 
     let sort = undefined;
-    if (['leads', 'quotations', 'challans', 'stockTransactions', 'orderConfirmations'].includes(collection)) {
+    if (['leads', 'quotations', 'challans', 'stockTransactions', 'orderConfirmations', 'leaveRequests'].includes(collection)) {
       sort = { createdAt: -1 };
+    } else if (collection === 'expenses') {
+      sort = { expenseDate: -1, createdAt: -1 };
     } else if (collection === 'fieldVisitReports') {
       sort = { visitedAt: -1 };
     } else if (collection === 'products') {
@@ -213,12 +219,14 @@ app.delete(['/api/firestore/:collection/:id', '/api/db/:collection/:id'], async 
 // ===================================
 app.get('/api/sync/bootstrap', async (req, res) => {
   try {
-    const [leads, quotations, orderConfirmations, products, challans, deletedRecords] = await Promise.all([
+    const [leads, quotations, orderConfirmations, products, challans, leaveRequests, expenses, deletedRecords] = await Promise.all([
       findDocuments('leads', {}, { sort: { createdAt: -1 } }),
       findDocuments('quotations', {}, { sort: { createdAt: -1 } }),
       findDocuments('orderConfirmations', {}, { sort: { createdAt: -1 } }),
       findDocuments('products', {}, { sort: { name: 1 } }),
       findDocuments('challans', {}, { sort: { createdAt: -1 } }),
+      findDocuments('leaveRequests', {}, { sort: { createdAt: -1 } }),
+      findDocuments('expenses', {}, { sort: { expenseDate: -1, createdAt: -1 } }),
       findDocuments('deletedRecords', {})
     ]);
     res.json({
@@ -228,6 +236,8 @@ app.get('/api/sync/bootstrap', async (req, res) => {
       orderConfirmations,
       products,
       challans,
+      leaveRequests,
+      expenses,
       deletedRecords,
       timestamp: new Date().toISOString()
     });
@@ -501,8 +511,227 @@ app.post('/api/auth/login', async (req, res) => {
   }
 });
 
+// ===================================
+// 8. LEAVE APPLICATION API (MONGODB)
+// ===================================
+app.get(['/api/leaves', '/api/leave-requests'], async (req, res) => {
+  try {
+    const filter = {};
+    if (req.query.employeeId) filter.employeeId = req.query.employeeId;
+    if (req.query.status) filter.status = req.query.status;
+    if (req.query.leaveType) filter.leaveType = req.query.leaveType;
+
+    const leaves = await findDocuments('leaveRequests', filter, { sort: { createdAt: -1 } });
+
+    if (req.query.search) {
+      const q = req.query.search.toLowerCase().trim();
+      const filtered = leaves.filter(l =>
+        (l.employeeName && l.employeeName.toLowerCase().includes(q)) ||
+        (l.leaveNumber && l.leaveNumber.toLowerCase().includes(q)) ||
+        (l.reason && l.reason.toLowerCase().includes(q))
+      );
+      return res.json(filtered);
+    }
+
+    res.json(leaves);
+  } catch (err) {
+    handleApiError(res, 'Failed to fetch leave requests', err);
+  }
+});
+
+app.get(['/api/leaves/:id', '/api/leave-requests/:id'], async (req, res) => {
+  try {
+    const leave = await getDocumentById('leaveRequests', req.params.id);
+    if (!leave) return res.status(404).json({ error: 'Leave request not found' });
+    res.json(leave);
+  } catch (err) {
+    handleApiError(res, 'Failed to fetch leave request', err);
+  }
+});
+
+app.post(['/api/leaves', '/api/leave-requests'], async (req, res) => {
+  try {
+    const id = req.body.id || `lv_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+    const now = new Date().toISOString();
+
+    let leaveNumber = req.body.leaveNumber;
+    if (!leaveNumber) {
+      const year = new Date().getFullYear();
+      const recent = await findDocuments('leaveRequests', {}, { sort: { createdAt: -1 }, limit: 1 });
+      let seq = 1001;
+      if (recent.length > 0 && recent[0].leaveNumber) {
+        const match = recent[0].leaveNumber.match(/(\d+)$/);
+        if (match) seq = parseInt(match[1], 10) + 1;
+      }
+      leaveNumber = `GES-LV-${year}-${seq}`;
+    }
+
+    const newLeave = {
+      ...req.body,
+      id,
+      leaveNumber,
+      status: req.body.status || 'pending',
+      appliedAt: req.body.appliedAt || now,
+      createdAt: req.body.createdAt || now,
+      updatedAt: now
+    };
+
+    const saved = await upsertDocument('leaveRequests', id, newLeave);
+    broadcastRealtimeChange('leaveRequests', id, 'upsert', saved);
+    res.status(201).json(saved);
+  } catch (err) {
+    handleApiError(res, 'Failed to save leave request', err);
+  }
+});
+
+app.put(['/api/leaves/:id', '/api/leave-requests/:id'], async (req, res) => {
+  try {
+    const id = req.params.id;
+    const now = new Date().toISOString();
+    const updateData = {
+      ...req.body,
+      id,
+      updatedAt: now
+    };
+    const saved = await upsertDocument('leaveRequests', id, updateData);
+    broadcastRealtimeChange('leaveRequests', id, 'upsert', saved);
+    res.json(saved);
+  } catch (err) {
+    handleApiError(res, 'Failed to update leave request', err);
+  }
+});
+
+app.delete(['/api/leaves/:id', '/api/leave-requests/:id'], async (req, res) => {
+  try {
+    const id = req.params.id;
+    const success = await deleteDocument('leaveRequests', id);
+    await upsertDocument('deletedRecords', id, {
+      id,
+      collectionName: 'leaveRequests',
+      deletedAt: new Date().toISOString()
+    }).catch(() => {});
+
+    broadcastRealtimeChange('leaveRequests', id, 'delete', { id });
+    res.json({ success, id });
+  } catch (err) {
+    handleApiError(res, 'Failed to delete leave request', err);
+  }
+});
+
+// ===================================
+// 9. EXPENSE TRACKING API (MONGODB)
+// ===================================
+app.get('/api/expenses', async (req, res) => {
+  try {
+    const filter = {};
+    if (req.query.employeeId) filter.employeeId = req.query.employeeId;
+    if (req.query.status) filter.status = req.query.status;
+    if (req.query.category) filter.category = req.query.category;
+    if (req.query.paymentMode) filter.paymentMode = req.query.paymentMode;
+
+    const expenses = await findDocuments('expenses', filter, { sort: { expenseDate: -1, createdAt: -1 } });
+
+    if (req.query.search) {
+      const q = req.query.search.toLowerCase().trim();
+      const filtered = expenses.filter(e =>
+        (e.employeeName && e.employeeName.toLowerCase().includes(q)) ||
+        (e.expenseNumber && e.expenseNumber.toLowerCase().includes(q)) ||
+        (e.vendorName && e.vendorName.toLowerCase().includes(q)) ||
+        (e.description && e.description.toLowerCase().includes(q))
+      );
+      return res.json(filtered);
+    }
+
+    res.json(expenses);
+  } catch (err) {
+    handleApiError(res, 'Failed to fetch expenses', err);
+  }
+});
+
+app.get('/api/expenses/:id', async (req, res) => {
+  try {
+    const expense = await getDocumentById('expenses', req.params.id);
+    if (!expense) return res.status(404).json({ error: 'Expense claim not found' });
+    res.json(expense);
+  } catch (err) {
+    handleApiError(res, 'Failed to fetch expense claim', err);
+  }
+});
+
+app.post('/api/expenses', async (req, res) => {
+  try {
+    const id = req.body.id || `exp_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+    const now = new Date().toISOString();
+
+    let expenseNumber = req.body.expenseNumber;
+    if (!expenseNumber) {
+      const year = new Date().getFullYear();
+      const recent = await findDocuments('expenses', {}, { sort: { createdAt: -1 }, limit: 1 });
+      let seq = 1001;
+      if (recent.length > 0 && recent[0].expenseNumber) {
+        const match = recent[0].expenseNumber.match(/(\d+)$/);
+        if (match) seq = parseInt(match[1], 10) + 1;
+      }
+      expenseNumber = `GES-EXP-${year}-${seq}`;
+    }
+
+    const newExpense = {
+      ...req.body,
+      id,
+      expenseNumber,
+      status: req.body.status || 'pending',
+      amount: Number(req.body.amount) || 0,
+      createdAt: req.body.createdAt || now,
+      updatedAt: now
+    };
+
+    const saved = await upsertDocument('expenses', id, newExpense);
+    broadcastRealtimeChange('expenses', id, 'upsert', saved);
+    res.status(201).json(saved);
+  } catch (err) {
+    handleApiError(res, 'Failed to save expense claim', err);
+  }
+});
+
+app.put('/api/expenses/:id', async (req, res) => {
+  try {
+    const id = req.params.id;
+    const now = new Date().toISOString();
+    const updateData = {
+      ...req.body,
+      id,
+      updatedAt: now
+    };
+    if (updateData.amount !== undefined) {
+      updateData.amount = Number(updateData.amount) || 0;
+    }
+    const saved = await upsertDocument('expenses', id, updateData);
+    broadcastRealtimeChange('expenses', id, 'upsert', saved);
+    res.json(saved);
+  } catch (err) {
+    handleApiError(res, 'Failed to update expense claim', err);
+  }
+});
+
+app.delete('/api/expenses/:id', async (req, res) => {
+  try {
+    const id = req.params.id;
+    const success = await deleteDocument('expenses', id);
+    await upsertDocument('deletedRecords', id, {
+      id,
+      collectionName: 'expenses',
+      deletedAt: new Date().toISOString()
+    }).catch(() => {});
+
+    broadcastRealtimeChange('expenses', id, 'delete', { id });
+    res.json({ success, id });
+  } catch (err) {
+    handleApiError(res, 'Failed to delete expense claim', err);
+  }
+});
+
 // ==============================================================
-// 8. BACKBLAZE B2 STORAGE ENDPOINTS (PRESERVED AS-IS)
+// 10. BACKBLAZE B2 STORAGE ENDPOINTS (PRESERVED AS-IS)
 // ==============================================================
 app.get('/api/b2-upload-url', async (req, res) => {
   try {

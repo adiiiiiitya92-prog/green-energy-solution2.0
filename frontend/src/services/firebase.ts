@@ -573,20 +573,20 @@ export function handleFirestoreQuotaExhausted(err: any): boolean {
 export async function saveRecordToFirestore(collectionName: string, id: string, data: any): Promise<void> {
   const cleanData = sanitizeForMongo(data);
   try {
-    const res = await fetch(buildApiUrl(/api/firestore//), {
+    const res = await fetch(buildApiUrl(`/api/firestore/${encodeCollectionPath(collectionName)}/${encodeURIComponent(id)}`), {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(cleanData)
     });
     if (res.ok) {
       dequeuePendingSave(collectionName, id);
-      console.log(✅ MongoDB synced [/] -> DB: [green_energy_crm]);
+      console.log(`✅ MongoDB synced [${collectionName}/${id}] -> DB: [green_energy_crm]`);
       // Broadcast update across tabs
       broadcastDataUpdate(collectionName, id);
       return;
     }
   } catch (err) {
-    console.warn(MongoDB save offline or error [/], queueing for retry:, err);
+    console.warn(`MongoDB save offline or error [${collectionName}/${id}], queueing for retry:`, err);
   }
 
   // Fallback to queue
@@ -604,13 +604,13 @@ export async function fetchCollectionFromFirestore<T extends { id?: string; isDe
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
 
-    const res = await fetch(buildApiUrl(/api/firestore/), {
+    const res = await fetch(buildApiUrl(`/api/firestore/${encodeCollectionPath(collectionName)}`), {
       signal: controller.signal
     });
     clearTimeout(timer);
 
     if (!res.ok) {
-      console.warn(Failed to fetch collection []: HTTP );
+      console.warn(`Failed to fetch collection [${collectionName}]: HTTP ${res.status}`);
       return [];
     }
 
@@ -641,7 +641,7 @@ export async function fetchCollectionFromFirestore<T extends { id?: string; isDe
     return validDocs;
   } catch (err: any) {
     if (err?.name !== 'AbortError') {
-      console.warn(MongoDB fetch note for []:, err);
+      console.warn(`MongoDB fetch note for [${collectionName}]:`, err);
     }
     return [];
   }
@@ -653,15 +653,15 @@ export async function fetchCollectionFromFirestore<T extends { id?: string; isDe
 export async function deleteRecordFromFirestore(collectionName: string, id: string): Promise<void> {
   if (!id) return;
   try {
-    const res = await fetch(buildApiUrl(/api/firestore//), {
+    const res = await fetch(buildApiUrl(`/api/firestore/${encodeCollectionPath(collectionName)}/${encodeURIComponent(id)}`), {
       method: 'DELETE'
     });
     if (res.ok) {
-      console.log(🗑️ MongoDB deleted [/]);
+      console.log(`🗑️ MongoDB deleted [${collectionName}/${id}]`);
       broadcastDataUpdate(collectionName, id);
     }
   } catch (err) {
-    console.warn(MongoDB delete note [/]:, err);
+    console.warn(`MongoDB delete note [${collectionName}/${id}]:`, err);
   }
 }
 

@@ -3,8 +3,9 @@ import { useAuthStore } from '../../store/authStore';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import logoImg from '../../assets/Green-Energy-Solution.png';
 import { PWAInstallPrompt } from './PWAInstallPrompt';
-import { DeletionApprovalsModal } from './DeletionApprovalsModal';
-import { AiSupportBot } from './AiSupportBot';
+
+const DeletionApprovalsModal = React.lazy(() => import('./DeletionApprovalsModal').then(m => ({ default: m.DeletionApprovalsModal })));
+const AiSupportBot = React.lazy(() => import('./AiSupportBot').then(m => ({ default: m.AiSupportBot })));
 import {
   LayoutDashboard,
   Users,
@@ -21,7 +22,10 @@ import {
   LogOut,
   Sun,
   Package,
-  ShieldAlert
+  ShieldAlert,
+  ChevronDown,
+  CalendarCheck,
+  Receipt
 } from 'lucide-react';
 
 interface LayoutProps {
@@ -35,7 +39,18 @@ export const Layout: React.FC<LayoutProps> = ({ children }) => {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [isNavCollapsed, setIsNavCollapsed] = useState(false);
   const [pendingDeleteCount, setPendingDeleteCount] = useState(0);
+  const [pendingLeaveCount, setPendingLeaveCount] = useState(0);
+  const [pendingExpenseCount, setPendingExpenseCount] = useState(0);
+  const [hrmsDropdownOpen, setHrmsDropdownOpen] = useState(
+    location.pathname.startsWith('/employees') || location.pathname.startsWith('/leave-requests')
+  );
   const [showDeleteModal, setShowDeleteModal] = useState(false);
+
+  useEffect(() => {
+    if (location.pathname.startsWith('/employees') || location.pathname.startsWith('/leave-requests')) {
+      setHrmsDropdownOpen(true);
+    }
+  }, [location.pathname]);
 
   const loadPendingCount = async () => {
     if (currentRole === 'super_admin') {
@@ -43,6 +58,20 @@ export const Layout: React.FC<LayoutProps> = ({ children }) => {
         const { deletionRequestService } = await import('../../services/deletionRequestService');
         const pending = await deletionRequestService.getPendingRequests();
         setPendingDeleteCount(pending.length);
+      } catch (_) {}
+
+      try {
+        const { leaveService } = await import('../../services/leaveService');
+        const allLeaves = await leaveService.getAllLeaveRequests();
+        const pendingLeaves = allLeaves.filter(r => r.status === 'pending');
+        setPendingLeaveCount(pendingLeaves.length);
+      } catch (_) {}
+
+      try {
+        const { expenseService } = await import('../../services/expenseService');
+        const allExpenses = await expenseService.getAllExpenses();
+        const pendingExpenses = allExpenses.filter(r => r.status === 'pending');
+        setPendingExpenseCount(pendingExpenses.length);
       } catch (_) {}
     }
   };
@@ -67,8 +96,24 @@ export const Layout: React.FC<LayoutProps> = ({ children }) => {
 
   const isEmployee = currentRole === 'field_employee';
 
+  interface SubMenuItem {
+    name: string;
+    path: string;
+    icon?: any;
+    badge?: number;
+  }
+
+  interface SidebarItemConfig {
+    name: string;
+    path?: string;
+    roles: string[];
+    icon: any;
+    badge?: number;
+    subItems?: SubMenuItem[];
+  }
+
   // Desktop sidebar options
-  const sidebarItems = [
+  const sidebarItems: SidebarItemConfig[] = [
     {
       name: 'Dashboard',
       path: '/dashboard',
@@ -118,10 +163,41 @@ export const Layout: React.FC<LayoutProps> = ({ children }) => {
       icon: Sun
     },
     {
-      name: 'Employee Panel',
-      path: '/employees',
+      name: 'HRMS',
       roles: ['super_admin'],
-      icon: Users
+      icon: Users,
+      subItems: [
+        {
+          name: 'Employee Panel',
+          path: '/employees',
+          icon: Users
+        },
+        {
+          name: 'Leave Requests',
+          path: '/leave-requests',
+          icon: CalendarCheck,
+          badge: pendingLeaveCount
+        }
+      ]
+    },
+    {
+      name: 'Expenses',
+      path: '/expenses',
+      roles: ['super_admin'],
+      icon: Receipt,
+      badge: pendingExpenseCount
+    },
+    {
+      name: 'Leave Application',
+      path: '/leave-application',
+      roles: ['admin', 'field_employee', 'inventory_manager', 'dealer'],
+      icon: CalendarCheck
+    },
+    {
+      name: 'Expense Tracker',
+      path: '/expense-tracker',
+      roles: ['admin', 'field_employee', 'inventory_manager', 'dealer'],
+      icon: Receipt
     },
     {
       name: 'Complaint Box',
@@ -270,12 +346,103 @@ export const Layout: React.FC<LayoutProps> = ({ children }) => {
                   .filter(item => item.roles.includes(currentRole))
                   .map((item) => {
                     const Icon = item.icon;
-                    const isActive = location.pathname.startsWith(item.path);
+
+                    // If item has subItems (e.g. HRMS dropdown for Super Admin)
+                    if (item.subItems && item.subItems.length > 0) {
+                      const isAnySubActive = item.subItems.some(sub => location.pathname.startsWith(sub.path));
+                      const totalSubBadge = item.subItems.reduce((acc, sub) => acc + (sub.badge || 0), 0);
+
+                      if (isNavCollapsed) {
+                        return (
+                          <div key={item.name} className="relative group">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setIsNavCollapsed(false);
+                                setHrmsDropdownOpen(true);
+                              }}
+                              className={`w-full flex items-center justify-center p-2.5 rounded-lg text-xs font-bold transition-all cursor-pointer relative ${
+                                isAnySubActive
+                                  ? 'bg-emerald-50 text-emerald-700 border-l-4 border-emerald-600'
+                                  : 'text-slate-500 hover:bg-slate-50 hover:text-slate-900'
+                              }`}
+                              title={`${item.name} (${item.subItems.map(s => s.name).join(', ')})`}
+                            >
+                              <Icon className={`w-4 h-4 shrink-0 ${isAnySubActive ? 'text-emerald-600' : ''}`} />
+                              {totalSubBadge > 0 && (
+                                <span className="absolute top-1 right-1 w-2 h-2 bg-amber-500 rounded-full"></span>
+                              )}
+                            </button>
+                          </div>
+                        );
+                      }
+
+                      return (
+                        <div key={item.name} className="space-y-1">
+                          <button
+                            type="button"
+                            onClick={() => setHrmsDropdownOpen(!hrmsDropdownOpen)}
+                            className={`w-full flex items-center justify-between px-3 py-2.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                              isAnySubActive
+                                ? 'bg-emerald-50/80 text-emerald-900 font-extrabold'
+                                : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900'
+                            }`}
+                          >
+                            <div className="flex items-center space-x-2.5">
+                              <Icon className={`w-4 h-4 shrink-0 ${isAnySubActive ? 'text-emerald-600' : 'text-slate-500'}`} />
+                              <span>{item.name}</span>
+                            </div>
+                            <div className="flex items-center space-x-1.5">
+                              {totalSubBadge > 0 && (
+                                <span className="bg-amber-500 text-white font-black text-[9px] px-1.5 py-0.2 rounded-full">
+                                  {totalSubBadge}
+                                </span>
+                              )}
+                              <ChevronDown className={`w-3.5 h-3.5 transition-transform duration-200 ${hrmsDropdownOpen ? 'rotate-180 text-emerald-700' : 'text-slate-400'}`} />
+                            </div>
+                          </button>
+
+                          {/* Sub-items dropdown */}
+                          {hrmsDropdownOpen && (
+                            <div className="pl-4 pr-1 space-y-1">
+                              {item.subItems.map(sub => {
+                                const SubIcon = sub.icon || ChevronRight;
+                                const isSubActive = location.pathname.startsWith(sub.path);
+                                return (
+                                  <Link
+                                    key={sub.name}
+                                    to={sub.path}
+                                    className={`flex items-center justify-between px-2.5 py-2 rounded-lg text-xs font-semibold transition-all ${
+                                      isSubActive
+                                        ? 'bg-emerald-100/70 text-emerald-900 font-bold border-l-3 border-emerald-600'
+                                        : 'text-slate-500 hover:bg-slate-50 hover:text-slate-800'
+                                    }`}
+                                  >
+                                    <div className="flex items-center space-x-2">
+                                      <SubIcon className={`w-3.5 h-3.5 shrink-0 ${isSubActive ? 'text-emerald-700' : 'text-slate-400'}`} />
+                                      <span>{sub.name}</span>
+                                    </div>
+                                    {sub.badge && sub.badge > 0 ? (
+                                      <span className="bg-amber-500 text-white text-[9px] font-black px-1.5 py-0.2 rounded-full">
+                                        {sub.badge}
+                                      </span>
+                                    ) : null}
+                                  </Link>
+                                );
+                              })}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    }
+
+                    // Regular sidebar menu item
+                    const isActive = item.path ? location.pathname.startsWith(item.path) : false;
                     return (
                       <Link
                         key={item.name}
-                        to={item.path}
-                        className={`flex items-center rounded-lg text-xs font-bold transition-all ${
+                        to={item.path || '#'}
+                        className={`flex items-center rounded-lg text-xs font-bold transition-all relative ${
                           isNavCollapsed ? 'justify-center p-2.5' : 'justify-between px-3 py-2.5'
                         } ${
                           isActive
@@ -288,8 +455,18 @@ export const Layout: React.FC<LayoutProps> = ({ children }) => {
                           <Icon className={`w-4 h-4 shrink-0 ${isActive ? 'text-emerald-600' : ''}`} />
                           {!isNavCollapsed && <span>{item.name}</span>}
                         </div>
+                        {isNavCollapsed && item.badge && item.badge > 0 ? (
+                          <span className="absolute top-1 right-1 w-2 h-2 bg-amber-500 rounded-full"></span>
+                        ) : null}
                         {!isNavCollapsed && (
-                          <ChevronRight className={`w-3.5 h-3.5 transition-transform ${isActive ? 'translate-x-0.5' : 'opacity-0'}`} />
+                          <div className="flex items-center space-x-1.5">
+                            {item.badge && item.badge > 0 ? (
+                              <span className="bg-amber-500 text-white font-black text-[9px] px-1.5 py-0.2 rounded-full">
+                                {item.badge}
+                              </span>
+                            ) : null}
+                            <ChevronRight className={`w-3.5 h-3.5 transition-transform ${isActive ? 'translate-x-0.5' : 'opacity-0'}`} />
+                          </div>
                         )}
                       </Link>
                     );
@@ -362,11 +539,75 @@ export const Layout: React.FC<LayoutProps> = ({ children }) => {
                   .filter(item => item.roles.includes(currentRole))
                   .map((item) => {
                     const Icon = item.icon;
-                    const isActive = location.pathname.startsWith(item.path);
+
+                    if (item.subItems && item.subItems.length > 0) {
+                      const isAnySubActive = item.subItems.some(sub => location.pathname.startsWith(sub.path));
+                      const totalSubBadge = item.subItems.reduce((acc, sub) => acc + (sub.badge || 0), 0);
+
+                      return (
+                        <div key={item.name} className="space-y-1">
+                          <button
+                            type="button"
+                            onClick={() => setHrmsDropdownOpen(!hrmsDropdownOpen)}
+                            className={`w-full flex items-center justify-between px-3 py-2.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                              isAnySubActive
+                                ? 'bg-emerald-50 text-emerald-900 font-extrabold'
+                                : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900'
+                            }`}
+                          >
+                            <div className="flex items-center space-x-2.5">
+                              <Icon className={`w-4 h-4 ${isAnySubActive ? 'text-emerald-600' : 'text-slate-500'}`} />
+                              <span>{item.name}</span>
+                            </div>
+                            <div className="flex items-center space-x-1.5">
+                              {totalSubBadge > 0 && (
+                                <span className="bg-amber-500 text-white font-black text-[9px] px-1.5 py-0.2 rounded-full">
+                                  {totalSubBadge}
+                                </span>
+                              )}
+                              <ChevronDown className={`w-3.5 h-3.5 transition-transform duration-200 ${hrmsDropdownOpen ? 'rotate-180 text-emerald-700' : 'text-slate-400'}`} />
+                            </div>
+                          </button>
+
+                          {hrmsDropdownOpen && (
+                            <div className="pl-4 pr-1 space-y-1">
+                              {item.subItems.map(sub => {
+                                const SubIcon = sub.icon || ChevronRight;
+                                const isSubActive = location.pathname.startsWith(sub.path);
+                                return (
+                                  <Link
+                                    key={sub.name}
+                                    to={sub.path}
+                                    onClick={() => setMobileMenuOpen(false)}
+                                    className={`flex items-center justify-between px-2.5 py-2 rounded-lg text-xs font-semibold transition-all ${
+                                      isSubActive
+                                        ? 'bg-emerald-100 text-emerald-900 font-bold border-l-3 border-emerald-600'
+                                        : 'text-slate-500 hover:bg-slate-50 hover:text-slate-800'
+                                    }`}
+                                  >
+                                    <div className="flex items-center space-x-2">
+                                      <SubIcon className={`w-3.5 h-3.5 shrink-0 ${isSubActive ? 'text-emerald-700' : 'text-slate-400'}`} />
+                                      <span>{sub.name}</span>
+                                    </div>
+                                    {sub.badge && sub.badge > 0 ? (
+                                      <span className="bg-amber-500 text-white text-[9px] font-black px-1.5 py-0.2 rounded-full">
+                                        {sub.badge}
+                                      </span>
+                                    ) : null}
+                                  </Link>
+                                );
+                              })}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    }
+
+                    const isActive = item.path ? location.pathname.startsWith(item.path) : false;
                     return (
                       <Link
                         key={item.name}
-                        to={item.path}
+                        to={item.path || '#'}
                         onClick={() => setMobileMenuOpen(false)}
                         className={`flex items-center justify-between px-3 py-2.5 rounded-lg text-xs font-bold transition-all ${
                           isActive
@@ -378,7 +619,14 @@ export const Layout: React.FC<LayoutProps> = ({ children }) => {
                           <Icon className={`w-4 h-4 ${isActive ? 'text-emerald-600' : ''}`} />
                           <span>{item.name}</span>
                         </div>
-                        <ChevronRight className={`w-3.5 h-3.5 transition-transform ${isActive ? 'translate-x-0.5' : 'opacity-0'}`} />
+                        <div className="flex items-center space-x-1.5">
+                          {item.badge && item.badge > 0 ? (
+                            <span className="bg-amber-500 text-white font-black text-[9px] px-1.5 py-0.2 rounded-full">
+                              {item.badge}
+                            </span>
+                          ) : null}
+                          <ChevronRight className={`w-3.5 h-3.5 transition-transform ${isActive ? 'translate-x-0.5' : 'opacity-0'}`} />
+                        </div>
                       </Link>
                     );
                   })}
@@ -406,18 +654,22 @@ export const Layout: React.FC<LayoutProps> = ({ children }) => {
 
       {/* Super Admin Deletion Approvals Modal */}
       {currentRole === 'super_admin' && (
-        <DeletionApprovalsModal
-          isOpen={showDeleteModal}
-          onClose={() => {
-            setShowDeleteModal(false);
-            loadPendingCount();
-          }}
-        />
+        <React.Suspense fallback={null}>
+          <DeletionApprovalsModal
+            isOpen={showDeleteModal}
+            onClose={() => {
+              setShowDeleteModal(false);
+              loadPendingCount();
+            }}
+          />
+        </React.Suspense>
       )}
 
       {/* AI Solar & CRM Support Assistant Floating Bot (Admin & Super Admin only) */}
       {(currentRole === 'admin' || currentRole === 'super_admin') && (
-        <AiSupportBot />
+        <React.Suspense fallback={null}>
+          <AiSupportBot />
+        </React.Suspense>
       )}
     </div>
   );

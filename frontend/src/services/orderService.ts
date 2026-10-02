@@ -22,7 +22,7 @@ export const orderService = {
 
     if (!oc) {
       try {
-        const remoteOcs = await fetchCollectionFromFirestore<OrderConfirmation>('orderConfirmations', 15000);
+        const remoteOcs = await fetchCollectionFromFirestore<OrderConfirmation>('orderConfirmations', 4000);
         if (Array.isArray(remoteOcs) && remoteOcs.length > 0) {
           const freshDeleted = await getDeletedRecordIdsSet();
           const validRemote = remoteOcs.filter(o => !freshDeleted.has(o.id) && !freshDeleted.has(o.leadId));
@@ -55,7 +55,7 @@ export const orderService = {
       activeOrderSyncPromise = (async () => {
         try {
           lastOrderRemoteSync = Date.now();
-          const remoteOcs = await fetchCollectionFromFirestore<OrderConfirmation>('orderConfirmations', 15000);
+          const remoteOcs = await fetchCollectionFromFirestore<OrderConfirmation>('orderConfirmations', 4000);
           if (Array.isArray(remoteOcs) && remoteOcs.length > 0) {
             const freshDeleted = await getDeletedRecordIdsSet();
             const validRemote = remoteOcs.filter(o => !freshDeleted.has(o.id) && !freshDeleted.has(o.leadId));

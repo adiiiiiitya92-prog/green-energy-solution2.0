@@ -1,6 +1,14 @@
 import jsPDF from 'jspdf';
-import type { Lead, Quotation, OrderConfirmation, PaymentInstallment } from '../types';
+import type { Lead, Quotation, OrderConfirmation, PaymentInstallment, Product } from '../types';
 import dayjs from 'dayjs';
+
+export interface ProductReportOptions {
+  title?: string;
+  scopeLabel?: string;
+  includeSerials?: boolean;
+  includePrices?: boolean;
+  generatedBy?: string;
+}
 import logoImg from '../assets/Green-Energy-Solution.png';
 import solarEngineerImg from '../assets/solar_engineer_installing.png';
 import customPage4Img from '../assets/pannel.png';
@@ -2756,5 +2764,368 @@ export const pdfService = {
     doc.text("Authorized Operations Officer", 142, currentY + 23.5);
 
     return doc.output('blob');
+  },
+
+  async generateProductCatalogReportPDF(
+    products: Product[],
+    options?: ProductReportOptions
+  ): Promise<Blob> {
+    const doc = new jsPDF('p', 'mm', 'a4');
+    const logoData = await getLogoBase64();
+
+    const slateDark = [15, 23, 42];
+    const slateGray = [100, 116, 139];
+    const emeraldColor = [16, 185, 129];
+    const roseColor = [225, 29, 72];
+    const amberColor = [217, 119, 6];
+
+    // Page 1 Header Banner
+    doc.setFillColor(15, 23, 42);
+    doc.rect(0, 0, 210, 28, 'F');
+
+    if (logoData) {
+      doc.addImage(logoData, 'PNG', 12, 4, 38, 19);
+    }
+
+    doc.setTextColor(255, 255, 255);
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(14);
+    doc.text("GREEN ENERGY SOLUTIONS", 54, 12);
+    doc.setFontSize(8);
+    doc.setFont('helvetica', 'normal');
+    doc.setTextColor(16, 185, 129);
+    doc.text("GO SOLAR, SAVE NATURE | PRODUCT & INVENTORY CATALOG REPORT", 54, 17);
+    doc.setTextColor(203, 213, 225);
+    doc.text("Address: Nagpur, Maharashtra | Phone: +91 7057433822 | Email: info@greenenergysolutions.in", 54, 22);
+
+    // Title & Metadata
+    doc.setTextColor(slateDark[0], slateDark[1], slateDark[2]);
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(12);
+    doc.text(options?.title || "PRODUCT CATALOG & INVENTORY VALUATION REPORT", 14, 38);
+
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(8);
+    doc.setTextColor(slateGray[0], slateGray[1], slateGray[2]);
+    doc.text(`Generated Date: ${dayjs().format('DD MMMM YYYY, hh:mm A [IST]')}`, 14, 43);
+    const scopeText = `Scope: ${options?.scopeLabel || 'All Cataloged Items'} (${products.length} Products)`;
+    doc.text(scopeText, 196, 43, { align: 'right' });
+
+    // Summary Metrics
+    const totalProducts = products.length;
+    const totalStockUnits = products.reduce((sum, p) => sum + (Number(p.stockQuantity) || 0), 0);
+    const totalValuation = products.reduce((sum, p) => sum + ((Number(p.rate) || 0) * (Number(p.stockQuantity) || 0)), 0);
+    const lowStockCount = products.filter(p => (Number(p.stockQuantity) || 0) <= (Number(p.minStockThreshold) || 0)).length;
+
+    // KPI Summary Box
+    doc.setFillColor(248, 250, 252);
+    doc.roundedRect(14, 47, 182, 18, 2, 2, 'F');
+    doc.setDrawColor(226, 232, 240);
+    doc.roundedRect(14, 47, 182, 18, 2, 2, 'D');
+
+    // Column 1: Total SKUs
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(7.5);
+    doc.setTextColor(slateGray[0], slateGray[1], slateGray[2]);
+    doc.text("TOTAL PRODUCTS / SKUs", 20, 54);
+    doc.setFontSize(11);
+    doc.setTextColor(slateDark[0], slateDark[1], slateDark[2]);
+    doc.text(`${totalProducts} Items`, 20, 61);
+
+    // Column 2: Total Units
+    doc.setFontSize(7.5);
+    doc.setTextColor(slateGray[0], slateGray[1], slateGray[2]);
+    doc.text("TOTAL STOCK UNITS", 66, 54);
+    doc.setFontSize(11);
+    doc.setTextColor(slateDark[0], slateDark[1], slateDark[2]);
+    doc.text(`${totalStockUnits.toLocaleString('en-IN')} Units`, 66, 61);
+
+    // Column 3: Valuation
+    doc.setFontSize(7.5);
+    doc.setTextColor(slateGray[0], slateGray[1], slateGray[2]);
+    doc.text("TOTAL VALUATION", 112, 54);
+    doc.setFontSize(11);
+    doc.setTextColor(16, 185, 129);
+    doc.text(`Rs.${totalValuation.toLocaleString('en-IN')}`, 112, 61);
+
+    // Column 4: Inventory Health
+    doc.setFontSize(7.5);
+    if (lowStockCount > 0) {
+      doc.setTextColor(amberColor[0], amberColor[1], amberColor[2]);
+      doc.text("LOW STOCK ALERTS", 158, 54);
+      doc.setFontSize(11);
+      doc.setTextColor(roseColor[0], roseColor[1], roseColor[2]);
+      doc.text(`${lowStockCount} Reorder Item${lowStockCount === 1 ? '' : 's'}`, 158, 61);
+    } else {
+      doc.setTextColor(emeraldColor[0], emeraldColor[1], emeraldColor[2]);
+      doc.text("STOCK HEALTH", 158, 54);
+      doc.setFontSize(11);
+      doc.setTextColor(emeraldColor[0], emeraldColor[1], emeraldColor[2]);
+      doc.text("All Items In Stock", 158, 61);
+    }
+
+    // Helper to render table header
+    const renderTableHeader = (y: number) => {
+      doc.setFillColor(15, 23, 42);
+      doc.rect(14, y, 182, 8, 'F');
+      doc.setTextColor(255, 255, 255);
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(7);
+      doc.text("SR", 16, y + 5.5);
+      doc.text("ITEM & BRAND / SPEC", 24, y + 5.5);
+      doc.text("CATEGORY / BOM", 82, y + 5.5);
+      doc.text("UNIT", 118, y + 5.5);
+      doc.text("UNIT RATE", 144, y + 5.5, { align: 'right' });
+      doc.text("STOCK QTY", 168, y + 5.5, { align: 'right' });
+      doc.text("TOTAL VALUE", 192, y + 5.5, { align: 'right' });
+    };
+
+    let startY = 70;
+    renderTableHeader(startY);
+
+    let currentY = startY + 8;
+    const includeSerials = options?.includeSerials ?? true;
+    const includePrices = options?.includePrices ?? true;
+
+    products.forEach((p, idx) => {
+      const serialCount = (p.productUnits && p.productUnits.length > 0)
+        ? p.productUnits.length
+        : (p.serialNumbers ? p.serialNumbers.length : 0);
+      const hasSerials = includeSerials && serialCount > 0;
+      const rowHeight = hasSerials ? 12 : 9;
+
+      if (currentY + rowHeight > 270) {
+        doc.addPage();
+        currentY = 20;
+        renderTableHeader(currentY);
+        currentY += 8;
+      }
+
+      if (idx % 2 === 1) {
+        doc.setFillColor(248, 250, 252);
+        doc.rect(14, currentY, 182, rowHeight, 'F');
+      }
+
+      doc.setDrawColor(241, 245, 249);
+      doc.line(14, currentY + rowHeight, 196, currentY + rowHeight);
+
+      // SR
+      doc.setTextColor(slateDark[0], slateDark[1], slateDark[2]);
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(7);
+      doc.text(`${idx + 1}`, 16, currentY + 5.5);
+
+      // Item Name & Brand
+      const rawName = p.name || 'Unnamed Product';
+      const nameStr = rawName.length > 30 ? (rawName.substring(0, 28) + '..') : rawName;
+      doc.text(nameStr, 24, currentY + 4);
+
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(6);
+      doc.setTextColor(slateGray[0], slateGray[1], slateGray[2]);
+      const brandStr = p.brand ? `Make: ${p.brand}` : (p.category === 'bom_item' ? 'BOM Component' : 'General');
+      doc.text(brandStr, 24, currentY + 7.5);
+
+      if (hasSerials) {
+        doc.setFontSize(5.5);
+        doc.setTextColor(16, 185, 129);
+        const sampleSn = (p.productUnits && p.productUnits.length > 0)
+          ? p.productUnits.slice(0, 2).map(u => u.serialNumber).join(', ')
+          : (p.serialNumbers ? p.serialNumbers.slice(0, 2).join(', ') : '');
+        doc.text(`[${serialCount} Serials: ${sampleSn}${serialCount > 2 ? '...' : ''}]`, 24, currentY + 10.5);
+      }
+
+      // Category
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(6.5);
+      doc.setTextColor(slateDark[0], slateDark[1], slateDark[2]);
+      const catLabel = p.category === 'bom_item'
+        ? (p.bomCategory || 'BOM Item')
+        : (p.category ? p.category.replace('_', ' ').toUpperCase() : 'STANDARD');
+      const catStr = catLabel.length > 22 ? catLabel.substring(0, 20) + '..' : catLabel;
+      doc.text(catStr, 82, currentY + 5.5);
+
+      // Unit
+      doc.setTextColor(slateGray[0], slateGray[1], slateGray[2]);
+      doc.text(p.unit || 'Nos', 118, currentY + 5.5);
+
+      // Unit Rate
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(6.5);
+      doc.setTextColor(slateDark[0], slateDark[1], slateDark[2]);
+      if (includePrices) {
+        doc.text(`Rs.${(p.rate || 0).toLocaleString('en-IN')}`, 144, currentY + 5.5, { align: 'right' });
+      } else {
+        doc.text('-', 144, currentY + 5.5, { align: 'right' });
+      }
+
+      // Stock Qty with status color
+      const isLowStock = (Number(p.stockQuantity) || 0) <= (Number(p.minStockThreshold) || 0);
+      const isOutStock = (Number(p.stockQuantity) || 0) <= 0;
+      if (isOutStock) {
+        doc.setTextColor(roseColor[0], roseColor[1], roseColor[2]);
+      } else if (isLowStock) {
+        doc.setTextColor(amberColor[0], amberColor[1], amberColor[2]);
+      } else {
+        doc.setTextColor(emeraldColor[0], emeraldColor[1], emeraldColor[2]);
+      }
+      doc.text(`${(p.stockQuantity || 0).toLocaleString('en-IN')}`, 168, currentY + 5.5, { align: 'right' });
+
+      // Total Value
+      doc.setTextColor(slateDark[0], slateDark[1], slateDark[2]);
+      if (includePrices) {
+        const itemVal = (Number(p.rate) || 0) * (Number(p.stockQuantity) || 0);
+        doc.text(`Rs.${itemVal.toLocaleString('en-IN')}`, 192, currentY + 5.5, { align: 'right' });
+      } else {
+        doc.text('-', 192, currentY + 5.5, { align: 'right' });
+      }
+
+      currentY += rowHeight;
+    });
+
+    // Summary Totals Row at bottom of table
+    if (currentY > 260) {
+      doc.addPage();
+      currentY = 20;
+    }
+    doc.setFillColor(241, 245, 249);
+    doc.rect(14, currentY, 182, 8, 'F');
+    doc.setDrawColor(203, 213, 225);
+    doc.line(14, currentY, 196, currentY);
+    doc.line(14, currentY + 8, 196, currentY + 8);
+    doc.setTextColor(slateDark[0], slateDark[1], slateDark[2]);
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(7.5);
+    doc.text("TOTAL INVENTORY VALUATION", 24, currentY + 5.5);
+    doc.text(`${totalStockUnits.toLocaleString('en-IN')} Units`, 168, currentY + 5.5, { align: 'right' });
+    if (includePrices) {
+      doc.setTextColor(16, 185, 129);
+      doc.text(`Rs.${totalValuation.toLocaleString('en-IN')}`, 192, currentY + 5.5, { align: 'right' });
+    } else {
+      doc.text('-', 192, currentY + 5.5, { align: 'right' });
+    }
+    currentY += 12;
+
+    // Stamp & Authorized Signature block
+    if (currentY > 240) {
+      doc.addPage();
+      currentY = 30;
+    } else {
+      currentY += 8;
+    }
+
+    try {
+      const stampData = await convertImageToBase64(stampImg);
+      if (stampData) {
+        doc.addImage(stampData, 'PNG', 148, currentY, 34, 17);
+      }
+    } catch (_) {}
+
+    doc.setDrawColor(203, 213, 225);
+    doc.line(142, currentY + 16, 194, currentY + 16);
+    doc.setTextColor(slateDark[0], slateDark[1], slateDark[2]);
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(8);
+    doc.text("FOR GREEN ENERGY SOLUTION", 142, currentY + 20);
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(7);
+    doc.text("Authorized Inventory & Warehouse Officer", 142, currentY + 23.5);
+
+    // Number all pages in footer
+    const totalPages = (doc as any).internal.getNumberOfPages();
+    for (let pNum = 1; pNum <= totalPages; pNum++) {
+      doc.setPage(pNum);
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(6.5);
+      doc.setTextColor(slateGray[0], slateGray[1], slateGray[2]);
+      doc.text('Green Energy Solution | Solar Rooftop Systems, Inverters, Structures & BOM Inventory Catalog', 14, 292);
+      doc.text(`Page ${pNum} of ${totalPages}`, 196, 292, { align: 'right' });
+    }
+
+    return doc.output('blob');
   }
+};
+
+export const exportProductCatalogToCSV = (
+  products: Product[],
+  filenamePrefix = 'Green_Energy_Product_Catalog_Report',
+  includeSerials = true,
+  includePrices = true
+) => {
+  const headers = [
+    'SR No',
+    'Product Name',
+    'Brand',
+    'Classification',
+    'Category',
+    'BOM Subcategory',
+    'Unit',
+    ...(includePrices ? ['Rate / Price (INR)'] : []),
+    'Stock Quantity',
+    'Min Stock Threshold',
+    ...(includePrices ? ['Total Stock Value (INR)'] : []),
+    'Stock Status',
+    ...(includeSerials ? ['Serialized Count', 'Serial Numbers'] : []),
+    'Description',
+    'Created Date'
+  ];
+
+  const rows = products.map((p, idx) => {
+    const isBom = p.category === 'bom_item';
+    const classification = isBom ? 'Bill of Materials (BOM)' : 'Commercial Product';
+    const categoryName = isBom ? (p.bomCategory || 'BOM Item') : (p.category ? p.category.replace('_', ' ') : 'Standard');
+    const bomSub = p.bomCategory || '';
+    const unitPrice = p.rate || 0;
+    const stockQty = p.stockQuantity || 0;
+    const valuation = unitPrice * stockQty;
+    const minThreshold = p.minStockThreshold || 0;
+
+    let status = 'In Stock';
+    if (stockQty <= 0) {
+      status = 'Out of Stock';
+    } else if (stockQty <= minThreshold) {
+      status = 'Low Stock Alert';
+    }
+
+    const serials = (p.productUnits && p.productUnits.length > 0)
+      ? p.productUnits.map(u => u.serialNumber).filter(Boolean).join('; ')
+      : (p.serialNumbers ? p.serialNumbers.join('; ') : '');
+
+    const serialCount = (p.productUnits && p.productUnits.length > 0)
+      ? p.productUnits.length
+      : (p.serialNumbers ? p.serialNumbers.length : 0);
+
+    const formattedDate = p.createdAt && dayjs(p.createdAt).isValid()
+      ? dayjs(p.createdAt).format('DD-MMM-YYYY')
+      : 'N/A';
+
+    return [
+      idx + 1,
+      `"${(p.name || '').replace(/"/g, '""')}"`,
+      `"${(p.brand || '').replace(/"/g, '""')}"`,
+      `"${classification}"`,
+      `"${categoryName}"`,
+      `"${bomSub}"`,
+      `"${p.unit || 'Nos'}"`,
+      ...(includePrices ? [unitPrice] : []),
+      stockQty,
+      minThreshold,
+      ...(includePrices ? [valuation] : []),
+      `"${status}"`,
+      ...(includeSerials ? [serialCount, `"${serials.replace(/"/g, '""')}"`] : []),
+      `"${(p.description || '').replace(/"/g, '""')}"`,
+      formattedDate
+    ];
+  });
+
+  const csvString = [headers.join(','), ...rows.map(r => r.join(','))].join('\n');
+  const blob = new Blob(['\uFEFF' + csvString], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.setAttribute('href', url);
+  link.setAttribute('download', `${filenamePrefix}_${dayjs().format('YYYY_MM_DD')}.csv`);
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  setTimeout(() => URL.revokeObjectURL(url), 10000);
 };

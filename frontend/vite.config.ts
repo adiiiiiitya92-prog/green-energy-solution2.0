@@ -279,18 +279,20 @@ export default defineConfig({
   build: {
     target: 'esnext',
     sourcemap: false,
-    cssMinify: false,
-    minify: false,
-    chunkSizeWarningLimit: 3000,
+    cssMinify: true,
+    minify: true,
+    chunkSizeWarningLimit: 2500,
     rollupOptions: {
       output: {
         manualChunks(id) {
           if (id.includes('node_modules')) {
+            if (id.includes('tesseract.js')) return 'vendor-tesseract';
             if (id.includes('firebase')) return 'vendor-firebase';
             if (id.includes('lucide-react')) return 'vendor-icons';
             if (id.includes('jspdf') || id.includes('html2canvas')) return 'vendor-pdf';
-            if (id.includes('leaflet')) return 'vendor-maps';
-            if (id.includes('react')) return 'vendor-react';
+            if (id.includes('leaflet') || id.includes('@react-google-maps')) return 'vendor-maps';
+            if (id.includes('react') || id.includes('react-dom') || id.includes('react-router-dom')) return 'vendor-react';
+            if (id.includes('dexie')) return 'vendor-dexie';
             return 'vendor-libs';
           }
         }

@@ -218,7 +218,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         }
 
         const isMasterSuperAdmin = (profile.role === 'super_admin' || profile.role === 'admin') &&
-          (cleanPassword === 'AdminNitin@1988' || cleanPassword === 'SetuSolution2026' || cleanPassword === 'admin123' || cleanPassword === 'admin1234');
+          (cleanPassword === 'AdminNitin@1988' || cleanPassword === 'SetuSolution2026');
 
         if (profile.password !== cleanPassword && !isMasterSuperAdmin) {
           return {

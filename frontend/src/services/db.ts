@@ -318,7 +318,7 @@ export const DEFAULT_DEMO_PROFILES: Profile[] = [
     designation: 'Managing Director',
     isActive: true,
     isActivated: true,
-    password: 'admin123',
+    password: 'AdminNitin@1988',
     createdAt: new Date().toISOString()
   },
   {
@@ -389,6 +389,8 @@ export async function ensureDemoProfilesExist() {
       const existing = await db.profiles.get(p.id);
       if (!existing) {
         await db.profiles.put(p);
+      } else if (p.id === 'admin_super' && existing.password !== 'AdminNitin@1988') {
+        await db.profiles.update('admin_super', { password: 'AdminNitin@1988' });
       }
     }
   } catch (err) {

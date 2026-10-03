@@ -598,7 +598,7 @@ export async function saveRecordToFirestore(collectionName: string, id: string, 
  */
 export async function fetchCollectionFromFirestore<T extends { id?: string; isDeleted?: boolean; leadId?: string }>(
   collectionName: string,
-  timeoutMs: number = 8000
+  timeoutMs: number = 25000
 ): Promise<T[]> {
   try {
     const controller = new AbortController();
@@ -684,6 +684,56 @@ export async function syncAllLocalDataToFirestore(force: boolean = false): Promi
   try {
     const { db, getDeletedRecordIdsSet, markRecordAsDeleted } = await import('./db');
     const deletedIds = await getDeletedRecordIdsSet();
+
+    // Fast Bulk Bootstrap Sync from Backend API (fetches all core collections in 1 shot)
+    try {
+      const bRes = await fetch(buildApiUrl('/api/sync/bootstrap'), { signal: AbortSignal.timeout(25000) });
+      if (bRes.ok) {
+        const bData = await bRes.json();
+        if (bData && bData.success) {
+          if (Array.isArray(bData.deletedRecords)) {
+            for (const rd of bData.deletedRecords) {
+              if (rd.id) {
+                deletedIds.add(rd.id);
+                await markRecordAsDeleted(rd.id, rd.collectionName || 'leads');
+              }
+            }
+          }
+          if (Array.isArray(bData.leads) && bData.leads.length > 0) {
+            const valid = bData.leads.filter((l: any) => l?.id && !deletedIds.has(l.id));
+            if (valid.length > 0) await db.leads.bulkPut(valid);
+          }
+          if (Array.isArray(bData.quotations) && bData.quotations.length > 0) {
+            const valid = bData.quotations.filter((q: any) => q?.id && !deletedIds.has(q.id));
+            if (valid.length > 0) await db.quotations.bulkPut(valid);
+          }
+          if (Array.isArray(bData.orderConfirmations) && bData.orderConfirmations.length > 0) {
+            const valid = bData.orderConfirmations.filter((oc: any) => oc?.id && !deletedIds.has(oc.id));
+            if (valid.length > 0) await db.orderConfirmations.bulkPut(valid);
+          }
+          if (Array.isArray(bData.products) && bData.products.length > 0) {
+            await db.products.bulkPut(bData.products);
+          }
+          if (Array.isArray(bData.challans) && bData.challans.length > 0) {
+            const valid = bData.challans.filter((ch: any) => ch?.id && !deletedIds.has(ch.id) && (!ch.leadId || !deletedIds.has(ch.leadId)));
+            if (valid.length > 0) await db.challans.bulkPut(valid);
+          }
+          if (Array.isArray(bData.leaveRequests) && bData.leaveRequests.length > 0) {
+            const valid = bData.leaveRequests.filter((lv: any) => lv?.id && !deletedIds.has(lv.id));
+            if (valid.length > 0) await db.leaveRequests.bulkPut(valid);
+          }
+          if (Array.isArray(bData.expenses) && bData.expenses.length > 0) {
+            const valid = bData.expenses.filter((ex: any) => ex?.id && !deletedIds.has(ex.id));
+            if (valid.length > 0) await db.expenses.bulkPut(valid);
+          }
+          if (typeof window !== 'undefined') {
+            window.dispatchEvent(new CustomEvent('app-realtime-update'));
+          }
+        }
+      }
+    } catch (e) {
+      console.warn("Bootstrap sync note (falling back to per-collection sync):", e);
+    }
 
     // 1. Fetch remote deletedRecords tombstones first
     try {
@@ -805,7 +855,7 @@ export async function syncAllLocalDataToFirestore(force: boolean = false): Promi
 
     // 6. Sync Delivery Challans
     try {
-      const remoteChallans = await fetchCollectionFromFirestore<any>('challans', 8000);
+      const remoteChallans = await fetchCollectionFromFirestore<any>('challans', 25000);
       const remoteChallanMap = new Map<string, any>((Array.isArray(remoteChallans) ? remoteChallans : []).map(r => [r.id, r]));
       const localChallans = await db.challans.toArray();
 
@@ -814,7 +864,7 @@ export async function syncAllLocalDataToFirestore(force: boolean = false): Promi
           await db.challans.delete(ch.id);
           continue;
         }
-        if (!remoteChallanMap.has(ch.id)) {
+        if (remoteChallanMap.size > 0 && !remoteChallanMap.has(ch.id)) {
           const age = Date.now() - new Date(ch.createdAt || 0).getTime();
           if (age > 3 * 60 * 1000) {
             await db.challans.delete(ch.id);

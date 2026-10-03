@@ -789,14 +789,23 @@ export const Leads: React.FC = () => {
         setLeadQuotationsMap(qMap);
       }
 
-      if (challans && challans.length > 0) {
-        setAllChallans(challans);
-        const dMap = computeAllLeadsDispatchMap(challans, freshQMap);
+      let activeChallans = challans;
+      if (!activeChallans || activeChallans.length === 0) {
+        const { db } = await import('../../services/db');
+        activeChallans = await db.challans.toArray().catch(() => []);
+      }
+      if (!activeChallans || activeChallans.length === 0) {
+        activeChallans = await challanService.getChallans(true).catch(() => []);
+      }
+
+      if (activeChallans && activeChallans.length > 0) {
+        setAllChallans(activeChallans);
+        const dMap = computeAllLeadsDispatchMap(activeChallans, freshQMap);
         setLeadsDispatchMap(dMap);
 
         const dispatchedIds = new Set<string>();
         Object.keys(dMap).forEach(leadId => {
-          if (dMap[leadId].totalChallansCount > 0) {
+          if (dMap[leadId] && dMap[leadId].totalChallansCount > 0) {
             dispatchedIds.add(leadId);
           }
         });

@@ -21,25 +21,26 @@ export const challanService = {
       activeChallanSyncPromise = (async () => {
         try {
           lastChallanRemoteSync = Date.now();
-          const remoteChallans = await fetchCollectionFromFirestore<Challan>('challans', 4000);
-          if (Array.isArray(remoteChallans)) {
+          const remoteChallans = await fetchCollectionFromFirestore<Challan>('challans', 25000);
+          if (Array.isArray(remoteChallans) && remoteChallans.length > 0) {
             const freshDeleted = await getDeletedRecordIdsSet(true);
             const validRemote = remoteChallans.filter(c => !freshDeleted.has(c.id) && (!c.leadId || !freshDeleted.has(c.leadId)));
             const validRemoteIds = new Set(validRemote.map(c => c.id));
 
-            // Clean up stale deleted local challans that are missing from remote
-            const currentLocal = await db.challans.toArray().catch(() => []);
-            for (const lc of currentLocal) {
-              if (!validRemoteIds.has(lc.id) || freshDeleted.has(lc.id) || (lc.leadId && freshDeleted.has(lc.leadId))) {
-                const age = Date.now() - new Date(lc.createdAt || 0).getTime();
-                if (age > 2 * 60 * 1000 || freshDeleted.has(lc.id) || (lc.leadId && freshDeleted.has(lc.leadId))) {
-                  await db.challans.delete(lc.id).catch(() => {});
-                }
-              }
-            }
-
             if (validRemote.length > 0) {
               await db.challans.bulkPut(validRemote);
+
+              // Clean up stale deleted local challans only when a valid remote list is confirmed
+              const currentLocal = await db.challans.toArray().catch(() => []);
+              for (const lc of currentLocal) {
+                if (!validRemoteIds.has(lc.id) || freshDeleted.has(lc.id) || (lc.leadId && freshDeleted.has(lc.leadId))) {
+                  const age = Date.now() - new Date(lc.createdAt || 0).getTime();
+                  if (age > 2 * 60 * 1000 || freshDeleted.has(lc.id) || (lc.leadId && freshDeleted.has(lc.leadId))) {
+                    await db.challans.delete(lc.id).catch(() => {});
+                  }
+                }
+              }
+
               if (typeof window !== 'undefined') {
                 window.dispatchEvent(new CustomEvent('app-realtime-update'));
               }

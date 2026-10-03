@@ -28,6 +28,7 @@ export const challanService = {
             const validRemoteIds = new Set(validRemote.map(c => c.id));
 
             if (validRemote.length > 0) {
+              const prevCount = await db.challans.count();
               await db.challans.bulkPut(validRemote);
 
               // Clean up stale deleted local challans only when a valid remote list is confirmed
@@ -41,7 +42,8 @@ export const challanService = {
                 }
               }
 
-              if (typeof window !== 'undefined') {
+              const nextCount = await db.challans.count();
+              if (typeof window !== 'undefined' && prevCount !== nextCount) {
                 window.dispatchEvent(new CustomEvent('app-realtime-update'));
               }
             }

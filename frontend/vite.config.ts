@@ -212,6 +212,21 @@ export default defineConfig({
       }
     }
   },
+  optimizeDeps: {
+    include: [
+      'react',
+      'react-dom',
+      'react-dom/client',
+      'react-router-dom',
+      'leaflet',
+      'react-leaflet',
+      'dexie',
+      'lucide-react',
+      'dayjs',
+      'jspdf',
+      'html2canvas'
+    ]
+  },
   plugins: [
     b2DevServerPlugin(),
     react(),

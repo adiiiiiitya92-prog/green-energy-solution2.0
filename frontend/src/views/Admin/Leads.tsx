@@ -753,84 +753,146 @@ export const Leads: React.FC = () => {
     window.print();
   };
 
-  const loadData = async () => {
-    const list = await leadService.getLeads();
-    const filteredList = filterLeadsForUser(list, currentUser, currentRole);
-    setLeads(filteredList);
+  // 1. Fast Instant Local Hydration on Mount (0ms)
+  useEffect(() => {
+    let isMounted = true;
+    const hydrateLocal = async () => {
+      try {
+        const deletedIds = await getDeletedRecordIdsSet();
+        const [localLeads, localQuotes, localChallans, localOcs, localEmps, localProfiles] = await Promise.all([
+          db.leads.orderBy('createdAt').reverse().toArray().catch(() => []),
+          db.quotations.toArray().catch(() => []),
+          db.challans.toArray().catch(() => []),
+          db.orderConfirmations.toArray().catch(() => []),
+          db.profiles.filter(p => p.role === 'sales_person' || p.role === 'admin' || p.role === 'field_employee').toArray().catch(() => []),
+          db.profiles.toArray().catch(() => [])
+        ]);
 
-    try {
-      const [challans, allQuotes, evidenceIds, allOcs] = await Promise.all([
-        challanService.getChallans(false),
-        quotationService.getAllQuotations().catch(() => []),
-        orderService.getAllInstallationEvidenceLeadIds(false).catch(() => new Set<string>()),
-        orderService.getAllOrderConfirmations().catch(() => [])
-      ]);
-      if (evidenceIds) {
-        setInstallationEvidenceLeadIds(evidenceIds);
-      }
+        if (!isMounted) return;
 
-      if (allOcs && allOcs.length > 0) {
-        const ocMap: Record<string, OrderConfirmation> = {};
-        allOcs.forEach(oc => {
-          if (oc.leadId) ocMap[oc.leadId] = oc;
-        });
-        setOrderConfirmationsMap(ocMap);
-      }
+        const validLeads = (localLeads || []).filter(l => !deletedIds.has(l.id));
+        const validQuotes = (localQuotes || []).filter(q => !deletedIds.has(q.id));
+        const validChallans = (localChallans || []).filter(c => !deletedIds.has(c.id) && (!c.leadId || !deletedIds.has(c.leadId)));
+        const validOcs = (localOcs || []).filter(o => !deletedIds.has(o.id) && (!o.leadId || !deletedIds.has(o.leadId)));
 
-      let freshQMap = leadQuotationsMap;
-      if (allQuotes && allQuotes.length > 0) {
+        const filteredList = filterLeadsForUser(validLeads, currentUser, currentRole);
+        
         const qMap: Record<string, Quotation> = {};
-        allQuotes.forEach(q => {
+        validQuotes.forEach(q => {
           if (q.leadId && (!qMap[q.leadId] || (q.items && q.items.length > 0))) {
             qMap[q.leadId] = q;
           }
         });
-        freshQMap = qMap;
-        setLeadQuotationsMap(qMap);
-      }
 
-      let activeChallans = challans;
-      if (!activeChallans || activeChallans.length === 0) {
-        const { db } = await import('../../services/db');
-        activeChallans = await db.challans.toArray().catch(() => []);
-      }
-      if (!activeChallans || activeChallans.length === 0) {
-        activeChallans = await challanService.getChallans(true).catch(() => []);
-      }
+        const ocMap: Record<string, OrderConfirmation> = {};
+        validOcs.forEach(oc => {
+          if (oc.leadId) ocMap[oc.leadId] = oc;
+        });
 
-      if (activeChallans && activeChallans.length > 0) {
-        setAllChallans(activeChallans);
-        const dMap = computeAllLeadsDispatchMap(activeChallans, freshQMap);
-        setLeadsDispatchMap(dMap);
-
+        const dMap = computeAllLeadsDispatchMap(validChallans, qMap);
         const dispatchedIds = new Set<string>();
         Object.keys(dMap).forEach(leadId => {
           if (dMap[leadId] && dMap[leadId].totalChallansCount > 0) {
             dispatchedIds.add(leadId);
           }
         });
+
+        const names: Record<string, string> = {};
+        const profsMap: Record<string, Profile> = {};
+        (localProfiles || []).forEach(p => {
+          names[p.id] = p.fullName;
+          profsMap[p.id] = p;
+        });
+
+        // Set ALL state in one synchronized batch (0ms latency, zero blinking)
+        setLeads(filteredList);
+        setLeadQuotationsMap(qMap);
+        setOrderConfirmationsMap(ocMap);
+        setAllChallans(validChallans);
+        setLeadsDispatchMap(dMap);
         setDispatchedLeadIds(dispatchedIds);
+        setEmployees(localEmps || []);
+        setEmployeeNames(names);
+        setEmployeeProfiles(profsMap);
+        compileReportItems(filteredList, names);
+      } catch (err) {
+        console.warn("Leads local hydration note:", err);
       }
+    };
+
+    hydrateLocal();
+    return () => { isMounted = false; };
+  }, [currentUser, currentRole]);
+
+  const loadData = async () => {
+    try {
+      const [list, challans, allQuotes, evidenceIds, allOcs, empList, profiles] = await Promise.all([
+        leadService.getLeads(),
+        challanService.getChallans(false).catch(() => []),
+        quotationService.getAllQuotations().catch(() => []),
+        orderService.getAllInstallationEvidenceLeadIds(false).catch(() => new Set<string>()),
+        orderService.getAllOrderConfirmations().catch(() => []),
+        employeeService.getEmployees().catch(() => []),
+        employeeService.getAllProfiles().catch(() => [])
+      ]);
+
+      const filteredList = filterLeadsForUser(list, currentUser, currentRole);
+
+      const ocMap: Record<string, OrderConfirmation> = {};
+      if (allOcs && allOcs.length > 0) {
+        allOcs.forEach(oc => {
+          if (oc.leadId) ocMap[oc.leadId] = oc;
+        });
+      }
+
+      const qMap: Record<string, Quotation> = {};
+      if (allQuotes && allQuotes.length > 0) {
+        allQuotes.forEach(q => {
+          if (q.leadId && (!qMap[q.leadId] || (q.items && q.items.length > 0))) {
+            qMap[q.leadId] = q;
+          }
+        });
+      }
+
+      let activeChallans = Array.isArray(challans) ? challans : [];
+      if (activeChallans.length === 0) {
+        activeChallans = await db.challans.toArray().catch(() => []);
+      }
+
+      const dMap = computeAllLeadsDispatchMap(activeChallans, qMap);
+      const dispatchedIds = new Set<string>();
+      Object.keys(dMap).forEach(leadId => {
+        if (dMap[leadId] && dMap[leadId].totalChallansCount > 0) {
+          dispatchedIds.add(leadId);
+        }
+      });
+
+      const names: Record<string, string> = {};
+      const profsMap: Record<string, Profile> = {};
+      if (profiles && profiles.length > 0) {
+        profiles.forEach(p => {
+          names[p.id] = p.fullName;
+          profsMap[p.id] = p;
+        });
+      }
+
+      // Single batched update to prevent screen flickering
+      setLeads(filteredList);
+      if (evidenceIds) setInstallationEvidenceLeadIds(evidenceIds);
+      setOrderConfirmationsMap(ocMap);
+      setLeadQuotationsMap(qMap);
+      setAllChallans(activeChallans);
+      setLeadsDispatchMap(dMap);
+      setDispatchedLeadIds(dispatchedIds);
+      if (empList && empList.length > 0) setEmployees(empList);
+      setEmployeeNames(names);
+      setEmployeeProfiles(profsMap);
+      compileReportItems(filteredList, names);
+
+      productService.getProducts().then(setCatalogProducts).catch(() => {});
     } catch (e) {
-      console.warn("Challans/Quotes load error in Leads view:", e);
+      console.warn("Leads loadData error note:", e);
     }
-
-    const empList = await employeeService.getEmployees();
-    setEmployees(empList);
-
-    const profiles = await employeeService.getAllProfiles();
-    const names: Record<string, string> = {};
-    const profsMap: Record<string, Profile> = {};
-    profiles.forEach(p => {
-      names[p.id] = p.fullName;
-      profsMap[p.id] = p;
-    });
-    setEmployeeNames(names);
-    setEmployeeProfiles(profsMap);
-
-    compileReportItems(filteredList, names);
-
-    productService.getProducts().then(setCatalogProducts).catch(e => console.warn("Load products error:", e));
   };
 
   // Sync searchParams filter state
@@ -876,7 +938,7 @@ export const Leads: React.FC = () => {
       if (realtimeDebounceTimer) clearTimeout(realtimeDebounceTimer);
       realtimeDebounceTimer = setTimeout(() => {
         loadData();
-      }, 1000);
+      }, 1500);
     };
     window.addEventListener('app-realtime-update', handleRealtimeUpdate);
     return () => {

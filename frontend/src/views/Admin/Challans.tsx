@@ -227,27 +227,73 @@ export const Challans: React.FC = () => {
   const [bomSearchTerm, setBomSearchTerm] = useState('');
   const [isLoadingPackages, setIsLoadingPackages] = useState(false);
 
+  // Fast Instant Local Hydration on Mount (0ms)
+  useEffect(() => {
+    let isMounted = true;
+    const hydrateLocal = async () => {
+      try {
+        const deletedIds = await getDeletedRecordIdsSet();
+        const [localChallans, localLeads, localEmps, localProds] = await Promise.all([
+          db.challans.orderBy('createdAt').reverse().toArray().catch(() => []),
+          db.leads.toArray().catch(() => []),
+          db.profiles.filter(p => p.role === 'sales_person' || p.role === 'admin' || p.role === 'field_employee').toArray().catch(() => []),
+          db.products.toArray().catch(() => [])
+        ]);
+
+        if (!isMounted) return;
+
+        const validChallans = (localChallans || []).filter(c => !deletedIds.has(c.id) && (!c.leadId || !deletedIds.has(c.leadId)));
+        const validLeads = (localLeads || []).filter(l => !deletedIds.has(l.id));
+        const sortedLeads = [...validLeads].sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+        const validProds = (localProds || []).filter(p => !deletedIds.has(p.id));
+
+        setChallans(validChallans);
+        setLeads(sortedLeads);
+        setEmployees(localEmps || []);
+        setProducts(validProds);
+      } catch (err) {
+        console.warn("Challans local hydration note:", err);
+      }
+    };
+
+    hydrateLocal();
+    return () => { isMounted = false; };
+  }, []);
+
   const loadData = async () => {
-    const cList = await challanService.getChallans();
-    setChallans(cList);
+    try {
+      const [cList, rawLeads, eList, pList] = await Promise.all([
+        challanService.getChallans(false),
+        leadService.getLeads(false),
+        employeeService.getEmployees().catch(() => []),
+        productService.getProducts().catch(() => [])
+      ]);
 
-    const rawLeads = await leadService.getLeads();
-    const sortedLeads = [...rawLeads].sort((a, b) => (a.name || '').localeCompare(b.name || ''));
-    setLeads(sortedLeads);
+      const sortedLeads = [...(rawLeads || [])].sort((a, b) => (a.name || '').localeCompare(b.name || ''));
 
-    const eList = await employeeService.getEmployees();
-    setEmployees(eList);
-
-    const pList = await productService.getProducts();
-    setProducts(pList);
+      // Batched update
+      setChallans(cList || []);
+      setLeads(sortedLeads);
+      if (eList && eList.length > 0) setEmployees(eList);
+      if (pList && pList.length > 0) setProducts(pList);
+    } catch (e) {
+      console.warn("Challans loadData error note:", e);
+    }
   };
 
   useEffect(() => {
     loadData();
-    const handleRealtimeUpdate = () => loadData();
+    let realtimeDebounceTimer: any = null;
+    const handleRealtimeUpdate = () => {
+      if (realtimeDebounceTimer) clearTimeout(realtimeDebounceTimer);
+      realtimeDebounceTimer = setTimeout(() => {
+        loadData();
+      }, 1500);
+    };
     window.addEventListener('app-realtime-update', handleRealtimeUpdate);
     window.addEventListener('storage', handleRealtimeUpdate);
     return () => {
+      if (realtimeDebounceTimer) clearTimeout(realtimeDebounceTimer);
       window.removeEventListener('app-realtime-update', handleRealtimeUpdate);
       window.removeEventListener('storage', handleRealtimeUpdate);
     };

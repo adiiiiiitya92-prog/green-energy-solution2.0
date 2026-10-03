@@ -214,11 +214,16 @@ export const Products: React.FC = () => {
 
   useEffect(() => {
     loadProducts();
+    let debounceTimer: any = null;
     const handleRealtimeUpdate = () => {
-      loadProducts();
+      if (debounceTimer) clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(() => {
+        loadProducts();
+      }, 1500);
     };
     window.addEventListener('app-realtime-update', handleRealtimeUpdate);
     return () => {
+      if (debounceTimer) clearTimeout(debounceTimer);
       window.removeEventListener('app-realtime-update', handleRealtimeUpdate);
     };
   }, []);

@@ -164,8 +164,10 @@ export const quotationService = {
             const freshDeleted = await getDeletedRecordIdsSet();
             const validRemote = remoteQuotes.filter(q => q.id && !freshDeleted.has(q.id) && q.items && q.items.length > 0 && getQuotationTotalAmount(q) > 0);
             if (validRemote.length > 0) {
+              const prevCount = await db.quotations.count();
               await db.quotations.bulkPut(validRemote.map(sanitizeQuotationRecord));
-              if (typeof window !== 'undefined') {
+              const nextCount = await db.quotations.count();
+              if (typeof window !== 'undefined' && prevCount !== nextCount) {
                 window.dispatchEvent(new CustomEvent('app-realtime-update'));
               }
             }

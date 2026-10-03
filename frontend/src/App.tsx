@@ -3,7 +3,7 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { useAuthStore } from './store/authStore';
 import { Layout } from './components/Common/Layout';
 
-// Resilient Code Splitting that automatically recovers if chunks change between deployments
+// Resilient Code Splitting that handles deployments without reload loops
 function lazyWithRetry<T extends React.ComponentType<any>>(
   componentImport: () => Promise<{ default: T } | any>
 ) {
@@ -11,16 +11,74 @@ function lazyWithRetry<T extends React.ComponentType<any>>(
     try {
       return await componentImport();
     } catch (error) {
-      console.warn('Module loading failed (stale deployment chunk detected), auto-refreshing...', error);
-      const reloadKey = 'ges_lazy_reload_' + window.location.pathname;
-      if (!sessionStorage.getItem(reloadKey)) {
-        sessionStorage.setItem(reloadKey, '1');
-        window.location.reload();
-        return new Promise<{ default: T }>(() => {});
+      // First attempt a brief 300ms retry (handles transient Vite dev re-optimizations or brief network hiccup)
+      try {
+        await new Promise(r => setTimeout(r, 300));
+        return await componentImport();
+      } catch (retryError) {
+        if (!import.meta.env.DEV) {
+          const reloadKey = 'ges_lazy_reload_' + window.location.pathname;
+          if (!sessionStorage.getItem(reloadKey)) {
+            sessionStorage.setItem(reloadKey, '1');
+            window.location.reload();
+            return new Promise<{ default: T }>(() => {});
+          }
+        }
+        throw retryError;
       }
-      throw error;
     }
   });
+}
+
+interface ErrorBoundaryState {
+  hasError: boolean;
+  error?: Error;
+}
+
+class RouteErrorBoundary extends React.Component<
+  { children: React.ReactNode },
+  ErrorBoundaryState
+> {
+  constructor(props: { children: React.ReactNode }) {
+    super(props);
+    this.state = { hasError: false };
+  }
+
+  static getDerivedStateFromError(error: Error): ErrorBoundaryState {
+    return { hasError: true, error };
+  }
+
+  componentDidCatch(error: Error, errorInfo: React.ErrorInfo) {
+    console.warn('RouteErrorBoundary caught an error:', error, errorInfo);
+  }
+
+  handleRetry = () => {
+    this.setState({ hasError: false });
+    window.location.reload();
+  };
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="min-h-[60vh] flex flex-col items-center justify-center p-8 text-center space-y-4">
+          <div className="w-14 h-14 bg-emerald-50 text-emerald-600 rounded-2xl flex items-center justify-center text-2xl shadow-sm border border-emerald-100">
+            ⚡
+          </div>
+          <h2 className="text-xl font-bold text-slate-800 tracking-tight">Section Updated</h2>
+          <p className="text-sm text-slate-500 max-w-md">
+            This module has updated. Click below to refresh and load the latest view.
+          </p>
+          <button
+            onClick={this.handleRetry}
+            className="px-6 py-2.5 bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white font-semibold rounded-xl text-sm shadow-md transition"
+          >
+            Refresh View
+          </button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
 }
 
 const Login = lazyWithRetry(() => import('./views/Login').then(m => ({ default: m.Login })));
@@ -97,16 +155,18 @@ export const App: React.FC = () => {
   if (!isAuthenticated) {
     return (
       <BrowserRouter>
-        <Suspense fallback={
-          <div className="min-h-screen flex flex-col justify-center items-center bg-slate-900 text-slate-400">
-            <div className="w-8 h-8 border-3 border-emerald-500 border-t-transparent rounded-full animate-spin mb-2"></div>
-            <span className="text-xs">Loading Green Energy Solution...</span>
-          </div>
-        }>
-          <Routes>
-            <Route path="*" element={<Login />} />
-          </Routes>
-        </Suspense>
+        <RouteErrorBoundary>
+          <Suspense fallback={
+            <div className="min-h-screen flex flex-col justify-center items-center bg-slate-900 text-slate-400">
+              <div className="w-8 h-8 border-3 border-emerald-500 border-t-transparent rounded-full animate-spin mb-2"></div>
+              <span className="text-xs">Loading Green Energy Solution...</span>
+            </div>
+          }>
+            <Routes>
+              <Route path="*" element={<Login />} />
+            </Routes>
+          </Suspense>
+        </RouteErrorBoundary>
       </BrowserRouter>
     );
   }
@@ -119,79 +179,81 @@ export const App: React.FC = () => {
   return (
     <BrowserRouter>
       <Layout>
-        <Suspense fallback={<PageLoader />}>
-          <Routes>
-            {/* Dealer Dedicated Panel & Routes */}
-            {isDealer ? (
-              <>
-                <Route path="/leads" element={<Leads />} />
-                <Route path="/leave-application" element={<LeaveApplication />} />
-                <Route path="/expense-tracker" element={<ExpenseTracker />} />
-                <Route path="/complaints" element={<Complaints />} />
-                <Route path="/visits" element={<Visits />} />
-                <Route path="/profile" element={<ProfileView />} />
-                <Route path="*" element={<Navigate to="/leads" replace />} />
-              </>
-            ) : isInventoryManager ? (
-              <>
-                <Route path="/inventory-panel" element={<InventoryPanel />} />
-                <Route path="/leave-application" element={<LeaveApplication />} />
-                <Route path="/expense-tracker" element={<ExpenseTracker />} />
-                <Route path="/complaints" element={<Complaints />} />
-                <Route path="/products" element={<Products />} />
-                <Route path="/challans" element={<Challans />} />
-                <Route path="/b2b-businesses" element={<B2BBusinesses />} />
-                <Route path="*" element={<Navigate to="/inventory-panel" replace />} />
-              </>
-            ) : !isEmployee ? (
-              /* Admin / Super Admin Routes */
-              <>
-                <Route path="/dashboard" element={<Dashboard />} />
-                <Route path="/inventory-panel" element={<InventoryPanel />} />
-                <Route path="/leave-application" element={<LeaveApplication />} />
-                <Route path="/leave-requests" element={<LeaveRequests />} />
-                <Route path="/hrms/leave-requests" element={<LeaveRequests />} />
-                <Route path="/expense-tracker" element={<ExpenseTracker />} />
-                <Route path="/expenses" element={currentRole === 'super_admin' ? <Expenses /> : <ExpenseTracker />} />
-                <Route path="/complaints" element={<Complaints />} />
-                <Route path="/leads" element={<Leads />} />
-                <Route path="/visits" element={<Visits />} />
-                <Route path="/shadow-analysis" element={<ShadowAnalysisContainer />} />
-                <Route path="/products" element={<Products />} />
-                <Route path="/employees" element={<Employees />} />
-                <Route path="/challans" element={<Challans />} />
-                <Route path="/b2b-businesses" element={<B2BBusinesses />} />
-                <Route path="/dcr-document" element={<DcrDocument />} />
-                <Route path="/wcr-document" element={<WcrDocument />} />
-                <Route path="/model-agreement" element={<ModelAgreementDocument />} />
-                <Route path="/cfa-agreement" element={<CfaAgreementDocument />} />
-                <Route path="/quotation-document" element={<QuotationDocument />} />
-                
-                {currentRole === 'super_admin' ? (
-                  <Route path="/settings" element={<Settings />} />
-                ) : (
-                  <Route path="/settings" element={<Navigate to="/dashboard" replace />} />
-                )}
-                
-                <Route path="*" element={<Navigate to="/dashboard" replace />} />
-              </>
-            ) : (
-              // Field Employee routes
-              <>
-                <Route path="/complaints" element={<Complaints />} />
-                <Route path="/leave-application" element={<LeaveApplication />} />
-                <Route path="/expense-tracker" element={<ExpenseTracker />} />
-                <Route path="/leads" element={<Leads />} />
-                <Route path="/visits" element={<Visits />} />
-                <Route path="/visits/new" element={<VisitsNewAutoOpen />} />
-                <Route path="/shadow-analysis" element={<ShadowAnalysisContainer />} />
-                <Route path="/profile" element={<ProfileView />} />
-                
-                <Route path="*" element={<Navigate to="/leads" replace />} />
-              </>
-            )}
-          </Routes>
-        </Suspense>
+        <RouteErrorBoundary>
+          <Suspense fallback={<PageLoader />}>
+            <Routes>
+              {/* Dealer Dedicated Panel & Routes */}
+              {isDealer ? (
+                <>
+                  <Route path="/leads" element={<Leads />} />
+                  <Route path="/leave-application" element={<LeaveApplication />} />
+                  <Route path="/expense-tracker" element={<ExpenseTracker />} />
+                  <Route path="/complaints" element={<Complaints />} />
+                  <Route path="/visits" element={<Visits />} />
+                  <Route path="/profile" element={<ProfileView />} />
+                  <Route path="*" element={<Navigate to="/leads" replace />} />
+                </>
+              ) : isInventoryManager ? (
+                <>
+                  <Route path="/inventory-panel" element={<InventoryPanel />} />
+                  <Route path="/leave-application" element={<LeaveApplication />} />
+                  <Route path="/expense-tracker" element={<ExpenseTracker />} />
+                  <Route path="/complaints" element={<Complaints />} />
+                  <Route path="/products" element={<Products />} />
+                  <Route path="/challans" element={<Challans />} />
+                  <Route path="/b2b-businesses" element={<B2BBusinesses />} />
+                  <Route path="*" element={<Navigate to="/inventory-panel" replace />} />
+                </>
+              ) : !isEmployee ? (
+                /* Admin / Super Admin Routes */
+                <>
+                  <Route path="/dashboard" element={<Dashboard />} />
+                  <Route path="/inventory-panel" element={<InventoryPanel />} />
+                  <Route path="/leave-application" element={<LeaveApplication />} />
+                  <Route path="/leave-requests" element={<LeaveRequests />} />
+                  <Route path="/hrms/leave-requests" element={<LeaveRequests />} />
+                  <Route path="/expense-tracker" element={<ExpenseTracker />} />
+                  <Route path="/expenses" element={currentRole === 'super_admin' ? <Expenses /> : <ExpenseTracker />} />
+                  <Route path="/complaints" element={<Complaints />} />
+                  <Route path="/leads" element={<Leads />} />
+                  <Route path="/visits" element={<Visits />} />
+                  <Route path="/shadow-analysis" element={<ShadowAnalysisContainer />} />
+                  <Route path="/products" element={<Products />} />
+                  <Route path="/employees" element={<Employees />} />
+                  <Route path="/challans" element={<Challans />} />
+                  <Route path="/b2b-businesses" element={<B2BBusinesses />} />
+                  <Route path="/dcr-document" element={<DcrDocument />} />
+                  <Route path="/wcr-document" element={<WcrDocument />} />
+                  <Route path="/model-agreement" element={<ModelAgreementDocument />} />
+                  <Route path="/cfa-agreement" element={<CfaAgreementDocument />} />
+                  <Route path="/quotation-document" element={<QuotationDocument />} />
+                  
+                  {currentRole === 'super_admin' ? (
+                    <Route path="/settings" element={<Settings />} />
+                  ) : (
+                    <Route path="/settings" element={<Navigate to="/dashboard" replace />} />
+                  )}
+                  
+                  <Route path="*" element={<Navigate to="/dashboard" replace />} />
+                </>
+              ) : (
+                // Field Employee routes
+                <>
+                  <Route path="/complaints" element={<Complaints />} />
+                  <Route path="/leave-application" element={<LeaveApplication />} />
+                  <Route path="/expense-tracker" element={<ExpenseTracker />} />
+                  <Route path="/leads" element={<Leads />} />
+                  <Route path="/visits" element={<Visits />} />
+                  <Route path="/visits/new" element={<VisitsNewAutoOpen />} />
+                  <Route path="/shadow-analysis" element={<ShadowAnalysisContainer />} />
+                  <Route path="/profile" element={<ProfileView />} />
+                  
+                  <Route path="*" element={<Navigate to="/leads" replace />} />
+                </>
+              )}
+            </Routes>
+          </Suspense>
+        </RouteErrorBoundary>
       </Layout>
     </BrowserRouter>
   );

@@ -72,8 +72,10 @@ export const leadService = {
             const validRemote = remoteLeads.filter(l => l.id && !freshDeleted.has(l.id));
             
             if (validRemote.length > 0) {
+              const prevCount = await db.leads.count();
               await db.leads.bulkPut(validRemote);
-              if (typeof window !== 'undefined') {
+              const nextCount = await db.leads.count();
+              if (typeof window !== 'undefined' && prevCount !== nextCount) {
                 window.dispatchEvent(new CustomEvent('app-realtime-update'));
               }
             }

@@ -100,7 +100,7 @@ export const BillProofPreviewModal: React.FC<BillProofPreviewModalProps> = ({
             <div>
               <h3 className="text-sm font-bold tracking-tight">Bill / Receipt Proof Verification</h3>
               <p className="text-[10px] text-slate-300">
-                {claim.expenseNumber} • {claim.employeeName} ({claim.employeeRole.replace('_', ' ').toUpperCase()})
+                {claim.expenseNumber} • {claim.employeeName} ({(claim.employeeRole || 'employee').replace(/_/g, ' ').toUpperCase()})
               </p>
             </div>
           </div>
@@ -240,7 +240,7 @@ export const BillProofPreviewModal: React.FC<BillProofPreviewModalProps> = ({
           <div className="w-full bg-white rounded-xl p-3.5 border border-slate-200 shadow-xs flex flex-wrap items-center justify-between gap-3 text-xs">
             <div className="space-y-0.5">
               <span className="text-[10px] uppercase font-bold text-slate-400 block">Expense Title & Category</span>
-              <p className="font-extrabold text-slate-900">{claim.title} <span className="text-slate-500 font-normal">({claim.category.replace('_', ' ')})</span></p>
+              <p className="font-extrabold text-slate-900">{claim.title} <span className="text-slate-500 font-normal">({(claim.category || 'general').replace(/_/g, ' ')})</span></p>
             </div>
 
             <div className="space-y-0.5">

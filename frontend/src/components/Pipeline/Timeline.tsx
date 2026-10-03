@@ -543,11 +543,11 @@ export const Timeline: React.FC<TimelineProps> = ({ lead }) => {
                 const docFile = doc.fileBlob || (doc as any).fileUrl;
                 return (
                   <div key={doc.id} className="flex justify-between items-center text-xs p-2 bg-slate-50 border border-slate-100 rounded-lg hover:bg-slate-100 transition-colors">
-                    <span className="font-semibold text-slate-700 uppercase">{doc.docType.replace('_', ' ')}</span>
+                    <span className="font-semibold text-slate-700 uppercase">{(doc.docType || 'document').replace(/_/g, ' ')}</span>
                     <div className="flex items-center gap-2">
                       <button
                         type="button"
-                        onClick={() => handleViewPreview(docFile, `${doc.docType.toUpperCase().replace('_', ' ')} - ${lead.name}`)}
+                        onClick={() => handleViewPreview(docFile, `${(doc.docType || 'document').toUpperCase().replace(/_/g, ' ')} - ${lead.name}`)}
                         className="text-slate-600 hover:text-slate-800 font-bold cursor-pointer flex items-center gap-1 bg-white border border-slate-200 px-2 py-0.5 rounded shadow-xs"
                       >
                         <Eye className="w-3 h-3 text-slate-500" />

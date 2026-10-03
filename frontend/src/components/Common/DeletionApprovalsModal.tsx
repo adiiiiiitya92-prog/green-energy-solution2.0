@@ -398,7 +398,7 @@ export const DeletionApprovalsModal: React.FC<DeletionApprovalsModalProps> = ({ 
                           Requested By Employee Information
                         </span>
                         <span className={`text-[10px] font-black uppercase px-2 py-0.5 rounded-full border ${getRoleBadgeStyle(req.requestedByUserRole)}`}>
-                          {req.requestedByUserRole.replace('_', ' ')}
+                          {(req.requestedByUserRole || 'user').replace(/_/g, ' ')}
                         </span>
                       </div>
 

@@ -442,7 +442,7 @@ export const Expenses: React.FC = () => {
                       {claim.expenseNumber}
                     </span>
                     <span className="text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded bg-emerald-100 text-emerald-800">
-                      {claim.employeeRole.replace('_', ' ')}
+                      {(claim.employeeRole || 'employee').replace(/_/g, ' ')}
                     </span>
                     {claim.reapplicationCount && claim.reapplicationCount > 0 ? (
                       <span className="text-[9px] font-extrabold px-1.5 py-0.2 rounded bg-amber-100 text-amber-800">

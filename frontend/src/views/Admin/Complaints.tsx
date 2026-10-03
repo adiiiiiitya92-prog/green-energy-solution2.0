@@ -1589,7 +1589,7 @@ const ComplaintDetailModal: React.FC<ComplaintDetailModalProps> = ({
             <div className="flex items-center space-x-2">
               <span className="font-mono text-emerald-400 font-black text-sm">{complaint.complaintNumber}</span>
               <span className="px-2 py-0.5 rounded text-[10px] font-black uppercase tracking-wider bg-white/10 text-white border border-white/20">
-                {complaint.customerType.replace('_', ' ')}
+                {(complaint.customerType || 'customer').replace(/_/g, ' ')}
               </span>
               <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${complaint.priority === 'Urgent' ? 'bg-rose-500 text-white' : 'bg-amber-500 text-white'}`}>
                 {complaint.priority} Priority

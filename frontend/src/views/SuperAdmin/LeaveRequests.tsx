@@ -375,7 +375,7 @@ export const LeaveRequests: React.FC = () => {
                       {req.leaveNumber}
                     </span>
                     <span className="text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded bg-emerald-100 text-emerald-800">
-                      {req.employeeRole.replace('_', ' ')}
+                      {(req.employeeRole || 'employee').replace(/_/g, ' ')}
                     </span>
                     {req.reapplicationCount && req.reapplicationCount > 0 ? (
                       <span className="text-[9px] font-extrabold px-1.5 py-0.2 rounded bg-amber-100 text-amber-800">

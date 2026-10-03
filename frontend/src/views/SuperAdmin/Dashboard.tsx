@@ -395,7 +395,7 @@ export const Dashboard: React.FC = () => {
                         )}
                       </div>
                       <div className="text-[10px] text-slate-400 flex items-center gap-2 flex-wrap">
-                        <span className="uppercase text-rose-300 font-bold">{req.requestedByUserRole.replace('_', ' ')}</span>
+                        <span className="uppercase text-rose-300 font-bold">{(req.requestedByUserRole || 'user').replace(/_/g, ' ')}</span>
                         {req.requestedByUserPhone && <span>• 📞 +91 {req.requestedByUserPhone}</span>}
                       </div>
                     </div>

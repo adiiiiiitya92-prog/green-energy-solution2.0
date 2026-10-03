@@ -156,7 +156,7 @@ export const LeaveApprovalLetterModal: React.FC<LeaveApprovalLetterModalProps> =
               <h2 className="text-base font-extrabold text-slate-900">{leaveRequest.employeeName}</h2>
               <div className="text-slate-600 grid grid-cols-1 sm:grid-cols-2 gap-1 text-[11.5px] pt-1">
                 <p><strong className="text-slate-700">Designation:</strong> {leaveRequest.designation || 'Solar Operations Executive'}</p>
-                <p><strong className="text-slate-700">Role / Department:</strong> {leaveRequest.employeeRole.replace('_', ' ').toUpperCase()}</p>
+                <p><strong className="text-slate-700">Role / Department:</strong> {(leaveRequest.employeeRole || 'employee').replace(/_/g, ' ').toUpperCase()}</p>
                 <p><strong className="text-slate-700">Employee ID:</strong> {leaveRequest.employeeId}</p>
                 <p><strong className="text-slate-700">Contact:</strong> {leaveRequest.employeePhone}</p>
               </div>

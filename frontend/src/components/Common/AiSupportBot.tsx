@@ -35,13 +35,7 @@ const DEFAULT_SUGGESTIONS = [
   { text: '📄 How to make WCR / DCR?', prompt: 'Software me WCR aur DCR documents kaise generate aur save karte hain?' }
 ];
 
-export const AiSupportBot: React.FC = () => {
-  const currentRole = useAuthStore((state) => state.currentRole);
-
-  if (currentRole !== 'admin' && currentRole !== 'super_admin') {
-    return null;
-  }
-
+const AiSupportBotContent: React.FC = () => {
   const [isOpen, setIsOpen] = useState(false);
   const [isExpanded, setIsExpanded] = useState(false);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -735,4 +729,14 @@ Aap mujhse neeche diye gaye topics par pooch sakte hain ya seedha apna sawal typ
       )}
     </>
   );
+};
+
+export const AiSupportBot: React.FC = () => {
+  const currentRole = useAuthStore((state) => state.currentRole);
+
+  if (currentRole !== 'admin' && currentRole !== 'super_admin') {
+    return null;
+  }
+
+  return <AiSupportBotContent />;
 };

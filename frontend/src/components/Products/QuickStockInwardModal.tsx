@@ -16,14 +16,21 @@ interface QuickStockInwardModalProps {
   showToast: (msg: string) => void;
 }
 
-export const QuickStockInwardModal: React.FC<QuickStockInwardModalProps> = ({
+interface QuickStockInwardModalInnerProps {
+  product: Product;
+  isOpen: boolean;
+  onClose: () => void;
+  onSuccess: (updated: Product, addedCount: number) => void;
+  showToast: (msg: string) => void;
+}
+
+const QuickStockInwardModalContent: React.FC<QuickStockInwardModalInnerProps> = ({
   product,
   isOpen,
   onClose,
   onSuccess,
   showToast
 }) => {
-  if (!isOpen) return null;
 
   const todayStr = new Date().toISOString().slice(0, 10);
   const [inwardDate, setInwardDate] = useState<string>(todayStr);
@@ -341,4 +348,9 @@ export const QuickStockInwardModal: React.FC<QuickStockInwardModalProps> = ({
       </div>
     </div>
   );
+};
+
+export const QuickStockInwardModal: React.FC<QuickStockInwardModalProps> = (props) => {
+  if (!props.isOpen || !props.product) return null;
+  return <QuickStockInwardModalContent {...props} product={props.product} />;
 };

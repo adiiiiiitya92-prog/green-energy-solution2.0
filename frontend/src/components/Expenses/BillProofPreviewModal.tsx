@@ -22,13 +22,17 @@ interface BillProofPreviewModalProps {
   claim: ExpenseClaim | null;
 }
 
-export const BillProofPreviewModal: React.FC<BillProofPreviewModalProps> = ({
+interface BillProofPreviewModalInnerProps {
+  isOpen: boolean;
+  onClose: () => void;
+  claim: ExpenseClaim;
+}
+
+const BillProofPreviewModalContent: React.FC<BillProofPreviewModalInnerProps> = ({
   isOpen,
   onClose,
   claim
 }) => {
-  if (!isOpen || !claim) return null;
-
   const [activeSrc, setActiveSrc] = useState<string>(() => resolveExpenseReceiptUrl(claim));
   const [imageLoading, setImageLoading] = useState(true);
   const [loadError, setLoadError] = useState(false);
@@ -283,4 +287,9 @@ export const BillProofPreviewModal: React.FC<BillProofPreviewModalProps> = ({
       </div>
     </div>
   );
+};
+
+export const BillProofPreviewModal: React.FC<BillProofPreviewModalProps> = (props) => {
+  if (!props.isOpen || !props.claim) return null;
+  return <BillProofPreviewModalContent {...props} claim={props.claim} />;
 };

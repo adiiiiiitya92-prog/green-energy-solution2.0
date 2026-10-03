@@ -244,7 +244,7 @@ export const Layout: React.FC<LayoutProps> = ({ children }) => {
         <div className="bg-amber-500 text-white font-black text-xs px-4 py-2 flex items-center justify-between shadow-sm select-none shrink-0 z-50 animate-fade-in">
           <div className="flex items-center space-x-2">
             <span className="text-sm">⚠️</span>
-            <span>Impersonating Account: <strong>{currentUser?.fullName}</strong> ({currentRole.replace('_', ' ')})</span>
+            <span>Impersonating Account: <strong>{currentUser?.fullName}</strong> ({(currentRole || 'user').replace(/_/g, ' ')})</span>
           </div>
           <button
             onClick={async () => {
@@ -317,7 +317,7 @@ export const Layout: React.FC<LayoutProps> = ({ children }) => {
                 {currentUser.fullName}
               </span>
               <span className="text-[9px] bg-emerald-100 text-emerald-800 font-extrabold px-1.5 py-0.5 rounded uppercase">
-                {currentRole.replace('_', ' ')}
+                {(currentRole || 'user').replace(/_/g, ' ')}
               </span>
             </div>
           )}

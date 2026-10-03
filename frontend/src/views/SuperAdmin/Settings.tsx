@@ -44,7 +44,7 @@ export const Settings: React.FC = () => {
           registrations: registrations.map(r => ({ ...r, bankDocumentBlob: r.bankDocumentBlob ? '[Bank File Blob]' : null })),
           photos: photos.map(p => ({ ...p, photoBlob: '[Installation Stamped Image Blob]' })),
           releases: releases.map(r => ({ ...r, fileBlob: '[Release File Blob]' })),
-          visits: visits.map(v => ({ ...v, photoBlobs: v.photoBlobs.map(() => '[Visit Photo Blob]') }))
+          visits: visits.map(v => ({ ...v, photoBlobs: (v.photoBlobs || []).map(() => '[Visit Photo Blob]') }))
         }
       };
 

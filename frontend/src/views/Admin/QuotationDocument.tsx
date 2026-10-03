@@ -1860,7 +1860,7 @@ export const QuotationDocument: React.FC<{
                       <option value="">-- Choose Commercial Product from Catalog --</option>
                       {products.filter(p => p.category !== 'bom_item').map(p => (
                         <option key={p.id} value={p.id}>
-                          [{p.brand ? p.brand.toUpperCase() : p.category.toUpperCase().replace('_', ' ')}] {p.name} — ₹{p.rate.toLocaleString('en-IN')} / {p.unit || 'Nos'}
+                          [{p.brand ? p.brand.toUpperCase() : (p.category ? p.category.toUpperCase().replace(/_/g, ' ') : 'ITEM')}] {p.name} — ₹{p.rate.toLocaleString('en-IN')} / {p.unit || 'Nos'}
                         </option>
                       ))}
                     </select>
@@ -2298,7 +2298,7 @@ export const QuotationDocument: React.FC<{
                               📐 {prod.unit || 'Nos'}
                             </span>
                             <span className="text-[9px] font-black uppercase px-2 py-0.5 rounded bg-slate-100 text-slate-600 border border-slate-200">
-                              {prod.category.replace('_', ' ')}
+                              {(prod.category || 'product').replace(/_/g, ' ')}
                             </span>
                             {isAlreadyInProposal && (
                               <span className="bg-emerald-100 text-emerald-800 text-[10px] font-bold px-2 py-0.5 rounded-full flex items-center gap-1 border border-emerald-200">

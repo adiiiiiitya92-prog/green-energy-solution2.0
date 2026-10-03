@@ -36,11 +36,11 @@ export const ProfileView: React.FC = () => {
         {/* User Banner */}
         <div className="flex items-center space-x-4">
           <div className="w-14 h-14 rounded-full bg-emerald-100 flex items-center justify-center font-black text-emerald-700 text-lg">
-            {currentUser.fullName[0].toUpperCase()}
+            {(currentUser.fullName || 'U')[0].toUpperCase()}
           </div>
           <div>
-            <h3 className="text-base font-extrabold text-slate-900">{currentUser.fullName}</h3>
-            <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">{currentRole.replace('_', ' ')}</span>
+            <h3 className="text-base font-extrabold text-slate-900">{currentUser.fullName || 'User'}</h3>
+            <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">{(currentRole || 'user').replace(/_/g, ' ')}</span>
           </div>
         </div>
 

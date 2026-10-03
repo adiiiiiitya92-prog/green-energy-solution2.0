@@ -2323,8 +2323,8 @@ export const Leads: React.FC = () => {
       lost: 'bg-rose-100 text-rose-800 border-rose-200'
     };
     return (
-      <span className={`inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold border capitalize ${classes[status] || 'bg-gray-100'}`}>
-        {status.replace('_', ' ')}
+      <span className={`inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold border capitalize ${classes[status || 'new'] || 'bg-gray-100 text-gray-800'}`}>
+        {(status || 'new').replace(/_/g, ' ')}
       </span>
     );
   };
@@ -2877,7 +2877,7 @@ export const Leads: React.FC = () => {
                                           {pay.label || `${idx === 0 ? '1st Advance' : `${idx + 1}nd`} Payment`}
                                         </span>
                                         <span className={`px-2 py-0.5 rounded-md text-[9px] font-extrabold uppercase border ${modeBadgeStyle}`}>
-                                          {mode.replace('_', ' ')}
+                                          {(mode || 'payment').replace(/_/g, ' ')}
                                         </span>
                                         <span className="text-[10px] text-slate-400 font-medium">
                                           {dayjs(pay.paidAt).format('DD MMM YYYY, hh:mm A')}
@@ -3480,7 +3480,7 @@ export const Leads: React.FC = () => {
                             <div key={docType} className="border border-slate-200 rounded-xl p-4 bg-slate-50 relative flex flex-col justify-between h-36">
                               <div>
                                 <span className="text-[10px] uppercase font-bold text-slate-400 block mb-1">
-                                  {docType.replace('_', ' ')}
+                                  {(docType || 'document').replace(/_/g, ' ')}
                                 </span>
                                 {doc ? (
                                   <div className="space-y-1.5">
@@ -3509,7 +3509,7 @@ export const Leads: React.FC = () => {
                                           if (!rawUrl) return;
                                           const freshUrl = await getFreshB2SignedUrl(rawUrl);
                                           setPreviewDoc({
-                                            name: doc.docType.replace('_', ' ').toUpperCase(),
+                                            name: (doc.docType || 'document').replace(/_/g, ' ').toUpperCase(),
                                             url: freshUrl,
                                             type: (doc.fileBlob as any)?.type || (freshUrl.includes('.pdf') ? 'application/pdf' : 'image/webp')
                                           });
@@ -3827,7 +3827,7 @@ export const Leads: React.FC = () => {
                           if (type === 'model_agreement') return 'Model Agreement';
                           if (type === 'cfa_agreement') return 'CFA Agreement';
                           if (type === 'annexure_proforma') return 'Annexure Proforma';
-                          return type.replace('_', ' ').toUpperCase();
+                          return (type || 'doc').replace(/_/g, ' ').toUpperCase();
                         };
 
                         const getSubTab = (type: string) => {

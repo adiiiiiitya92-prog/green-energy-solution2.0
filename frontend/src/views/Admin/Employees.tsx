@@ -27,7 +27,7 @@ export const Employees: React.FC = () => {
   const [isUpdating, setIsUpdating] = useState(false);
 
   const handleImpersonateClick = async (emp: Profile) => {
-    if (confirm(`Do you want to log in as "${emp.fullName}" (${emp.role.replace('_', ' ')}) without a password?`)) {
+    if (confirm(`Do you want to log in as "${emp.fullName}" (${(emp.role || 'employee').replace(/_/g, ' ')}) without a password?`)) {
       await impersonateUser(emp);
       const targetPath = emp.role === 'field_employee' ? '/leads' : '/dashboard';
       navigate(targetPath);
@@ -220,7 +220,7 @@ export const Employees: React.FC = () => {
                 <div className="truncate min-w-0">
                   <h4 className="text-sm font-bold text-slate-900 truncate">{emp.fullName}</h4>
                   <div className="flex items-center gap-1 flex-wrap mt-0.5">
-                    <span className="text-[9px] text-slate-500 font-extrabold uppercase bg-slate-100 px-1.5 py-0.5 rounded">{emp.role.replace('_', ' ')}</span>
+                    <span className="text-[9px] text-slate-500 font-extrabold uppercase bg-slate-100 px-1.5 py-0.5 rounded">{(emp.role || 'employee').replace(/_/g, ' ')}</span>
                     {emp.designation && (
                       <span className="text-[8px] text-emerald-700 bg-emerald-50 border border-emerald-100/60 font-black px-1 rounded uppercase tracking-wider truncate max-w-[110px]" title={emp.designation}>{emp.designation}</span>
                     )}

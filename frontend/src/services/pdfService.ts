@@ -1532,7 +1532,7 @@ export const pdfService = {
     doc.setFontSize(9);
     doc.text(`Advance Amount: Rs. ${oc.advanceAmount.toLocaleString('en-IN')}`, 112, 53);
     doc.setFont('helvetica', 'normal');
-    doc.text(`Mode: ${oc.paymentMode.replace('_', ' ').toUpperCase()}`, 112, 59);
+    doc.text(`Mode: ${(oc.paymentMode || 'ONLINE').replace(/_/g, ' ').toUpperCase()}`, 112, 59);
     if (oc.paymentReference) doc.text(`Ref/UTR: ${oc.paymentReference}`, 112, 65);
 
     // Signature stamp section

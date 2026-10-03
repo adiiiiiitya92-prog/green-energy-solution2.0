@@ -52,14 +52,34 @@ export const B2BBusinesses: React.FC = () => {
   const [newMobile, setNewMobile] = useState('');
   const [newEmail, setNewEmail] = useState('');
 
-  const loadData = async () => {
-    setLoading(true);
-    try {
-      const bList = await b2bBusinessService.getBusinesses();
-      setBusinesses(bList);
+  // Fast Instant Local Hydration on Mount (0ms)
+  useEffect(() => {
+    let isMounted = true;
+    const hydrateLocal = async () => {
+      try {
+        const { db } = await import('../../services/db');
+        const [localB2b, localChallans] = await Promise.all([
+          db.b2bBusinesses.toArray().catch(() => []),
+          db.challans.toArray().catch(() => [])
+        ]);
+        if (!isMounted) return;
+        if (localB2b.length > 0) setBusinesses(localB2b);
+        if (localChallans.length > 0) setAllChallans(localChallans);
+      } catch (_) {}
+    };
+    hydrateLocal();
+    return () => { isMounted = false; };
+  }, []);
 
-      const cList = await challanService.getChallans();
-      setAllChallans(cList);
+  const loadData = async (silent = false) => {
+    if (!silent) setLoading(true);
+    try {
+      const [bList, cList] = await Promise.all([
+        b2bBusinessService.getBusinesses(),
+        challanService.getChallans(false)
+      ]);
+      setBusinesses(bList || []);
+      setAllChallans(cList || []);
     } catch (err) {
       console.error("Error loading B2B Businesses data:", err);
     } finally {
@@ -68,11 +88,18 @@ export const B2BBusinesses: React.FC = () => {
   };
 
   useEffect(() => {
-    loadData();
-    const handleRealtimeUpdate = () => loadData();
+    loadData(true);
+    let realtimeDebounceTimer: any = null;
+    const handleRealtimeUpdate = () => {
+      if (realtimeDebounceTimer) clearTimeout(realtimeDebounceTimer);
+      realtimeDebounceTimer = setTimeout(() => {
+        loadData(true);
+      }, 1500);
+    };
     window.addEventListener('app-realtime-update', handleRealtimeUpdate);
     window.addEventListener('storage', handleRealtimeUpdate);
     return () => {
+      if (realtimeDebounceTimer) clearTimeout(realtimeDebounceTimer);
       window.removeEventListener('app-realtime-update', handleRealtimeUpdate);
       window.removeEventListener('storage', handleRealtimeUpdate);
     };

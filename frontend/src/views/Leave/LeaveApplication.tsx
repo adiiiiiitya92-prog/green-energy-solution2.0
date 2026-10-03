@@ -223,16 +223,16 @@ export const LeaveApplication: React.FC = () => {
             <div className="bg-white/10 backdrop-blur-md border border-white/20 rounded-xl p-4 text-xs space-y-1.5 shrink-0 min-w-[220px]">
               <div className="flex items-center space-x-2">
                 <div className="w-7 h-7 rounded-full bg-emerald-400/30 border border-emerald-300 flex items-center justify-center font-black text-emerald-200 text-xs">
-                  {currentUser.fullName[0]}
+                  {(currentUser.fullName || 'U')[0]}
                 </div>
                 <div>
-                  <p className="font-extrabold text-white">{currentUser.fullName}</p>
-                  <p className="text-[10px] text-emerald-200 uppercase tracking-wider">{currentRole.replace('_', ' ')}</p>
+                  <p className="font-extrabold text-white">{currentUser.fullName || 'User'}</p>
+                  <p className="text-[10px] text-emerald-200 uppercase tracking-wider">{(currentRole || 'user').replace(/_/g, ' ')}</p>
                 </div>
               </div>
               <div className="pt-1.5 border-t border-white/10 text-[11px] text-emerald-100 space-y-0.5">
                 <p>Phone: {currentUser.phone || 'N/A'}</p>
-                <p>ID: {currentUser.id.substring(0, 12)}</p>
+                <p>ID: {(currentUser.id || '').substring(0, 12)}</p>
               </div>
             </div>
           )}

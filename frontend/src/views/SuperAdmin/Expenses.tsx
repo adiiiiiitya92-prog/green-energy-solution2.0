@@ -154,16 +154,16 @@ export const Expenses: React.FC = () => {
   };
 
   // Grand Super Admin calculations (across all employees)
-  const totalCompanyAmount = claims.reduce((s, c) => s + c.amount, 0);
+  const totalCompanyAmount = claims.reduce((s, c) => s + (Number(c.amount) || 0), 0);
   const approvedTotalAmount = claims
     .filter(c => c.status === 'approved')
-    .reduce((s, c) => s + (c.approvedAmount !== undefined ? c.approvedAmount : c.amount), 0);
+    .reduce((s, c) => s + (c.approvedAmount !== undefined ? (Number(c.approvedAmount) || 0) : (Number(c.amount) || 0)), 0);
   const pendingTotalAmount = claims
     .filter(c => c.status === 'pending')
-    .reduce((s, c) => s + c.amount, 0);
+    .reduce((s, c) => s + (Number(c.amount) || 0), 0);
   const rejectedTotalAmount = claims
     .filter(c => c.status === 'rejected')
-    .reduce((s, c) => s + c.amount, 0);
+    .reduce((s, c) => s + (Number(c.amount) || 0), 0);
 
   const pendingCount = claims.filter(c => c.status === 'pending').length;
   const approvedCount = claims.filter(c => c.status === 'approved').length;

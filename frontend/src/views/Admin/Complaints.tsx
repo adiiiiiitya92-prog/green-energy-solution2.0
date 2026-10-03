@@ -69,9 +69,31 @@ export const Complaints: React.FC = () => {
   const [selectedComplaint, setSelectedComplaint] = useState<Complaint | null>(null);
   const [showCategoryModal, setShowCategoryModal] = useState(false);
 
+  // Fast Instant Local Hydration on Mount (0ms)
+  useEffect(() => {
+    let isMounted = true;
+    const hydrateLocal = async () => {
+      try {
+        const [localC, localL, localE, localP] = await Promise.all([
+          db.complaints.toArray().catch(() => []),
+          db.leads.toArray().catch(() => []),
+          db.profiles.toArray().catch(() => []),
+          db.products.toArray().catch(() => [])
+        ]);
+        if (!isMounted) return;
+        if (localC.length > 0) setComplaints(localC);
+        if (localL.length > 0) setLeads(localL);
+        if (localE.length > 0) setEmployees(localE);
+        if (localP.length > 0) setProducts(localP);
+      } catch (_) {}
+    };
+    hydrateLocal();
+    return () => { isMounted = false; };
+  }, []);
+
   // Load Data
-  const loadData = async () => {
-    setLoading(true);
+  const loadData = async (silent = false) => {
+    if (!silent) setLoading(true);
     try {
       const [cList, lList, eList, pList, catList] = await Promise.all([
         complaintService.getComplaints(),
@@ -99,11 +121,20 @@ export const Complaints: React.FC = () => {
   };
 
   useEffect(() => {
-    loadData();
+    loadData(true);
 
-    const handleRealtimeUpdate = () => loadData();
+    let debounceTimer: any = null;
+    const handleRealtimeUpdate = () => {
+      if (debounceTimer) clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(() => {
+        loadData(true);
+      }, 1500);
+    };
     window.addEventListener('app-realtime-update', handleRealtimeUpdate);
-    return () => window.removeEventListener('app-realtime-update', handleRealtimeUpdate);
+    return () => {
+      if (debounceTimer) clearTimeout(debounceTimer);
+      window.removeEventListener('app-realtime-update', handleRealtimeUpdate);
+    };
   }, []);
 
   const isAdmin = currentRole === 'super_admin' || currentRole === 'admin' || currentUser?.role === 'super_admin' || currentUser?.role === 'admin';

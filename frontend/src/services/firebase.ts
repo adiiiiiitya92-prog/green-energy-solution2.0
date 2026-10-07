@@ -608,12 +608,11 @@ export async function fetchCollectionFromFirestore<T extends { id?: string; isDe
 
     const validDocs: T[] = [];
     for (const docItem of rawDocs) {
+      if (!docItem) continue;
       if (docItem.id && deletedIds.has(docItem.id)) {
-        deleteRecordFromFirestore(collectionName, docItem.id).catch(() => {});
         continue;
       }
       if (docItem.isDeleted) {
-        if (docItem.id) deleteRecordFromFirestore(collectionName, docItem.id).catch(() => {});
         continue;
       }
       validDocs.push(docItem);
@@ -1138,6 +1137,7 @@ export async function syncAllLocalDataToFirestore(force: boolean = false): Promi
 }
 
 // Multi-tab BroadcastChannel for zero-latency inter-tab updates
+const tabSessionId = typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).substring(2);
 const realtimeChannel = typeof BroadcastChannel !== 'undefined' ? new BroadcastChannel('app_realtime_broadcast_channel') : null;
 
 function broadcastDataUpdate(collectionName: string, id: string) {
@@ -1145,7 +1145,7 @@ function broadcastDataUpdate(collectionName: string, id: string) {
     window.dispatchEvent(new CustomEvent('app-realtime-update', { detail: { collectionName, id } }));
     if (realtimeChannel) {
       try {
-        realtimeChannel.postMessage({ type: 'REALTIME_UPDATE', collectionName, id });
+        realtimeChannel.postMessage({ type: 'REALTIME_UPDATE', collectionName, id, originTabId: tabSessionId });
       } catch (_) {}
     }
   }
@@ -1153,7 +1153,7 @@ function broadcastDataUpdate(collectionName: string, id: string) {
 
 if (realtimeChannel) {
   realtimeChannel.onmessage = (event) => {
-    if (event.data?.type === 'REALTIME_UPDATE') {
+    if (event.data?.type === 'REALTIME_UPDATE' && event.data?.originTabId !== tabSessionId) {
       window.dispatchEvent(new CustomEvent('app-realtime-update', { detail: event.data }));
     }
   };
@@ -1187,20 +1187,32 @@ export function connectCrossDeviceRealtimeStream(): void {
           const { collection, id, action, data } = msg;
           const { db, getDeletedRecordIdsSet, markRecordAsDeleted } = await import('./db');
 
+          let hasActualChange = false;
           if (action === 'delete') {
-            await markRecordAsDeleted(id, collection, false);
+            const deletedIds = await getDeletedRecordIdsSet();
+            if (!deletedIds.has(id)) {
+              await markRecordAsDeleted(id, collection, false);
+              hasActualChange = true;
+            }
             if ((db as any)[collection]) {
-              await (db as any)[collection].delete(id).catch(() => {});
+              const existing = await (db as any)[collection].get(id).catch(() => null);
+              if (existing) {
+                await (db as any)[collection].delete(id).catch(() => {});
+                hasActualChange = true;
+              }
             }
           } else if (action === 'upsert' && data) {
             const deletedIds = await getDeletedRecordIdsSet();
             if (!deletedIds.has(id) && (db as any)[collection]) {
               await (db as any)[collection].put(data).catch(() => {});
+              hasActualChange = true;
             }
           }
 
-          // Instantly notify local UI components & other tabs
-          broadcastDataUpdate(collection, id);
+          // Only notify local UI if Dexie actually mutated, and do NOT re-post to BroadcastChannel (all tabs have SSE)
+          if (hasActualChange && typeof window !== 'undefined') {
+            window.dispatchEvent(new CustomEvent('app-realtime-update', { detail: { collectionName: collection, id, fromSSE: true } }));
+          }
         }
       } catch (err) {
         console.warn('Real-time event processing note:', err);

@@ -156,9 +156,10 @@ export function computeLeadDispatchSummary(
   allChallans: Challan[],
   leadQuotation?: Quotation | null
 ): LeadDispatchSummary {
-  const leadChallans = allChallans
-    .filter(c => c.leadId === leadId)
-    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+  const leadChallans = (allChallans.length > 0 && allChallans.every(c => c.leadId === leadId))
+    ? [...allChallans]
+    : allChallans.filter(c => c.leadId === leadId);
+  leadChallans.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
 
   const structureItems: DispatchedItemSummary[] = [];
   const inverterItems: DispatchedItemSummary[] = [];
@@ -303,7 +304,7 @@ export function computeAllLeadsDispatchMap(
 
   for (const leadId of Object.keys(challansByLead)) {
     const quote = quotationsMap ? quotationsMap[leadId] : undefined;
-    map[leadId] = computeLeadDispatchSummary(leadId, allChallans, quote);
+    map[leadId] = computeLeadDispatchSummary(leadId, challansByLead[leadId], quote);
   }
 
   return map;

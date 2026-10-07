@@ -245,8 +245,8 @@ export const quotationService = {
     if (zeroQuotes.length > 0) {
       for (const zq of zeroQuotes) {
         db.quotations.delete(zq.id).catch(() => {});
-        markRecordAsDeleted(zq.id, 'quotations').catch(() => {});
-        deleteRecordFromFirestore('quotations', zq.id).catch(() => {});
+        markRecordAsDeleted(zq.id, 'quotations', false).catch(() => {});
+        deleteRecordFromFirestore('quotations', zq.id, true).catch(() => {});
       }
     }
     return validQuotes.map(sanitizeQuotationRecord);

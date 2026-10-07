@@ -162,11 +162,18 @@ export const FollowUpReminders: React.FC<{
 
   useEffect(() => {
     fetchFollowUps();
-    const handleRealtimeUpdate = () => {
-      fetchFollowUps();
+    let debounceTimer: any = null;
+    const handleRealtimeUpdate = (e?: any) => {
+      const col = e?.detail?.collectionName;
+      if (col && col !== 'leads') return;
+      if (debounceTimer) clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(() => {
+        fetchFollowUps();
+      }, 1500);
     };
     window.addEventListener('app-realtime-update', handleRealtimeUpdate);
     return () => {
+      if (debounceTimer) clearTimeout(debounceTimer);
       window.removeEventListener('app-realtime-update', handleRealtimeUpdate);
     };
   }, []);

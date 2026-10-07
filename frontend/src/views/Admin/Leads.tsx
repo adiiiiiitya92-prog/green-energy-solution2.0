@@ -592,6 +592,198 @@ export const Leads: React.FC = () => {
     return map;
   }, [leads, orderConfirmationsMap, leadQuotationsMap, employeeNames]);
 
+  const leadPipelineCounts = React.useMemo(() => {
+    let raw = 0, confirmed = 0, pending = 0, hot = 0, processDone = 0, loan = 0, dispatched = 0;
+    if (!Array.isArray(leads) || leads.length === 0) {
+      return {
+        rawLeadsCount: 0,
+        confirmedLeadsCount: 0,
+        pendingBalanceLeadsCount: 0,
+        hotLeadsCount: 0,
+        processDonePaymentDueCount: 0,
+        loanLeadsCount: 0,
+        dispatchedLeadsCount: 0
+      };
+    }
+    for (let i = 0; i < leads.length; i++) {
+      const l = leads[i];
+      if (!l) continue;
+      if (l.isLoan) loan++;
+      const fin = leadFinancialMap[l.id];
+      const hasPayment = Boolean(fin && (fin.paidAmount || 0) > 0);
+      const isDispatched = dispatchedLeadIds.has(l.id);
+      if (isDispatched) dispatched++;
+      const isRaw = (l.status === 'new' || l.status === 'quotation_sent') && !hasPayment && !isDispatched;
+      if (isRaw) {
+        raw++;
+      } else {
+        confirmed++;
+        if (fin && fin.pendingBalance > 0) pending++;
+      }
+      const isConfirmedOrPaid = ['confirmed', 'registered', 'installed', 'closed'].includes(l.status) || hasPayment;
+      if ((l.isHot || (l.clientRating && l.clientRating >= 4)) && !isConfirmedOrPaid) {
+        hot++;
+      }
+      const isProcDone = (l.status === 'closed' || l.status === 'installed' || isDispatched || installationEvidenceLeadIds.has(l.id));
+      if (isProcDone && fin && fin.pendingBalance > 0) {
+        processDone++;
+      }
+    }
+    return {
+      rawLeadsCount: raw,
+      confirmedLeadsCount: confirmed,
+      pendingBalanceLeadsCount: pending,
+      hotLeadsCount: hot,
+      processDonePaymentDueCount: processDone,
+      loanLeadsCount: loan,
+      dispatchedLeadsCount: dispatched
+    };
+  }, [leads, leadFinancialMap, dispatchedLeadIds, installationEvidenceLeadIds]);
+
+  const {
+    rawLeadsCount,
+    confirmedLeadsCount,
+    pendingBalanceLeadsCount,
+    hotLeadsCount,
+    processDonePaymentDueCount,
+    loanLeadsCount,
+    dispatchedLeadsCount
+  } = leadPipelineCounts;
+
+  const filteredLeads = React.useMemo(() => {
+    if (!Array.isArray(leads) || leads.length === 0) return [];
+    const searchStr = (searchTerm || '').toLowerCase().trim();
+
+    return leads.filter(lead => {
+      if (!lead) return false;
+      const fin = leadFinancialMap[lead.id];
+      const hasPayment = Boolean(fin && (fin.paidAmount || 0) > 0);
+
+      const matchesSearch = !searchStr || 
+        (lead.name || '').toLowerCase().includes(searchStr) || 
+        (lead.phoneNumber || '').includes(searchStr) ||
+        (lead.requirement || '').toLowerCase().includes(searchStr) ||
+        (lead.isLoan && 'loan case'.includes(searchStr)) ||
+        (lead.loanBankName && lead.loanBankName.toLowerCase().includes(searchStr)) ||
+        (fin && (
+          fin.pendingBalance.toString().includes(searchStr) ||
+          fin.totalValue.toString().includes(searchStr) ||
+          fin.paidAmount.toString().includes(searchStr) ||
+          (fin.paymentStatus ? fin.paymentStatus.toLowerCase().includes(searchStr) : false)
+        ));
+
+      if (!matchesSearch) return false;
+
+      const matchesStatus = !statusFilter || lead.status === statusFilter;
+      if (!matchesStatus) return false;
+
+      const matchesEmployee = !employeeFilter || 
+        lead.assignedSalesPersonId === employeeFilter || 
+        lead.assignedAdminId === employeeFilter ||
+        lead.assignedEmployeeId === employeeFilter;
+      if (!matchesEmployee) return false;
+
+      const isConfirmedOrPaid = ['confirmed', 'registered', 'installed', 'closed'].includes(lead.status) || hasPayment;
+      const isHot = Boolean((lead.isHot || (lead.clientRating && lead.clientRating >= 4)) && !isConfirmedOrPaid);
+      const matchesHot = hotFilter === 'all' || 
+        (hotFilter === 'hot' && isHot) || 
+        (hotFilter === 'normal' && !isHot);
+      if (!matchesHot) return false;
+
+      const matchesLoan = loanFilter === 'all' ||
+        (loanFilter === 'loan' && Boolean(lead.isLoan)) ||
+        (loanFilter === 'non_loan' && !lead.isLoan);
+      if (!matchesLoan) return false;
+
+      const isDispatched = dispatchedLeadIds.has(lead.id);
+      let matchesDispatch = true;
+      if (dispatchFilter === 'dispatched') {
+        matchesDispatch = isDispatched;
+      } else if (dispatchFilter === 'not_dispatched') {
+        matchesDispatch = !isDispatched;
+      }
+      if (!matchesDispatch) return false;
+
+      const isRaw = (lead.status === 'new' || lead.status === 'quotation_sent') && !hasPayment && !isDispatched;
+      const isProcessDone = (lead.status === 'closed' || lead.status === 'installed' || isDispatched || installationEvidenceLeadIds.has(lead.id));
+      const isProcessDonePaymentPending = isProcessDone && Boolean(fin && fin.pendingBalance > 0);
+
+      let matchesRaw = true;
+      if (loanFilter === 'loan') {
+        matchesRaw = true;
+      } else if (rawFilter === 'confirmed') {
+        matchesRaw = !isRaw;
+      } else if (rawFilter === 'raw') {
+        matchesRaw = isRaw;
+      } else if (rawFilter === 'process_done_payment_pending') {
+        matchesRaw = isProcessDonePaymentPending;
+      } else if (rawFilter === 'advanced') {
+        matchesRaw = !isRaw;
+      } else if (rawFilter === 'all') {
+        matchesRaw = true;
+      }
+      if (!matchesRaw) return false;
+
+      let matchesBalance = true;
+      if (balanceFilter === 'pending') {
+        matchesBalance = !isRaw && Boolean(fin && fin.pendingBalance > 0);
+      } else if (balanceFilter === 'partially_paid') {
+        matchesBalance = Boolean(fin && fin.paidAmount > 0 && fin.pendingBalance > 0);
+      } else if (balanceFilter === 'fully_paid') {
+        matchesBalance = !isRaw && Boolean(fin && fin.paymentStatus === 'Fully Paid');
+      } else if (balanceFilter === 'no_quote') {
+        matchesBalance = !fin || fin.paymentStatus === 'No Quote';
+      }
+      if (!matchesBalance) return false;
+
+      // Confirmed Leads Date, Month & Year Filter using pre-computed confirmedAt string
+      if (confirmedDateFilterType !== 'all') {
+        const confDateStr = fin?.confirmedAt;
+        if (!confDateStr) return false;
+
+        const dayStr = confDateStr.slice(0, 10);
+        if (confirmedDateFilterType === 'specific_date') {
+          if (confirmedFilterDate && dayStr !== confirmedFilterDate) return false;
+        } else if (confirmedDateFilterType === 'month') {
+          if (confirmedFilterMonth && confDateStr.slice(0, 7) !== confirmedFilterMonth) return false;
+        } else if (confirmedDateFilterType === 'year') {
+          if (confirmedFilterYear && confDateStr.slice(0, 4) !== confirmedFilterYear) return false;
+        } else if (confirmedDateFilterType === 'date_range') {
+          if (confirmedFilterStartDate && dayStr < confirmedFilterStartDate) return false;
+          if (confirmedFilterEndDate && dayStr > confirmedFilterEndDate) return false;
+        }
+      }
+
+      return true;
+    });
+  }, [
+    leads,
+    leadFinancialMap,
+    dispatchedLeadIds,
+    installationEvidenceLeadIds,
+    searchTerm,
+    statusFilter,
+    employeeFilter,
+    hotFilter,
+    loanFilter,
+    dispatchFilter,
+    rawFilter,
+    balanceFilter,
+    confirmedDateFilterType,
+    confirmedFilterDate,
+    confirmedFilterMonth,
+    confirmedFilterYear,
+    confirmedFilterStartDate,
+    confirmedFilterEndDate
+  ]);
+
+  const totalPages = Math.ceil(filteredLeads.length / pageSize) || 1;
+  const validCurrentPage = Math.min(Math.max(1, currentPage), totalPages);
+  const startIndex = (validCurrentPage - 1) * pageSize;
+  const paginatedLeads = React.useMemo(() => {
+    return filteredLeads.slice(startIndex, startIndex + pageSize);
+  }, [filteredLeads, startIndex, pageSize]);
+
   // Auto-save & restore draft for New Lead modal
   const [hasLeadDraftRestored, setHasLeadDraftRestored] = useState(false);
 
@@ -820,7 +1012,7 @@ export const Leads: React.FC = () => {
 
     hydrateLocal();
     return () => { isMounted = false; };
-  }, [currentUser, currentRole]);
+  }, [currentUser?.id, currentRole]);
 
   const isLoadingDataRef = useRef(false);
   const pendingReloadRef = useRef(false);
@@ -963,7 +1155,7 @@ export const Leads: React.FC = () => {
       if (realtimeDebounceTimer) clearTimeout(realtimeDebounceTimer);
       window.removeEventListener('app-realtime-update', handleRealtimeUpdate);
     };
-  }, [currentRole, currentUser]);
+  }, [currentRole, currentUser?.id]);
 
   // Helper to normalize payments list for backward compatibility
   const getPaymentsList = (oc: OrderConfirmation | null): PaymentInstallment[] => {
@@ -2350,9 +2542,6 @@ export const Leads: React.FC = () => {
       }
     }
   };
-
-  const hotLeadsCount = leads.filter(l => l.isHot || (l.clientRating && l.clientRating >= 4)).length;
-  const dispatchedLeadsCount = leads.filter(l => dispatchedLeadIds.has(l.id)).length;
 
   const getStatusBadge = (status: Lead['status']) => {
     const classes: Record<string, string> = {
@@ -4806,158 +4995,8 @@ export const Leads: React.FC = () => {
                 );
               })()}
             </div>
-          ) : (() => {
-            const {
-              rawLeadsCount,
-              confirmedLeadsCount,
-              pendingBalanceLeadsCount,
-              hotLeadsCount,
-              processDonePaymentDueCount,
-              loanLeadsCount
-            } = (() => {
-              let raw = 0, confirmed = 0, pending = 0, hot = 0, processDone = 0, loan = 0;
-              for (let i = 0; i < leads.length; i++) {
-                const l = leads[i];
-                if (l.isLoan) loan++;
-                const fin = leadFinancialMap[l.id];
-                const hasPayment = Boolean(fin && (fin.paidAmount || 0) > 0);
-                const isDispatched = dispatchedLeadIds.has(l.id);
-                const isRaw = (l.status === 'new' || l.status === 'quotation_sent') && !hasPayment && !isDispatched;
-                if (isRaw) {
-                  raw++;
-                } else {
-                  confirmed++;
-                  if (fin && fin.pendingBalance > 0) pending++;
-                }
-                const isConfirmedOrPaid = ['confirmed', 'registered', 'installed', 'closed'].includes(l.status) || hasPayment;
-                if ((l.isHot || (l.clientRating && l.clientRating >= 4)) && !isConfirmedOrPaid) {
-                  hot++;
-                }
-                const isProcDone = (l.status === 'closed' || l.status === 'installed' || isDispatched || installationEvidenceLeadIds.has(l.id));
-                if (isProcDone && fin && fin.pendingBalance > 0) {
-                  processDone++;
-                }
-              }
-              return {
-                rawLeadsCount: raw,
-                confirmedLeadsCount: confirmed,
-                pendingBalanceLeadsCount: pending,
-                hotLeadsCount: hot,
-                processDonePaymentDueCount: processDone,
-                loanLeadsCount: loan
-              };
-            })();
-
-            const filteredLeads = leads.filter(lead => {
-              const searchStr = (searchTerm || '').toLowerCase().trim();
-              const fin = leadFinancialMap[lead.id];
-              const hasPayment = !!fin && (fin.paidAmount || 0) > 0;
-
-              const matchesSearch = !searchStr || 
-                (lead.name || '').toLowerCase().includes(searchStr) || 
-                (lead.phoneNumber || '').includes(searchStr) ||
-                (lead.requirement || '').toLowerCase().includes(searchStr) ||
-                (lead.isLoan && 'loan case'.includes(searchStr)) ||
-                (lead.loanBankName && lead.loanBankName.toLowerCase().includes(searchStr)) ||
-                (fin && (
-                  fin.pendingBalance.toString().includes(searchStr) ||
-                  fin.totalValue.toString().includes(searchStr) ||
-                  fin.paidAmount.toString().includes(searchStr) ||
-                  (fin.paymentStatus ? fin.paymentStatus.toLowerCase().includes(searchStr) : false)
-                ));
-
-              const matchesStatus = !statusFilter || lead.status === statusFilter;
-              const matchesEmployee = !employeeFilter || 
-                lead.assignedSalesPersonId === employeeFilter || 
-                lead.assignedAdminId === employeeFilter ||
-                lead.assignedEmployeeId === employeeFilter;
-
-              const isConfirmedOrPaid = ['confirmed', 'registered', 'installed', 'closed'].includes(lead.status) || hasPayment;
-              const isHot = (lead.isHot || (lead.clientRating && lead.clientRating >= 4)) && !isConfirmedOrPaid;
-              const matchesHot = hotFilter === 'all' || 
-                (hotFilter === 'hot' && isHot) || 
-                (hotFilter === 'normal' && !isHot);
-
-              const matchesLoan = loanFilter === 'all' ||
-                (loanFilter === 'loan' && Boolean(lead.isLoan)) ||
-                (loanFilter === 'non_loan' && !lead.isLoan);
-
-              const isDispatched = dispatchedLeadIds.has(lead.id);
-              let matchesDispatch = true;
-              if (dispatchFilter === 'dispatched') {
-                matchesDispatch = isDispatched;
-              } else if (dispatchFilter === 'not_dispatched') {
-                matchesDispatch = !isDispatched;
-              }
-
-              const isRaw = (lead.status === 'new' || lead.status === 'quotation_sent') && !hasPayment && !isDispatched;
-              const isProcessDone = (lead.status === 'closed' || lead.status === 'installed' || dispatchedLeadIds.has(lead.id) || installationEvidenceLeadIds.has(lead.id));
-              const isProcessDonePaymentPending = isProcessDone && !!fin && fin.pendingBalance > 0;
-
-              let matchesRaw = true;
-              if (loanFilter === 'loan') {
-                matchesRaw = true;
-              } else if (rawFilter === 'confirmed') {
-                matchesRaw = !isRaw;
-              } else if (rawFilter === 'raw') {
-                matchesRaw = isRaw;
-              } else if (rawFilter === 'process_done_payment_pending') {
-                matchesRaw = isProcessDonePaymentPending;
-              } else if (rawFilter === 'advanced') {
-                matchesRaw = !isRaw;
-              } else if (rawFilter === 'all') {
-                matchesRaw = true;
-              }
-
-              let matchesBalance = true;
-              if (balanceFilter === 'pending') {
-                matchesBalance = !isRaw && !!fin && fin.pendingBalance > 0;
-              } else if (balanceFilter === 'partially_paid') {
-                matchesBalance = !!fin && fin.paidAmount > 0 && fin.pendingBalance > 0;
-              } else if (balanceFilter === 'fully_paid') {
-                matchesBalance = !isRaw && !!fin && fin.paymentStatus === 'Fully Paid';
-              } else if (balanceFilter === 'no_quote') {
-                matchesBalance = !fin || fin.paymentStatus === 'No Quote';
-              }
-
-              // Confirmed Leads Date, Month & Year Filter
-              let matchesConfirmedDate = true;
-              if (confirmedDateFilterType !== 'all') {
-                const confDateStr = getLeadConfirmationDate(lead, orderConfirmationsMap[lead.id]);
-                if (!confDateStr || !dayjs(confDateStr).isValid()) {
-                  matchesConfirmedDate = false;
-                } else {
-                  const d = dayjs(confDateStr);
-                  if (confirmedDateFilterType === 'specific_date') {
-                    matchesConfirmedDate = confirmedFilterDate ? d.isSame(dayjs(confirmedFilterDate), 'day') : true;
-                  } else if (confirmedDateFilterType === 'month') {
-                    matchesConfirmedDate = confirmedFilterMonth ? d.format('YYYY-MM') === confirmedFilterMonth : true;
-                  } else if (confirmedDateFilterType === 'year') {
-                    matchesConfirmedDate = confirmedFilterYear ? d.format('YYYY') === confirmedFilterYear : true;
-                  } else if (confirmedDateFilterType === 'date_range') {
-                    let rangeMatch = true;
-                    if (confirmedFilterStartDate) {
-                      rangeMatch = rangeMatch && (d.isSame(dayjs(confirmedFilterStartDate), 'day') || d.isAfter(dayjs(confirmedFilterStartDate).startOf('day')));
-                    }
-                    if (confirmedFilterEndDate) {
-                      rangeMatch = rangeMatch && (d.isSame(dayjs(confirmedFilterEndDate), 'day') || d.isBefore(dayjs(confirmedFilterEndDate).endOf('day')));
-                    }
-                    matchesConfirmedDate = rangeMatch;
-                  }
-                }
-              }
-
-              return matchesSearch && matchesStatus && matchesEmployee && matchesHot && matchesBalance && matchesDispatch && matchesRaw && matchesLoan && matchesConfirmedDate;
-            });
-
-            // ⚡ Pagination calculations (40 leads per page keeps DOM size below 1,500 nodes)
-            const totalPages = Math.ceil(filteredLeads.length / pageSize) || 1;
-            const validCurrentPage = Math.min(Math.max(1, currentPage), totalPages);
-            const startIndex = (validCurrentPage - 1) * pageSize;
-            const paginatedLeads = filteredLeads.slice(startIndex, startIndex + pageSize);
-
-            return (
-              <>
+          ) : (
+            <>
                 {/* Filters Bar */}
                 <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-xs flex flex-col md:flex-row items-stretch md:items-center justify-between gap-3 text-xs font-bold">
                   <div className="flex-1 flex items-center space-x-3 bg-slate-50 rounded-lg p-2.5 border border-slate-100 min-w-[200px]">
@@ -6186,8 +6225,7 @@ export const Leads: React.FC = () => {
                   </div>
                 )}
               </>
-            );
-          })()}
+            )}
         </div>
       )}
 
@@ -7552,11 +7590,18 @@ const LeadQuotationsTimeline: React.FC<{
 
   useEffect(() => {
     loadQuotes();
-    const handleRealtimeUpdate = () => {
-      loadQuotes();
+    let qDebounce: any = null;
+    const handleRealtimeUpdate = (e?: any) => {
+      const col = e?.detail?.collectionName;
+      if (col && col !== 'quotations') return;
+      if (qDebounce) clearTimeout(qDebounce);
+      qDebounce = setTimeout(() => {
+        loadQuotes();
+      }, 1000);
     };
     window.addEventListener('app-realtime-update', handleRealtimeUpdate);
     return () => {
+      if (qDebounce) clearTimeout(qDebounce);
       window.removeEventListener('app-realtime-update', handleRealtimeUpdate);
     };
   }, [leadId]);

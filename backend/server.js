@@ -91,6 +91,10 @@ function stripBlobsForRealtime(obj) {
   delete out.fileBlob;
   delete out.photoBlob;
   delete out.photoBlobs;
+  delete out.billProofBlob;
+  delete out.rawPdf;
+  delete out.base64;
+  delete out.imageData;
   return out;
 }
 
@@ -149,9 +153,11 @@ app.get('/api/realtime/stream', (req, res) => {
   const client = { id: Date.now() + Math.random(), res };
   sseClients.add(client);
 
-  req.on('close', () => {
-    sseClients.delete(client);
-  });
+  const cleanup = () => sseClients.delete(client);
+  req.on('close', cleanup);
+  res.on('close', cleanup);
+  res.on('finish', cleanup);
+  res.on('error', cleanup);
 });
 
 // ==============================================================
@@ -183,7 +189,17 @@ app.get(['/api/firestore/:collection', '/api/db/:collection'], async (req, res) 
       sort = { name: 1 };
     }
 
-    const records = await findDocuments(collection, filter, { sort });
+    const options = { sort };
+    if (req.query.limit) {
+      const parsedLimit = parseInt(req.query.limit, 10);
+      if (!isNaN(parsedLimit) && parsedLimit > 0) options.limit = parsedLimit;
+    }
+    if (req.query.skip) {
+      const parsedSkip = parseInt(req.query.skip, 10);
+      if (!isNaN(parsedSkip) && parsedSkip >= 0) options.skip = parsedSkip;
+    }
+
+    const records = await findDocuments(collection, filter, options);
     res.setHeader('Cache-Control', 'public, max-age=10, stale-while-revalidate=30');
     res.json(records);
   } catch (err) {

@@ -283,9 +283,14 @@ Ise optimize karke **Single-Pass Loop (1 × 8,000 iterations)** me convert kiya 
 
 Jab bhi aap local code me change karke GitHub par push karein:
 
-### 1-Click VPS Backend Update Command:
+### 1-Click Fast Update Command (1 Second):
 VPS terminal me bas yeh single command paste karein:
 
+```bash
+cd /var/www/green-energy-solution-backend && curl -fsSL https://raw.githubusercontent.com/adiiiiiitya92-prog/green-energy-solution2.0/main/backend/server.js -o server.js && curl -fsSL https://raw.githubusercontent.com/adiiiiiitya92-prog/green-energy-solution2.0/main/backend/mongoService.js -o mongoService.js && pm2 restart ges-backend-api && curl -s http://127.0.0.1:5050/api/health
+```
+
+### Full Redeploy Command (Agar naye npm packages add kiye hon):
 ```bash
 cd /var/www/green-energy-solution-backend && \
 git clone https://github.com/adiiiiiitya92-prog/green-energy-solution2.0.git temp_up && \

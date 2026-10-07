@@ -17,8 +17,8 @@ echo -e "${BLUE}======================================================${NC}"
 echo -e "${BLUE}  Solar CRM Backend - VPS Safe Deployment Installer  ${NC}"
 echo -e "${BLUE}======================================================${NC}"
 
-# 1. Target Directory
-TARGET_DIR="/var/www/ges-backend"
+# 1. Target Directory (Crystal clear project naming)
+TARGET_DIR="/var/www/green-energy-solution-backend"
 echo -e "\n${YELLOW}[Step 1/6] Setting up isolated directory at: ${TARGET_DIR}...${NC}"
 sudo mkdir -p "$TARGET_DIR"
 sudo chown -R $USER:$USER "$TARGET_DIR"

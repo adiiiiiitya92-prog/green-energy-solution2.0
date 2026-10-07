@@ -25,7 +25,9 @@ import {
   ShieldAlert,
   ChevronDown,
   CalendarCheck,
-  Receipt
+  Receipt,
+  Bot,
+  Sparkles
 } from 'lucide-react';
 
 interface LayoutProps {
@@ -55,34 +57,32 @@ export const Layout: React.FC<LayoutProps> = ({ children }) => {
   const loadPendingCount = async () => {
     if (currentRole === 'super_admin') {
       try {
-        const { deletionRequestService } = await import('../../services/deletionRequestService');
-        const pending = await deletionRequestService.getPendingRequests();
-        setPendingDeleteCount(pending.length);
-      } catch (_) {}
-
-      try {
-        const { leaveService } = await import('../../services/leaveService');
-        const allLeaves = await leaveService.getAllLeaveRequests();
-        const pendingLeaves = allLeaves.filter(r => r.status === 'pending');
-        setPendingLeaveCount(pendingLeaves.length);
-      } catch (_) {}
-
-      try {
-        const { expenseService } = await import('../../services/expenseService');
-        const allExpenses = await expenseService.getAllExpenses();
-        const pendingExpenses = allExpenses.filter(r => r.status === 'pending');
-        setPendingExpenseCount(pendingExpenses.length);
+        const { db, getDeletedRecordIdsSet } = await import('../../services/db');
+        const deletedIds = await getDeletedRecordIdsSet().catch(() => new Set<string>());
+        const [pendingDeletions, pendingLeaves, pendingExpenses] = await Promise.all([
+          db.deletionRequests ? db.deletionRequests.filter(r => r.status === 'pending' && !deletedIds.has(r.id)).count().catch(() => 0) : 0,
+          db.leaveRequests ? db.leaveRequests.filter(r => r.status === 'pending' && !deletedIds.has(r.id)).count().catch(() => 0) : 0,
+          db.expenses ? db.expenses.filter(r => r.status === 'pending' && !deletedIds.has(r.id)).count().catch(() => 0) : 0
+        ]);
+        setPendingDeleteCount(pendingDeletions);
+        setPendingLeaveCount(pendingLeaves);
+        setPendingExpenseCount(pendingExpenses);
       } catch (_) {}
     }
   };
 
   useEffect(() => {
     loadPendingCount();
+    let debounceTimer: any = null;
     const handleRealtimeUpdate = () => {
-      loadPendingCount();
+      if (debounceTimer) clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(() => {
+        loadPendingCount();
+      }, 2000);
     };
     window.addEventListener('app-realtime-update', handleRealtimeUpdate);
     return () => {
+      if (debounceTimer) clearTimeout(debounceTimer);
       window.removeEventListener('app-realtime-update', handleRealtimeUpdate);
     };
   }, [currentRole]);
@@ -106,10 +106,12 @@ export const Layout: React.FC<LayoutProps> = ({ children }) => {
   interface SidebarItemConfig {
     name: string;
     path?: string;
+    action?: string;
     roles: string[];
     icon: any;
     badge?: number;
     subItems?: SubMenuItem[];
+    isAi?: boolean;
   }
 
   // Desktop sidebar options
@@ -204,6 +206,13 @@ export const Layout: React.FC<LayoutProps> = ({ children }) => {
       path: '/complaints',
       roles: ['super_admin', 'admin', 'field_employee', 'inventory_manager', 'dealer'],
       icon: ShieldAlert
+    },
+    {
+      name: 'Setu AI Assistant',
+      action: 'toggle-setu-ai',
+      roles: ['super_admin', 'admin', 'field_employee', 'inventory_manager', 'dealer'],
+      icon: Bot,
+      isAi: true
     },
     {
       name: 'System Settings',
@@ -307,6 +316,20 @@ export const Layout: React.FC<LayoutProps> = ({ children }) => {
               )}
             </button>
           )}
+
+          {/* Setu AI Header Quick Trigger */}
+          <button
+            type="button"
+            onClick={() => window.dispatchEvent(new CustomEvent('toggle-setu-ai'))}
+            className="px-2.5 py-1.5 rounded-lg bg-orange-50 hover:bg-orange-100/90 text-orange-700 border border-orange-300/80 font-bold text-xs flex items-center space-x-1.5 transition-all cursor-pointer shadow-2xs"
+            title="Open Setu AI Assistant"
+          >
+            <Bot className="w-4 h-4 text-orange-600" />
+            <span className="hidden sm:inline">Setu AI</span>
+            <span className="text-[9px] bg-orange-500 text-white font-black px-1.5 py-0.2 rounded-full">
+              ⚡
+            </span>
+          </button>
 
           {currentUser && (
             <div className="flex items-center space-x-2 bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1">
@@ -437,6 +460,33 @@ export const Layout: React.FC<LayoutProps> = ({ children }) => {
                     }
 
                     // Regular sidebar menu item
+                    if (item.action === 'toggle-setu-ai') {
+                      return (
+                        <button
+                          key={item.name}
+                          type="button"
+                          onClick={() => window.dispatchEvent(new CustomEvent('toggle-setu-ai'))}
+                          className={`w-full flex items-center rounded-lg text-xs font-bold transition-all relative cursor-pointer ${
+                            isNavCollapsed ? 'justify-center p-2.5' : 'justify-between px-3 py-2.5'
+                          } text-orange-600 hover:bg-orange-50 hover:text-orange-700 group`}
+                          title={isNavCollapsed ? item.name : undefined}
+                        >
+                          <div className="flex items-center space-x-2.5">
+                            <div className="relative">
+                              <Icon className="w-4 h-4 shrink-0 text-orange-600" />
+                              <Sparkles className="w-2.5 h-2.5 text-amber-500 absolute -top-1 -right-1 animate-pulse" />
+                            </div>
+                            {!isNavCollapsed && <span className="font-extrabold">{item.name}</span>}
+                          </div>
+                          {!isNavCollapsed && (
+                            <span className="bg-gradient-to-r from-orange-500 to-amber-500 text-white font-black text-[9px] px-1.5 py-0.5 rounded-full shadow-2xs">
+                              ⚡ AI
+                            </span>
+                          )}
+                        </button>
+                      );
+                    }
+
                     const isActive = item.path ? location.pathname.startsWith(item.path) : false;
                     return (
                       <Link
@@ -603,6 +653,31 @@ export const Layout: React.FC<LayoutProps> = ({ children }) => {
                       );
                     }
 
+                    if (item.action === 'toggle-setu-ai') {
+                      return (
+                        <button
+                          key={item.name}
+                          type="button"
+                          onClick={() => {
+                            setMobileMenuOpen(false);
+                            window.dispatchEvent(new CustomEvent('toggle-setu-ai'));
+                          }}
+                          className="w-full flex items-center justify-between px-3 py-2.5 rounded-lg text-xs font-bold text-orange-600 hover:bg-orange-50 transition-all cursor-pointer"
+                        >
+                          <div className="flex items-center space-x-2.5">
+                            <div className="relative">
+                              <Icon className="w-4 h-4 text-orange-600" />
+                              <Sparkles className="w-2.5 h-2.5 text-amber-500 absolute -top-1 -right-1" />
+                            </div>
+                            <span className="font-extrabold">{item.name}</span>
+                          </div>
+                          <span className="bg-gradient-to-r from-orange-500 to-amber-500 text-white font-black text-[9px] px-1.5 py-0.5 rounded-full">
+                            ⚡ AI
+                          </span>
+                        </button>
+                      );
+                    }
+
                     const isActive = item.path ? location.pathname.startsWith(item.path) : false;
                     return (
                       <Link
@@ -665,8 +740,8 @@ export const Layout: React.FC<LayoutProps> = ({ children }) => {
         </React.Suspense>
       )}
 
-      {/* AI Solar & CRM Support Assistant Floating Bot (Admin & Super Admin only) */}
-      {(currentRole === 'admin' || currentRole === 'super_admin') && (
+      {/* AI Solar & CRM Support Assistant (All Panels via Sidebar/Header) */}
+      {currentUser && (
         <React.Suspense fallback={null}>
           <AiSupportBot />
         </React.Suspense>

@@ -2,7 +2,7 @@ import { db, markRecordAsDeleted, getDeletedRecordIdsSet } from './db';
 import type { Lead, Profile } from '../types';
 import { saveRecordToFirestore, deleteRecordFromFirestore, fetchCollectionFromFirestore } from './firebase';
 
-const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || '';
+const BACKEND_URL = import.meta.env.DEV ? '' : (import.meta.env.VITE_BACKEND_URL || '');
 
 export const filterLeadsForUser = (
   leads: Lead[],
@@ -54,6 +54,7 @@ export const filterLeadsForUser = (
 let lastLeadRemoteSync = 0;
 const LEAD_SYNC_INTERVAL = 30 * 1000; // 30 seconds fresh sync throttle
 let activeLeadSyncPromise: Promise<void> | null = null;
+let hasHealedReleaseLeads = false;
 
 export const leadService = {
   async getLeads(forceFresh: boolean = false): Promise<Lead[]> {
@@ -72,12 +73,7 @@ export const leadService = {
             const validRemote = remoteLeads.filter(l => l.id && !freshDeleted.has(l.id));
             
             if (validRemote.length > 0) {
-              const prevCount = await db.leads.count();
               await db.leads.bulkPut(validRemote);
-              const nextCount = await db.leads.count();
-              if (typeof window !== 'undefined' && prevCount !== nextCount) {
-                window.dispatchEvent(new CustomEvent('app-realtime-update'));
-              }
             }
           }
         } catch (err) {
@@ -125,22 +121,25 @@ export const leadService = {
       }
     }
 
-    // Auto-heal leads that have an uploaded release document but were previously demoted to confirmed or other stages
-    try {
-      const allReleases = await db.releaseDocuments.toArray();
-      const activeReleases = allReleases.filter(r => !freshDeleted.has(r.id) && !freshDeleted.has(r.leadId));
-      const leadIdsWithRelease = new Set(activeReleases.map(r => r.leadId));
+    // Auto-heal leads that have an uploaded release document (run at most once per session)
+    if (!hasHealedReleaseLeads) {
+      hasHealedReleaseLeads = true;
+      try {
+        const allReleases = await db.releaseDocuments.toArray();
+        const activeReleases = allReleases.filter(r => !freshDeleted.has(r.id) && !freshDeleted.has(r.leadId));
+        const leadIdsWithRelease = new Set(activeReleases.map(r => r.leadId));
 
-      for (const lead of activeLeads) {
-        if (leadIdsWithRelease.has(lead.id) && lead.status !== 'closed') {
-          lead.status = 'closed';
-          lead.updatedAt = new Date().toISOString();
-          await db.leads.put(lead);
-          saveRecordToFirestore('leads', lead.id, lead).catch(() => {});
+        for (const lead of activeLeads) {
+          if (leadIdsWithRelease.has(lead.id) && lead.status !== 'closed') {
+            lead.status = 'closed';
+            lead.updatedAt = new Date().toISOString();
+            await db.leads.put(lead);
+            saveRecordToFirestore('leads', lead.id, lead).catch(() => {});
+          }
         }
+      } catch (e) {
+        console.warn("Auto-heal release leads note:", e);
       }
-    } catch (e) {
-      console.warn("Auto-heal release leads note:", e);
     }
 
     return activeLeads;

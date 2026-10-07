@@ -9,22 +9,15 @@ import {
   RotateCcw,
   Maximize2,
   Minimize2,
-  ChevronDown,
   Sun,
   Copy,
   Check,
-  Move
+  ChevronRight
 } from 'lucide-react';
 import { sendAiSupportMessage, type ChatMessage } from '../../services/aiChatService';
 import { useAuthStore } from '../../store/authStore';
 
 const STORAGE_KEY = 'green_energy_setu_ai_chat_history';
-const POSITION_STORAGE_KEY = 'green_energy_setu_ai_bot_position';
-
-interface Position {
-  x: number;
-  y: number;
-}
 
 const DEFAULT_SUGGESTIONS = [
   { text: '📊 Dashboard Live Summary', prompt: 'Mujhe abhi ke dashboard counts, total leads aur status breakdown batao.' },
@@ -45,45 +38,25 @@ const AiSupportBotContent: React.FC = () => {
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [unreadNotification, setUnreadNotification] = useState(false);
 
-  // Draggable position state
-  const [position, setPosition] = useState<Position>(() => {
-    try {
-      const saved = localStorage.getItem(POSITION_STORAGE_KEY);
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        if (typeof parsed.x === 'number' && typeof parsed.y === 'number') {
-          const maxX = Math.max(10, (typeof window !== 'undefined' ? window.innerWidth : 1000) - 70);
-          const maxY = Math.max(10, (typeof window !== 'undefined' ? window.innerHeight : 800) - 70);
-          return {
-            x: Math.min(Math.max(10, parsed.x), maxX),
-            y: Math.min(Math.max(10, parsed.y), maxY)
-          };
-        }
-      }
-    } catch (_) {}
-    const defaultX = typeof window !== 'undefined' ? Math.max(10, window.innerWidth - 75) : 20;
-    const defaultY = typeof window !== 'undefined' ? Math.max(10, window.innerHeight - 75) : 20;
-    return { x: defaultX, y: defaultY };
-  });
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const recognitionRef = useRef<any>(null);
 
-  const [isDragging, setIsDragging] = useState(false);
-  const wasDraggingRef = useRef(false);
-  const pointerStartRef = useRef<{ startX: number; startY: number; posX: number; posY: number } | null>(null);
-
-  // Keep within bounds on window resize
+  // Listen for global toggle events (e.g. from Sidebar menu)
   useEffect(() => {
-    const handleResize = () => {
-      setPosition((prev) => {
-        const maxX = Math.max(10, window.innerWidth - 70);
-        const maxY = Math.max(10, window.innerHeight - 70);
-        return {
-          x: Math.min(Math.max(10, prev.x), maxX),
-          y: Math.min(Math.max(10, prev.y), maxY)
-        };
-      });
+    const handleToggle = () => setIsOpen((prev) => !prev);
+    const handleOpen = () => setIsOpen(true);
+    const handleClose = () => setIsOpen(false);
+
+    window.addEventListener('toggle-setu-ai', handleToggle);
+    window.addEventListener('open-setu-ai', handleOpen);
+    window.addEventListener('close-setu-ai', handleClose);
+
+    return () => {
+      window.removeEventListener('toggle-setu-ai', handleToggle);
+      window.removeEventListener('open-setu-ai', handleOpen);
+      window.removeEventListener('close-setu-ai', handleClose);
     };
-    window.addEventListener('resize', handleResize);
-    return () => window.removeEventListener('resize', handleResize);
   }, []);
 
   // Escape key to close
@@ -102,84 +75,10 @@ const AiSupportBotContent: React.FC = () => {
     if (isOpen) {
       setTimeout(() => {
         inputRef.current?.focus();
-      }, 150);
+      }, 200);
+      setUnreadNotification(false);
     }
   }, [isOpen]);
-
-  const handlePointerDown = (e: React.PointerEvent) => {
-    if (e.button !== 0) return;
-    pointerStartRef.current = {
-      startX: e.clientX,
-      startY: e.clientY,
-      posX: position.x,
-      posY: position.y
-    };
-    wasDraggingRef.current = false;
-  };
-
-  const handlePointerMove = (e: React.PointerEvent) => {
-    if (!pointerStartRef.current) return;
-    const deltaX = e.clientX - pointerStartRef.current.startX;
-    const deltaY = e.clientY - pointerStartRef.current.startY;
-    const dist = Math.hypot(deltaX, deltaY);
-
-    // Only initiate drag after moving > 6px
-    if (dist > 6) {
-      if (!wasDraggingRef.current) {
-        wasDraggingRef.current = true;
-        setIsDragging(true);
-        try {
-          (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
-        } catch (_) {}
-      }
-
-      const maxX = Math.max(10, window.innerWidth - 70);
-      const maxY = Math.max(10, window.innerHeight - 70);
-      const nextX = Math.min(Math.max(10, pointerStartRef.current.posX + deltaX), maxX);
-      const nextY = Math.min(Math.max(10, pointerStartRef.current.posY + deltaY), maxY);
-      setPosition({ x: nextX, y: nextY });
-    }
-  };
-
-  const handlePointerUp = (e: React.PointerEvent) => {
-    if (!pointerStartRef.current) return;
-
-    try {
-      if ((e.currentTarget as HTMLElement).hasPointerCapture(e.pointerId)) {
-        (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId);
-      }
-    } catch (_) {}
-
-    if (wasDraggingRef.current) {
-      try {
-        localStorage.setItem(POSITION_STORAGE_KEY, JSON.stringify(position));
-      } catch (_) {}
-      // Keep wasDraggingRef true briefly so onClick is suppressed
-      setTimeout(() => {
-        wasDraggingRef.current = false;
-        setIsDragging(false);
-      }, 100);
-    } else {
-      setIsDragging(false);
-    }
-
-    pointerStartRef.current = null;
-  };
-
-  const handleToggleOpen = (e?: React.MouseEvent) => {
-    if (e) {
-      e.stopPropagation();
-    }
-    if (wasDraggingRef.current) {
-      return;
-    }
-    setIsOpen((prev) => !prev);
-    setUnreadNotification(false);
-  };
-
-  const messagesEndRef = useRef<HTMLDivElement>(null);
-  const inputRef = useRef<HTMLInputElement>(null);
-  const recognitionRef = useRef<any>(null);
 
   // Load saved history on mount
   useEffect(() => {
@@ -188,7 +87,6 @@ const AiSupportBotContent: React.FC = () => {
       if (saved) {
         setMessages(JSON.parse(saved));
       } else {
-        // Initial friendly greeting
         setMessages([
           {
             id: 'welcome_1',
@@ -209,7 +107,7 @@ Aap mujhse neeche diye gaye topics par pooch sakte hain ya seedha apna sawal typ
   useEffect(() => {
     if (messages.length > 0) {
       try {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(messages.slice(-20)));
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(messages.slice(-25)));
       } catch (_) {}
     }
   }, [messages]);
@@ -229,7 +127,7 @@ Aap mujhse neeche diye gaye topics par pooch sakte hain ya seedha apna sawal typ
       const rec = new SpeechRecognition();
       rec.continuous = false;
       rec.interimResults = false;
-      rec.lang = 'hi-IN'; // Supports Hindi + English mixed speech
+      rec.lang = 'hi-IN';
 
       rec.onresult = (event: any) => {
         const transcript = event.results[0][0].transcript;
@@ -326,9 +224,6 @@ Aap mujhse neeche diye gaye topics par pooch sakte hain ya seedha apna sawal typ
     setTimeout(() => setCopiedId(null), 2000);
   };
 
-  /**
-   * Markdown formatter for clean bold, bullet points, links, and code
-   */
   const renderFormattedContent = (content: string) => {
     const lines = content.split('\n');
     return (
@@ -336,7 +231,6 @@ Aap mujhse neeche diye gaye topics par pooch sakte hain ya seedha apna sawal typ
         {lines.map((line, idx) => {
           let trimmed = line.trim();
 
-          // Heading ###
           if (trimmed.startsWith('### ')) {
             return (
               <h4 key={idx} className="font-extrabold text-orange-800 dark:text-orange-300 text-xs mt-2 mb-1">
@@ -344,7 +238,6 @@ Aap mujhse neeche diye gaye topics par pooch sakte hain ya seedha apna sawal typ
               </h4>
             );
           }
-          // Heading ##
           if (trimmed.startsWith('## ')) {
             return (
               <h3 key={idx} className="font-black text-slate-900 dark:text-white text-sm mt-2.5 mb-1 pb-0.5 border-b border-orange-200/60 dark:border-slate-800">
@@ -352,7 +245,6 @@ Aap mujhse neeche diye gaye topics par pooch sakte hain ya seedha apna sawal typ
               </h3>
             );
           }
-          // Bullet point
           if (trimmed.startsWith('- ') || trimmed.startsWith('* ')) {
             const bulletText = trimmed.replace(/^[-*]\s+/, '');
             return (
@@ -362,7 +254,6 @@ Aap mujhse neeche diye gaye topics par pooch sakte hain ya seedha apna sawal typ
               </div>
             );
           }
-          // Numbered list
           if (/^\d+\.\s/.test(trimmed)) {
             return (
               <div key={idx} className="flex items-start gap-1.5 ml-1">
@@ -371,7 +262,6 @@ Aap mujhse neeche diye gaye topics par pooch sakte hain ya seedha apna sawal typ
               </div>
             );
           }
-          // Blank line
           if (!trimmed) {
             return <div key={idx} className="h-1" />;
           }
@@ -385,356 +275,235 @@ Aap mujhse neeche diye gaye topics par pooch sakte hain ya seedha apna sawal typ
   };
 
   const formatInlineMarkdown = (text: string): string => {
-    let formatted = text
-      // Bold **text**
+    return text
       .replace(/\*\*(.*?)\*\*/g, '<strong class="font-bold text-slate-900 dark:text-slate-100">$1</strong>')
-      // Code `code`
       .replace(/`([^`]+)`/g, '<code class="bg-orange-50 dark:bg-slate-800 px-1 py-0.5 rounded text-[11px] font-mono text-orange-700 dark:text-orange-400 font-bold">$1</code>')
-      // Links [text](url)
       .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" class="text-orange-600 hover:text-orange-800 dark:text-orange-400 underline font-bold inline-flex items-center gap-0.5">$1 ↗</a>');
-
-    return formatted;
-  };
-
-  const isNearLeft = position.x < 180;
-  const isNearTop = position.y < 120;
-
-  const getChatWindowStyle = (): React.CSSProperties => {
-    if (isExpanded) return {};
-    if (typeof window === 'undefined') return {};
-
-    if (window.innerWidth < 640) {
-      return {
-        position: 'fixed',
-        left: '12px',
-        right: '12px',
-        bottom: '16px',
-        maxHeight: '85vh',
-        height: '560px'
-      };
-    }
-
-    const chatW = 420;
-    const chatH = 580;
-    const pad = 16;
-    const maxW = window.innerWidth;
-    const maxH = window.innerHeight;
-
-    let targetLeft = position.x - chatW + 56;
-    if (targetLeft < pad) {
-      targetLeft = position.x;
-    }
-    targetLeft = Math.max(pad, Math.min(targetLeft, maxW - chatW - pad));
-
-    let targetTop = position.y - chatH - 10;
-    if (targetTop < pad) {
-      targetTop = position.y + 65;
-    }
-    targetTop = Math.max(pad, Math.min(targetTop, maxH - chatH - pad));
-
-    return {
-      position: 'fixed',
-      left: `${targetLeft}px`,
-      top: `${targetTop}px`,
-      width: `${chatW}px`,
-      height: `${Math.min(chatH, maxH - pad * 2)}px`
-    };
   };
 
   return (
     <>
-      {/* Backdrop for mobile & fullscreen mode */}
+      {/* Semi-transparent Backdrop when Side Panel is open on small screens */}
       {isOpen && (
         <div
           onClick={() => setIsOpen(false)}
-          className={`fixed inset-0 bg-black/40 backdrop-blur-xs z-[9990] transition-opacity duration-200 ${
-            isExpanded ? 'block' : 'sm:hidden block'
-          }`}
+          className="fixed inset-0 bg-slate-950/30 backdrop-blur-2xs z-[9990] transition-opacity duration-300 md:bg-slate-950/15"
         />
       )}
 
-      {/* Floating Draggable Action Button */}
-      <div
-        style={{
-          left: `${position.x}px`,
-          top: `${position.y}px`,
-          touchAction: 'none'
-        }}
-        onPointerDown={handlePointerDown}
-        onPointerMove={handlePointerMove}
-        onPointerUp={handlePointerUp}
-        onPointerCancel={handlePointerUp}
-        className={`fixed z-[9999] flex flex-col ${isNearTop ? 'flex-col-reverse' : 'flex-col'} ${
-          isNearLeft ? 'items-start' : 'items-end'
-        } gap-2 print:hidden select-none cursor-grab active:cursor-grabbing ${
-          isDragging ? 'scale-105 transition-none' : 'transition-transform duration-200'
+      {/* RIGHT SIDE DRAWER / PANEL - Docked completely to the right edge */}
+      <aside
+        className={`fixed top-0 right-0 bottom-0 h-full w-full sm:w-[440px] md:w-[460px] ${
+          isExpanded ? 'sm:w-[680px] md:w-[740px]' : ''
+        } bg-white dark:bg-slate-900 border-l border-slate-200 dark:border-slate-800 shadow-2xl z-[9999] flex flex-col transition-transform duration-300 ease-in-out print:hidden ${
+          isOpen ? 'translate-x-0' : 'translate-x-full pointer-events-none'
         }`}
+        aria-label="Setu AI Assistant Side Panel"
       >
-        {/* Pulsing Greeting Pill when collapsed */}
-        {!isOpen && (
-          <div
-            onClick={handleToggleOpen}
-            className="group bg-slate-950/95 hover:bg-black text-white px-3 py-1.5 sm:px-3.5 sm:py-2 rounded-2xl shadow-2xl border border-orange-500/50 backdrop-blur-md flex items-center gap-2 transition-all duration-300 hover:scale-105 animate-fade-in cursor-pointer select-none"
-            title="Click to Ask Setu AI • Drag anywhere to move"
-          >
-            <div className="w-2 h-2 rounded-full bg-orange-400 animate-ping shrink-0" />
-            <span className="text-xs font-bold bg-gradient-to-r from-orange-400 via-amber-300 to-yellow-200 bg-clip-text text-transparent whitespace-nowrap">
-              ✨ Ask Setu AI
-            </span>
-            <span className="text-[10px] bg-orange-500/20 text-orange-300 px-1.5 py-0.5 rounded-full font-bold border border-orange-500/30 whitespace-nowrap">
-              Live CRM
-            </span>
-            <Move className="w-3 h-3 text-slate-400 opacity-60 group-hover:opacity-100 transition-opacity ml-0.5" />
-          </div>
-        )}
-
-        {/* Circular Launch Button (Warm Vibrant Orange Theme) */}
-        <button
-          type="button"
-          onClick={handleToggleOpen}
-          className={`relative p-3.5 rounded-2xl shadow-2xl transition-all duration-300 transform active:scale-95 flex items-center justify-center cursor-grab active:cursor-grabbing ${
-            isOpen
-              ? 'bg-slate-800 text-white rotate-90 scale-90 border border-slate-700'
-              : 'bg-gradient-to-tr from-orange-600 via-amber-500 to-orange-500 text-white hover:shadow-orange-500/40 hover:shadow-2xl hover:scale-105 border-2 border-orange-400/50'
-          }`}
-          title={isOpen ? 'Close Setu AI' : 'Setu AI Assistant (Solar & CRM Support) • Drag anywhere to move'}
-        >
-          {isOpen ? (
-            <X className="w-6 h-6" />
-          ) : (
-            <>
-              <div className="relative">
-                <Bot className="w-6 h-6" />
-                <Sparkles className="w-3.5 h-3.5 text-yellow-200 absolute -top-1 -right-1 animate-spin" style={{ animationDuration: '4s' }} />
+        {/* Header - Gradient & Controls */}
+        <div className="px-4 py-3.5 bg-gradient-to-r from-slate-950 via-slate-900 to-orange-950 text-white flex items-center justify-between border-b border-orange-500/30 shrink-0 select-none">
+          <div className="flex items-center space-x-2.5">
+            <div className="relative w-9 h-9 rounded-xl bg-gradient-to-tr from-orange-500 via-amber-400 to-yellow-300 p-0.5 shadow-md flex items-center justify-center">
+              <div className="w-full h-full bg-slate-950 rounded-[10px] flex items-center justify-center text-orange-400 font-black">
+                <Bot className="w-5 h-5" />
               </div>
-              {unreadNotification && (
-                <span className="absolute -top-1 -right-1 w-3.5 h-3.5 bg-rose-500 rounded-full border-2 border-white animate-bounce" />
-              )}
-            </>
-          )}
-        </button>
-      </div>
-
-      {/* Main Chat Window Drawer (Orange Themed) */}
-      {isOpen && (
-        <div
-          style={getChatWindowStyle()}
-          className={`fixed z-[9999] transition-all duration-300 ease-out flex flex-col bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-2xl rounded-3xl overflow-hidden print:hidden backdrop-blur-xl ${
-            isExpanded
-              ? 'inset-4 md:inset-10 max-w-5xl mx-auto h-[calc(100vh-5rem)]'
-              : 'w-[calc(100vw-2rem)] sm:w-[420px] md:w-[440px] max-h-[85vh]'
-          }`}
-        >
-          {/* Header - Orange / Amber Gradient */}
-          <div className="px-4 py-3.5 bg-gradient-to-r from-slate-950 via-slate-900 to-orange-950 text-white flex items-center justify-between border-b border-orange-500/30 shrink-0 select-none">
-            <div className="flex items-center space-x-2.5">
-              <div className="relative w-9 h-9 rounded-xl bg-gradient-to-tr from-orange-500 via-amber-400 to-yellow-300 p-0.5 shadow-md flex items-center justify-center">
-                <div className="w-full h-full bg-slate-950 rounded-[10px] flex items-center justify-center text-orange-400 font-black">
-                  <Bot className="w-5 h-5" />
-                </div>
-                <div className="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 bg-orange-400 rounded-full border-2 border-slate-950 animate-pulse" />
-              </div>
-              <div>
-                <div className="flex items-center gap-1.5">
-                  <h3 className="font-extrabold text-sm tracking-tight text-white">Setu AI</h3>
-                  <span className="text-[9px] bg-orange-500/20 text-orange-300 font-black px-1.5 py-0.5 rounded border border-orange-400/30 uppercase tracking-wider">
-                    ⚡ Live CRM
-                  </span>
-                </div>
-                <p className="text-[10px] text-orange-200/70 font-medium">
-                  Solar Engineering & Dashboard Support
-                </p>
-              </div>
+              <div className="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 bg-orange-400 rounded-full border-2 border-slate-950 animate-pulse" />
             </div>
-
-            {/* Header Control Buttons */}
-            <div className="flex items-center space-x-1">
-              <button
-                type="button"
-                onClick={handleClearHistory}
-                className="p-1.5 text-slate-400 hover:text-white rounded-lg hover:bg-slate-800/80 transition-colors cursor-pointer"
-                title="Clear Chat History"
-              >
-                <RotateCcw className="w-4 h-4" />
-              </button>
-              <button
-                type="button"
-                onClick={() => setIsExpanded(!isExpanded)}
-                className="p-1.5 text-slate-400 hover:text-white rounded-lg hover:bg-slate-800/80 transition-colors cursor-pointer hidden sm:block"
-                title={isExpanded ? 'Minimize Window' : 'Expand Fullscreen'}
-              >
-                {isExpanded ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
-              </button>
-              <button
-                type="button"
-                onClick={() => setIsOpen(false)}
-                className="p-1.5 text-slate-300 hover:text-white hover:bg-rose-600/80 rounded-lg transition-colors cursor-pointer"
-                title="Close Window (Esc)"
-              >
-                <X className="w-5 h-5" />
-              </button>
+            <div>
+              <div className="flex items-center gap-1.5">
+                <h3 className="font-extrabold text-sm tracking-tight text-white">Setu AI Assistant</h3>
+                <span className="text-[9px] bg-orange-500/20 text-orange-300 font-black px-1.5 py-0.5 rounded border border-orange-400/30 uppercase tracking-wider">
+                  ⚡ Live CRM
+                </span>
+              </div>
+              <p className="text-[10px] text-orange-200/70 font-medium">
+                Solar Engineering & Live Data Co-pilot
+              </p>
             </div>
           </div>
 
-          {/* Quick Suggestions Carousel */}
-          <div className="px-3 py-2 bg-slate-50 dark:bg-slate-900/60 border-b border-slate-100 dark:border-slate-800 shrink-0 overflow-x-auto no-scrollbar flex items-center gap-1.5 select-none">
-            {DEFAULT_SUGGESTIONS.map((item, idx) => (
-              <button
-                key={idx}
-                type="button"
-                disabled={isLoading}
-                onClick={() => handleSend(item.prompt)}
-                className="shrink-0 text-[11px] font-bold px-2.5 py-1 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 rounded-full border border-slate-200 dark:border-slate-700 hover:border-orange-500 dark:hover:border-orange-500 hover:text-orange-600 dark:hover:text-orange-400 transition-all shadow-2xs cursor-pointer flex items-center gap-1"
-              >
-                <span>{item.text}</span>
-              </button>
-            ))}
-          </div>
-
-          {/* Messages Feed */}
-          <div className="flex-1 p-4 overflow-y-auto space-y-3.5 bg-slate-100/60 dark:bg-slate-950/40">
-            {messages.map((msg) => {
-              const isUser = msg.role === 'user';
-              return (
-                <div
-                  key={msg.id}
-                  className={`flex items-start gap-2.5 ${isUser ? 'flex-row-reverse' : 'flex-row'} group`}
-                >
-                  {/* Avatar */}
-                  <div
-                    className={`w-7 h-7 rounded-xl shrink-0 flex items-center justify-center text-xs font-black shadow-xs ${
-                      isUser
-                        ? 'bg-slate-800 text-white'
-                        : 'bg-gradient-to-tr from-orange-600 via-amber-500 to-orange-500 text-white'
-                    }`}
-                  >
-                    {isUser ? 'You' : <Bot className="w-4 h-4" />}
-                  </div>
-
-                  {/* Message Body */}
-                  <div
-                    className={`relative max-w-[85%] rounded-2xl p-3 shadow-xs ${
-                      isUser
-                        ? 'bg-gradient-to-r from-orange-600 via-orange-500 to-amber-600 text-white rounded-tr-none font-medium'
-                        : 'bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-100 rounded-tl-none border border-slate-200/80 dark:border-slate-700/80'
-                    }`}
-                  >
-                    {isUser ? (
-                      <p className="text-xs leading-relaxed whitespace-pre-wrap">{msg.content}</p>
-                    ) : (
-                      renderFormattedContent(msg.content)
-                    )}
-
-                    {/* Footer Info & Copy Action */}
-                    <div
-                      className={`flex items-center justify-between text-[9px] pt-1.5 mt-1 border-t ${
-                        isUser
-                          ? 'border-orange-400/40 text-orange-100'
-                          : 'border-slate-100 dark:border-slate-700/60 text-slate-400'
-                      }`}
-                    >
-                      <span>{msg.timestamp}</span>
-                      {!isUser && (
-                        <button
-                          type="button"
-                          onClick={() => handleCopy(msg.id, msg.content)}
-                          className="opacity-0 group-hover:opacity-100 transition-opacity p-0.5 hover:text-slate-600 dark:hover:text-slate-200 cursor-pointer flex items-center gap-1"
-                          title="Copy message"
-                        >
-                          {copiedId === msg.id ? (
-                            <Check className="w-3 h-3 text-orange-500" />
-                          ) : (
-                            <Copy className="w-3 h-3" />
-                          )}
-                          <span>{copiedId === msg.id ? 'Copied' : 'Copy'}</span>
-                        </button>
-                      )}
-                    </div>
-                  </div>
-                </div>
-              );
-            })}
-
-            {/* AI Typing Indicator */}
-            {isLoading && (
-              <div className="flex items-start gap-2.5">
-                <div className="w-7 h-7 rounded-xl bg-gradient-to-tr from-orange-600 to-amber-500 text-white flex items-center justify-center shrink-0 shadow-xs animate-pulse">
-                  <Bot className="w-4 h-4" />
-                </div>
-                <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-2xl rounded-tl-none p-3 shadow-xs flex items-center space-x-2">
-                  <Sparkles className="w-4 h-4 text-orange-500 animate-spin" />
-                  <span className="text-xs font-bold text-slate-500 dark:text-slate-300">
-                    Setu AI is analyzing CRM dashboard & generating answer...
-                  </span>
-                </div>
-              </div>
-            )}
-            <div ref={messagesEndRef} />
-          </div>
-
-          {/* Input Bar */}
-          <div className="p-3 bg-white dark:bg-slate-900 border-t border-slate-200 dark:border-slate-800 shrink-0">
-            <form
-              onSubmit={(e) => {
-                e.preventDefault();
-                handleSend();
-              }}
-              className="flex items-center gap-2"
+          {/* Header Action Buttons */}
+          <div className="flex items-center space-x-1">
+            <button
+              type="button"
+              onClick={handleClearHistory}
+              className="p-1.5 text-slate-400 hover:text-white rounded-lg hover:bg-slate-800/80 transition-colors cursor-pointer"
+              title="Clear Chat History"
             >
-              <div className="relative flex-1">
-                <input
-                  ref={inputRef}
-                  type="text"
-                  value={inputQuery}
-                  onChange={(e) => setInputQuery(e.target.value)}
-                  placeholder={isListening ? 'Listening (boliye)...' : 'Ask Setu AI anything (Hindi / English)...'}
-                  disabled={isLoading}
-                  className="w-full bg-slate-100 dark:bg-slate-800 text-slate-800 dark:text-white rounded-xl pl-3.5 pr-9 py-2.5 text-xs font-medium focus:outline-none focus:ring-2 focus:ring-orange-500 transition-all"
-                />
-
-                {/* Voice Mic Button */}
-                <button
-                  type="button"
-                  onClick={handleToggleVoice}
-                  className={`absolute right-1.5 top-1.5 p-1.5 rounded-lg transition-colors cursor-pointer ${
-                    isListening
-                      ? 'bg-rose-500 text-white animate-bounce'
-                      : 'text-slate-400 hover:text-orange-600 dark:hover:text-orange-400 hover:bg-slate-200 dark:hover:bg-slate-700'
-                  }`}
-                  title={isListening ? 'Stop Listening' : 'Voice Input (Hindi/English)'}
-                >
-                  {isListening ? <MicOff className="w-3.5 h-3.5" /> : <Mic className="w-3.5 h-3.5" />}
-                </button>
-              </div>
-
-              {/* Send Button */}
-              <button
-                type="submit"
-                disabled={!inputQuery.trim() || isLoading}
-                className="p-2.5 bg-gradient-to-r from-orange-500 via-amber-500 to-orange-600 hover:from-orange-600 hover:to-amber-600 disabled:opacity-40 text-white rounded-xl shadow-md transition-all duration-200 cursor-pointer shrink-0 disabled:cursor-not-allowed"
-                title="Send Message"
-              >
-                <Send className="w-4 h-4" />
-              </button>
-            </form>
-
-            <div className="flex items-center justify-between text-[10px] text-slate-400 px-1 pt-1.5">
-              <span>⚡ Setu AI • Powered by Groq LPU</span>
-              <span className="flex items-center gap-1 font-semibold text-orange-600 dark:text-orange-400">
-                <Sun className="w-3 h-3 text-amber-500" /> Green Energy Solution
-              </span>
-            </div>
+              <RotateCcw className="w-4 h-4" />
+            </button>
+            <button
+              type="button"
+              onClick={() => setIsExpanded(!isExpanded)}
+              className="p-1.5 text-slate-400 hover:text-white rounded-lg hover:bg-slate-800/80 transition-colors cursor-pointer hidden sm:block"
+              title={isExpanded ? 'Restore Normal Width' : 'Expand Width'}
+            >
+              {isExpanded ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
+            </button>
+            <button
+              type="button"
+              onClick={() => setIsOpen(false)}
+              className="p-1.5 text-slate-300 hover:text-white hover:bg-rose-600/80 rounded-lg transition-colors cursor-pointer"
+              title="Close Side Panel (Esc)"
+            >
+              <X className="w-5 h-5" />
+            </button>
           </div>
         </div>
-      )}
+
+        {/* Quick Suggestions Carousel */}
+        <div className="px-3 py-2 bg-slate-50 dark:bg-slate-900/60 border-b border-slate-100 dark:border-slate-800 shrink-0 overflow-x-auto no-scrollbar flex items-center gap-1.5 select-none">
+          {DEFAULT_SUGGESTIONS.map((item, idx) => (
+            <button
+              key={idx}
+              type="button"
+              disabled={isLoading}
+              onClick={() => handleSend(item.prompt)}
+              className="shrink-0 text-[11px] font-bold px-2.5 py-1 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 rounded-full border border-slate-200 dark:border-slate-700 hover:border-orange-500 dark:hover:border-orange-500 hover:text-orange-600 dark:hover:text-orange-400 transition-all shadow-2xs cursor-pointer flex items-center gap-1"
+            >
+              <span>{item.text}</span>
+            </button>
+          ))}
+        </div>
+
+        {/* Messages Feed */}
+        <div className="flex-1 p-4 overflow-y-auto space-y-3.5 bg-slate-100/60 dark:bg-slate-950/40">
+          {messages.map((msg) => {
+            const isUser = msg.role === 'user';
+            return (
+              <div
+                key={msg.id}
+                className={`flex items-start gap-2.5 ${isUser ? 'flex-row-reverse' : 'flex-row'} group`}
+              >
+                <div
+                  className={`w-7 h-7 rounded-xl shrink-0 flex items-center justify-center text-xs font-black shadow-xs ${
+                    isUser
+                      ? 'bg-slate-800 text-white'
+                      : 'bg-gradient-to-tr from-orange-600 via-amber-500 to-orange-500 text-white'
+                  }`}
+                >
+                  {isUser ? 'You' : <Bot className="w-4 h-4" />}
+                </div>
+
+                <div
+                  className={`relative max-w-[85%] rounded-2xl p-3 shadow-xs ${
+                    isUser
+                      ? 'bg-gradient-to-r from-orange-600 via-orange-500 to-amber-600 text-white rounded-tr-none font-medium'
+                      : 'bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-100 rounded-tl-none border border-slate-200/80 dark:border-slate-700/80'
+                  }`}
+                >
+                  {isUser ? (
+                    <p className="text-xs leading-relaxed whitespace-pre-wrap">{msg.content}</p>
+                  ) : (
+                    renderFormattedContent(msg.content)
+                  )}
+
+                  <div
+                    className={`flex items-center justify-between text-[9px] pt-1.5 mt-1 border-t ${
+                      isUser
+                        ? 'border-orange-400/40 text-orange-100'
+                        : 'border-slate-100 dark:border-slate-700/60 text-slate-400'
+                    }`}
+                  >
+                    <span>{msg.timestamp}</span>
+                    {!isUser && (
+                      <button
+                        type="button"
+                        onClick={() => handleCopy(msg.id, msg.content)}
+                        className="opacity-0 group-hover:opacity-100 transition-opacity p-0.5 hover:text-slate-600 dark:hover:text-slate-200 cursor-pointer flex items-center gap-1"
+                        title="Copy message"
+                      >
+                        {copiedId === msg.id ? (
+                          <Check className="w-3 h-3 text-orange-500" />
+                        ) : (
+                          <Copy className="w-3 h-3" />
+                        )}
+                        <span>{copiedId === msg.id ? 'Copied' : 'Copy'}</span>
+                      </button>
+                    )}
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+
+          {/* AI Typing Indicator */}
+          {isLoading && (
+            <div className="flex items-start gap-2.5">
+              <div className="w-7 h-7 rounded-xl bg-gradient-to-tr from-orange-600 to-amber-500 text-white flex items-center justify-center shrink-0 shadow-xs animate-pulse">
+                <Bot className="w-4 h-4" />
+              </div>
+              <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-2xl rounded-tl-none p-3 shadow-xs flex items-center space-x-2">
+                <Sparkles className="w-4 h-4 text-orange-500 animate-spin" />
+                <span className="text-xs font-bold text-slate-500 dark:text-slate-300">
+                  Setu AI is analyzing CRM dashboard & generating answer...
+                </span>
+              </div>
+            </div>
+          )}
+          <div ref={messagesEndRef} />
+        </div>
+
+        {/* Input Bar */}
+        <div className="p-3 bg-white dark:bg-slate-900 border-t border-slate-200 dark:border-slate-800 shrink-0">
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              handleSend();
+            }}
+            className="flex items-center gap-2"
+          >
+            <div className="relative flex-1">
+              <input
+                ref={inputRef}
+                type="text"
+                value={inputQuery}
+                onChange={(e) => setInputQuery(e.target.value)}
+                placeholder={isListening ? 'Listening (boliye)...' : 'Ask Setu AI anything (Hindi / English)...'}
+                disabled={isLoading}
+                className="w-full bg-slate-100 dark:bg-slate-800 text-slate-800 dark:text-white rounded-xl pl-3.5 pr-9 py-2.5 text-xs font-medium focus:outline-none focus:ring-2 focus:ring-orange-500 transition-all"
+              />
+
+              <button
+                type="button"
+                onClick={handleToggleVoice}
+                className={`absolute right-1.5 top-1.5 p-1.5 rounded-lg transition-colors cursor-pointer ${
+                  isListening
+                    ? 'bg-rose-500 text-white animate-bounce'
+                    : 'text-slate-400 hover:text-orange-600 dark:hover:text-orange-400 hover:bg-slate-200 dark:hover:bg-slate-700'
+                }`}
+                title={isListening ? 'Stop Listening' : 'Voice Input (Hindi/English)'}
+              >
+                {isListening ? <MicOff className="w-3.5 h-3.5" /> : <Mic className="w-3.5 h-3.5" />}
+              </button>
+            </div>
+
+            <button
+              type="submit"
+              disabled={!inputQuery.trim() || isLoading}
+              className="p-2.5 bg-gradient-to-r from-orange-500 via-amber-500 to-orange-600 hover:from-orange-600 hover:to-amber-600 disabled:opacity-40 text-white rounded-xl shadow-md transition-all duration-200 cursor-pointer shrink-0 disabled:cursor-not-allowed"
+              title="Send Message"
+            >
+              <Send className="w-4 h-4" />
+            </button>
+          </form>
+
+          <div className="flex items-center justify-between text-[10px] text-slate-400 px-1 pt-1.5">
+            <span>⚡ Setu AI • Realtime CRM Intelligence</span>
+            <span className="flex items-center gap-1 font-semibold text-orange-600 dark:text-orange-400">
+              <Sun className="w-3 h-3 text-amber-500" /> Green Energy Solution
+            </span>
+          </div>
+        </div>
+      </aside>
     </>
   );
 };
 
 export const AiSupportBot: React.FC = () => {
-  const currentRole = useAuthStore((state) => state.currentRole);
+  const currentUser = useAuthStore((state) => state.currentUser);
 
-  if (currentRole !== 'admin' && currentRole !== 'super_admin') {
+  if (!currentUser) {
     return null;
   }
 

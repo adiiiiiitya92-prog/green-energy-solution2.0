@@ -1,6 +1,7 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import { useLocation } from 'react-router-dom';
-import type { Challan, Lead, Profile, Product, ChallanItem, B2BBusiness, StockTransaction, Quotation, OrderConfirmation, Package, BomItem } from '../../types';
+import { db, getDeletedRecordIdsSet } from '../../services/db';
+import type { Challan, Lead, Profile, Product, ChallanItem, B2BBusiness, StockTransaction, Quotation, OrderConfirmation, Package } from '../../types';
 import { challanService } from '../../services/challanService';
 import { leadService } from '../../services/leadService';
 import { employeeService } from '../../services/employeeService';
@@ -21,15 +22,9 @@ import {
   Trash2,
   ClipboardList,
   X,
-  Download,
   Building2,
   History,
-  CheckCircle,
-  AlertCircle,
-  User,
-  Phone,
   Zap,
-  ChevronDown,
   Sparkles,
   FileText,
   Check,
@@ -37,9 +32,6 @@ import {
   Sun,
   ShieldCheck,
   CheckSquare,
-  Square,
-  Filter,
-  SlidersHorizontal,
   Package as PackageIcon,
   Camera,
   MapPin,
@@ -260,7 +252,15 @@ export const Challans: React.FC = () => {
     return () => { isMounted = false; };
   }, []);
 
+  const isLoadingDataRef = useRef(false);
+  const pendingReloadRef = useRef(false);
+
   const loadData = async () => {
+    if (isLoadingDataRef.current) {
+      pendingReloadRef.current = true;
+      return;
+    }
+    isLoadingDataRef.current = true;
     try {
       const [cList, rawLeads, eList, pList] = await Promise.all([
         challanService.getChallans(false),
@@ -278,24 +278,32 @@ export const Challans: React.FC = () => {
       if (pList && pList.length > 0) setProducts(pList);
     } catch (e) {
       console.warn("Challans loadData error note:", e);
+    } finally {
+      isLoadingDataRef.current = false;
+      if (pendingReloadRef.current) {
+        pendingReloadRef.current = false;
+        setTimeout(() => loadData(), 300);
+      }
     }
   };
 
   useEffect(() => {
     loadData();
     let realtimeDebounceTimer: any = null;
-    const handleRealtimeUpdate = () => {
+    const handleRealtimeUpdate = (e?: any) => {
+      const col = e?.detail?.collectionName;
+      if (col && !['challans', 'leads', 'products', 'profiles'].includes(col)) {
+        return;
+      }
       if (realtimeDebounceTimer) clearTimeout(realtimeDebounceTimer);
       realtimeDebounceTimer = setTimeout(() => {
         loadData();
-      }, 1500);
+      }, 3000);
     };
     window.addEventListener('app-realtime-update', handleRealtimeUpdate);
-    window.addEventListener('storage', handleRealtimeUpdate);
     return () => {
       if (realtimeDebounceTimer) clearTimeout(realtimeDebounceTimer);
       window.removeEventListener('app-realtime-update', handleRealtimeUpdate);
-      window.removeEventListener('storage', handleRealtimeUpdate);
     };
   }, []);
 
@@ -693,10 +701,6 @@ export const Challans: React.FC = () => {
 
     setShowBomModal(false);
     alert(`✅ Successfully added ${importedChallanItems.length} BOM item(s) to Delivery Challan!`);
-  };
-
-  const handleAutoPopulateFromQuotation = () => {
-    handleOpenBomSelectorModal();
   };
 
   const handleProductSelect = (prodId: string) => {
@@ -2012,6 +2016,7 @@ export const Challans: React.FC = () => {
                             <p className="text-[11px] text-slate-600 font-semibold flex items-center gap-2 mt-0.5">
                               <span>📞 +91 {selectedLeadData.phoneNumber}</span>
                               {selectedLeadData.email && <span>• ✉️ {selectedLeadData.email}</span>}
+                              {leadOrder && <span className="text-emerald-700 font-bold">• ⚡ Order Confirmed</span>}
                             </p>
                           </div>
                         </div>
@@ -3272,7 +3277,10 @@ export const Challans: React.FC = () => {
                     <Sparkles className="w-5 h-5" />
                   </div>
                   <div>
-                    <h3 className="text-lg font-black tracking-tight">Select BOM & Set Dispatch Quantities</h3>
+                    <div className="flex items-center gap-2">
+                      <h3 className="text-lg font-black tracking-tight">Select BOM & Set Dispatch Quantities</h3>
+                      {isLoadingPackages && <Loader2 className="w-4 h-4 animate-spin text-emerald-400" />}
+                    </div>
                     <p className="text-xs text-slate-300 font-semibold mt-0.5">
                       Select components from quotation or package templates and specify the exact quantities to dispatch.
                     </p>

@@ -1,5 +1,6 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
+import { db, getDeletedRecordIdsSet } from '../../services/db';
 import { useAuthStore } from '../../store/authStore';
 import { leadService, filterLeadsForUser } from '../../services/leadService';
 import { challanService } from '../../services/challanService';
@@ -508,11 +509,65 @@ export const Leads: React.FC = () => {
 
   const leadFinancialMap = React.useMemo(() => {
     const map: Record<string, LeadReportItem> = {};
-    reportItems.forEach(item => {
-      map[item.leadId] = item;
-    });
+    if (!Array.isArray(leads) || leads.length === 0) return map;
+
+    for (const l of leads) {
+      if (!l || !l.id) continue;
+      let totalValue = 0;
+      let paidAmount = 0;
+      let installmentCount = 0;
+
+      const oc = orderConfirmationsMap[l.id];
+      const mainQuote = leadQuotationsMap[l.id];
+
+      const quoteTotal = mainQuote ? getQuotationTotalAmount(mainQuote) : 0;
+      const ocSubtotal = oc ? (oc.subtotal || (Array.isArray(oc.itemsConfirmed) ? oc.itemsConfirmed.reduce((s, i) => s + (i.amount || 0), 0) : 0) || oc.advanceAmount || 0) : 0;
+
+      totalValue = quoteTotal > 0 ? quoteTotal : ocSubtotal;
+
+      if (oc) {
+        const pList: { amount?: number }[] = (Array.isArray(oc.payments) && oc.payments.length > 0)
+          ? oc.payments
+          : (oc.advanceAmount && oc.advanceAmount > 0)
+          ? [{ amount: oc.advanceAmount }]
+          : [];
+        paidAmount = pList.reduce((s, p) => s + (p?.amount || 0), 0);
+        installmentCount = pList.length;
+
+        if (totalValue <= 0 && paidAmount > 0) {
+          totalValue = paidAmount;
+        }
+      }
+
+      const pendingBalance = Math.max(0, totalValue - paidAmount);
+      let paymentStatus: LeadReportItem['paymentStatus'] = 'No Quote';
+      if (totalValue > 0) {
+        if (paidAmount >= totalValue) paymentStatus = 'Fully Paid';
+        else if (paidAmount > 0) paymentStatus = 'Partially Paid';
+        else paymentStatus = 'Pending';
+      }
+
+      const empNames = employeeNames || {};
+      const confDate = getLeadConfirmationDate(l, oc);
+      map[l.id] = {
+        leadId: l.id,
+        name: l.name || 'Unnamed Client',
+        phone: l.phoneNumber || '',
+        requirement: formatCleanLeadRequirement(l.requirement),
+        status: l.status,
+        assignedSalesName: empNames[l.assignedSalesPersonId || l.assignedEmployeeId || ''] || 'Unassigned',
+        assignedAdminName: empNames[l.assignedAdminId || ''] || 'Unassigned',
+        createdAt: l.createdAt || new Date().toISOString(),
+        confirmedAt: confDate,
+        totalValue,
+        paidAmount,
+        pendingBalance,
+        paymentStatus,
+        installmentCount
+      };
+    }
     return map;
-  }, [reportItems]);
+  }, [leads, orderConfirmationsMap, leadQuotationsMap, employeeNames]);
 
   // Auto-save & restore draft for New Lead modal
   const [hasLeadDraftRestored, setHasLeadDraftRestored] = useState(false);
@@ -586,88 +641,9 @@ export const Leads: React.FC = () => {
     }
   };
 
-  const compileReportItems = async (targetLeads?: Lead[], customEmpNames?: Record<string, string>) => {
+  const compileReportItems = async () => {
     try {
-      const items: LeadReportItem[] = [];
-      const finMap: Record<string, { totalValue: number; paidAmount: number; pendingBalance: number; paymentStatus: string; installmentCount: number }> = {};
-      const validLeads = Array.isArray(targetLeads) ? targetLeads : (Array.isArray(leads) ? leads : []);
-      if (validLeads.length === 0) return;
-
-      const [allOcs, allQuotes] = await Promise.all([
-        orderService.getAllOrderConfirmations(),
-        quotationService.getAllQuotations()
-      ]);
-
-      const ocByLeadId = new Map<string, OrderConfirmation>();
-      allOcs.forEach(oc => { if (oc.leadId) ocByLeadId.set(oc.leadId, oc); });
-
-      const quoteByLeadId = new Map<string, Quotation>();
-      allQuotes.forEach(q => { if (q.leadId && !quoteByLeadId.has(q.leadId)) quoteByLeadId.set(q.leadId, q); });
-
-      for (const l of validLeads) {
-        if (!l || !l.id) continue;
-        let totalValue = 0;
-        let paidAmount = 0;
-        let installmentCount = 0;
-
-        const oc = ocByLeadId.get(l.id);
-        const mainQuote = quoteByLeadId.get(l.id);
-
-        const quoteTotal = mainQuote ? getQuotationTotalAmount(mainQuote) : 0;
-        const ocSubtotal = oc ? (oc.subtotal || (Array.isArray(oc.itemsConfirmed) ? oc.itemsConfirmed.reduce((s, i) => s + (i.amount || 0), 0) : 0) || oc.advanceAmount || 0) : 0;
-
-        totalValue = quoteTotal > 0 ? quoteTotal : ocSubtotal;
-
-        if (oc) {
-          const pList: { amount?: number }[] = (Array.isArray(oc.payments) && oc.payments.length > 0)
-            ? oc.payments
-            : (oc.advanceAmount && oc.advanceAmount > 0)
-            ? [{ amount: oc.advanceAmount }]
-            : [];
-          paidAmount = pList.reduce((s, p) => s + (p?.amount || 0), 0);
-          installmentCount = pList.length;
-
-          if (totalValue <= 0 && paidAmount > 0) {
-            totalValue = paidAmount;
-          }
-        }
-
-        const pendingBalance = Math.max(0, totalValue - paidAmount);
-        let paymentStatus: LeadReportItem['paymentStatus'] = 'No Quote';
-        if (totalValue > 0) {
-          if (paidAmount >= totalValue) paymentStatus = 'Fully Paid';
-          else if (paidAmount > 0) paymentStatus = 'Partially Paid';
-          else paymentStatus = 'Pending';
-        }
-
-        const empNames = customEmpNames || employeeNames || {};
-        const confDate = getLeadConfirmationDate(l, oc);
-        const itemData = {
-          leadId: l.id,
-          name: l.name || 'Unnamed Client',
-          phone: l.phoneNumber || '',
-          requirement: formatCleanLeadRequirement(l.requirement),
-          status: l.status,
-          assignedSalesName: empNames[l.assignedSalesPersonId || l.assignedEmployeeId || ''] || 'Unassigned',
-          assignedAdminName: empNames[l.assignedAdminId || ''] || 'Unassigned',
-          createdAt: l.createdAt || new Date().toISOString(),
-          confirmedAt: confDate,
-          totalValue,
-          paidAmount,
-          pendingBalance,
-          paymentStatus,
-          installmentCount
-        };
-
-        items.push(itemData);
-        finMap[l.id] = {
-          totalValue,
-          paidAmount,
-          pendingBalance,
-          paymentStatus,
-          installmentCount
-        };
-      }
+      const items = Object.values(leadFinancialMap);
       setReportItems(items);
     } catch (err) {
       console.error("Error generating lead report items:", err);
@@ -678,7 +654,7 @@ export const Leads: React.FC = () => {
     if (currentRole === 'field_employee') return;
     setShowReportModal(true);
     setIsGeneratingReport(true);
-    await compileReportItems();
+    setReportItems(Object.values(leadFinancialMap));
     setIsGeneratingReport(false);
   };
 
@@ -814,7 +790,6 @@ export const Leads: React.FC = () => {
         setEmployees(localEmps || []);
         setEmployeeNames(names);
         setEmployeeProfiles(profsMap);
-        compileReportItems(filteredList, names);
       } catch (err) {
         console.warn("Leads local hydration note:", err);
       }
@@ -824,7 +799,15 @@ export const Leads: React.FC = () => {
     return () => { isMounted = false; };
   }, [currentUser, currentRole]);
 
+  const isLoadingDataRef = useRef(false);
+  const pendingReloadRef = useRef(false);
+
   const loadData = async () => {
+    if (isLoadingDataRef.current) {
+      pendingReloadRef.current = true;
+      return;
+    }
+    isLoadingDataRef.current = true;
     try {
       const [list, challans, allQuotes, evidenceIds, allOcs, empList, profiles] = await Promise.all([
         leadService.getLeads(),
@@ -887,11 +870,18 @@ export const Leads: React.FC = () => {
       if (empList && empList.length > 0) setEmployees(empList);
       setEmployeeNames(names);
       setEmployeeProfiles(profsMap);
-      compileReportItems(filteredList, names);
 
       productService.getProducts().then(setCatalogProducts).catch(() => {});
     } catch (e) {
       console.warn("Leads loadData error note:", e);
+    } finally {
+      isLoadingDataRef.current = false;
+      if (pendingReloadRef.current) {
+        pendingReloadRef.current = false;
+        setTimeout(() => {
+          loadData();
+        }, 300);
+      }
     }
   };
 
@@ -934,11 +924,16 @@ export const Leads: React.FC = () => {
     });
 
     let realtimeDebounceTimer: any = null;
-    const handleRealtimeUpdate = () => {
+    const handleRealtimeUpdate = (e?: any) => {
+      const col = e?.detail?.collectionName;
+      // Only react if event is generic or relevant to leads pipeline
+      if (col && !['leads', 'quotations', 'challans', 'orderConfirmations', 'profiles', 'installationPhotos', 'releaseDocuments'].includes(col)) {
+        return;
+      }
       if (realtimeDebounceTimer) clearTimeout(realtimeDebounceTimer);
       realtimeDebounceTimer = setTimeout(() => {
         loadData();
-      }, 1500);
+      }, 3000);
     };
     window.addEventListener('app-realtime-update', handleRealtimeUpdate);
     return () => {
@@ -946,12 +941,6 @@ export const Leads: React.FC = () => {
       window.removeEventListener('app-realtime-update', handleRealtimeUpdate);
     };
   }, [currentRole, currentUser]);
-
-  useEffect(() => {
-    if (leads.length > 0) {
-      compileReportItems();
-    }
-  }, [leads]);
 
   // Helper to normalize payments list for backward compatibility
   const getPaymentsList = (oc: OrderConfirmation | null): PaymentInstallment[] => {

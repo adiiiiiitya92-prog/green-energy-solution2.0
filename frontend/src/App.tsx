@@ -131,15 +131,32 @@ export const App: React.FC = () => {
       });
     }
 
+    // Preload core route chunks in the background so sidebar navigation is 100% instant
+    const preloadTimer = setTimeout(() => {
+      import('./views/SuperAdmin/Dashboard').catch(() => {});
+      import('./views/Admin/Leads').catch(() => {});
+      import('./views/Admin/Challans').catch(() => {});
+      import('./views/Admin/Products').catch(() => {});
+      import('./views/Admin/Complaints').catch(() => {});
+      import('./views/Admin/Employees').catch(() => {});
+      import('./views/SuperAdmin/Expenses').catch(() => {});
+      import('./views/FieldEmployee/Visits').catch(() => {});
+      import('./views/Admin/B2BBusinesses').catch(() => {});
+      import('./views/InventoryManager/InventoryPanel').catch(() => {});
+    }, 800);
+
     // Defer heavy cloud sync and listeners until after initial render so UI is instant
     const syncTimer = setTimeout(() => {
       import('./services/firebase').then(({ syncAllLocalDataToFirestore, initializeRealtimeFirestoreSync }) => {
         initializeRealtimeFirestoreSync();
         syncAllLocalDataToFirestore();
       }).catch(err => console.warn('Background sync init note:', err));
-    }, 1500);
+    }, 2000);
 
-    return () => clearTimeout(syncTimer);
+    return () => {
+      clearTimeout(preloadTimer);
+      clearTimeout(syncTimer);
+    };
   }, []);
 
   if (isLoading) {

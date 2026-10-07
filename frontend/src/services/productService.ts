@@ -2,7 +2,7 @@ import { db, markRecordAsDeleted, getDeletedRecordIdsSet } from './db';
 import type { Product } from '../types';
 import { saveRecordToFirestore, deleteRecordFromFirestore, fetchCollectionFromFirestore } from './firebase';
 
-const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || '';
+const BACKEND_URL = import.meta.env.DEV ? '' : (import.meta.env.VITE_BACKEND_URL || '');
 
 let lastProductRemoteSync = 0;
 const PRODUCT_SYNC_INTERVAL = 15 * 60 * 1000;
@@ -37,9 +37,6 @@ export const productService = {
           const validRemote = remoteProds.filter(p => !freshDeleted.has(p.id));
           if (validRemote.length > 0) {
             await db.products.bulkPut(validRemote);
-            if (typeof window !== 'undefined') {
-              window.dispatchEvent(new CustomEvent('app-realtime-update'));
-            }
           }
         }
       } catch (err) {

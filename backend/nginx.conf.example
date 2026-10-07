@@ -1,0 +1,62 @@
+# ==============================================================
+# OPTIMIZED NGINX CONFIGURATION FOR HOSTINGER VPS + CLOUDFLARE
+# Place in: /etc/nginx/sites-available/ges-api
+# Link to:  /etc/nginx/sites-enabled/ges-api
+# ==============================================================
+
+# 1. Rate limiting zone (isolated name so it never conflicts with other websites on your VPS)
+limit_req_zone $binary_remote_addr zone=ges_api_limit:10m rate=40r/s;
+
+server {
+    listen 80;
+    server_name api.yourdomain.com; # Replace with your subdomain (e.g. api.greenenergysolution.in or crm-api.yourdomain.com)
+
+    # Trust Cloudflare Proxied IPs (optional but recommended)
+    # set_real_ip_from 173.245.48.0/20;
+    # set_real_ip_from 103.21.244.0/22;
+    # real_ip_header CF-Connecting-IP;
+
+    # Gzip Compression on Nginx Level (Saves VPS CPU)
+    gzip on;
+    gzip_comp_level 5;
+    gzip_min_length 256;
+    gzip_proxied any;
+    gzip_vary on;
+    gzip_types
+        application/json
+        application/javascript
+        text/css
+        text/plain
+        text/javascript;
+
+    # Low memory buffer tuning
+    client_body_buffer_size 128k;
+    client_max_body_size 10m; # Reject payloads > 10MB early at Nginx layer
+
+    location / {
+        limit_req zone=ges_api_limit burst=50 nodelay;
+
+        proxy_pass http://127.0.0.1:5050;
+        proxy_http_version 1.1;
+
+        # WebSocket / SSE keepalive headers
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection 'upgrade';
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+
+        # Proxy buffers optimized for low RAM
+        proxy_buffers 8 16k;
+        proxy_buffer_size 32k;
+        proxy_busy_buffers_size 64k;
+
+        # Disable buffering for real-time SSE streams
+        proxy_buffering off;
+        proxy_cache off;
+        chunked_transfer_encoding off;
+        proxy_read_timeout 86400s;
+        proxy_send_timeout 86400s;
+    }
+}

@@ -2,7 +2,7 @@ import { db } from './db';
 import type { StockTransaction, Product } from '../types';
 import { saveRecordToFirestore, fetchCollectionFromFirestore } from './firebase';
 
-const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || '';
+const BACKEND_URL = import.meta.env.DEV ? '' : (import.meta.env.VITE_BACKEND_URL || '');
 
 export const stockTransactionService = {
   async addTransaction(txn: Omit<StockTransaction, 'id'>): Promise<string> {

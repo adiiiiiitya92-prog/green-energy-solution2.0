@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { isMeterUnit, type Product, type ProductUnit } from '../../types';
+import { db } from '../../services/db';
 import { productService } from '../../services/productService';
 import { challanService } from '../../services/challanService';
 import { useAuthStore } from '../../store/authStore';

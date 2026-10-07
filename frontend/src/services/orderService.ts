@@ -8,7 +8,7 @@ const ORDER_SYNC_INTERVAL = 30 * 1000; // 30 seconds fresh sync throttle
 let activeOrderSyncPromise: Promise<void> | null = null;
 
 let lastEvidenceRemoteSync = 0;
-const EVIDENCE_SYNC_INTERVAL = 30 * 1000; // 30 seconds fresh sync throttle
+const EVIDENCE_SYNC_INTERVAL = 5 * 60 * 1000; // 5 minutes fresh sync throttle
 let activeEvidenceSyncPromise: Promise<void> | null = null;
 
 export const orderService = {
@@ -61,9 +61,6 @@ export const orderService = {
             const validRemote = remoteOcs.filter(o => !freshDeleted.has(o.id) && !freshDeleted.has(o.leadId));
             if (validRemote.length > 0) {
               await db.orderConfirmations.bulkPut(validRemote);
-              if (typeof window !== 'undefined') {
-                window.dispatchEvent(new CustomEvent('app-realtime-update'));
-              }
             }
           }
         } catch (err) {
@@ -535,10 +532,9 @@ export const orderService = {
         try {
           lastEvidenceRemoteSync = Date.now();
           const freshDeleted = await getDeletedRecordIdsSet(true);
-          const [remotePhotos, remoteReleases, remoteChallans] = await Promise.all([
-            fetchCollectionFromFirestore<InstallationPhoto>('installationPhotos', 10000).catch(() => []),
-            fetchCollectionFromFirestore<ReleaseDocument>('releaseDocuments', 10000).catch(() => []),
-            fetchCollectionFromFirestore<any>('challans', 10000).catch(() => [])
+          const [remotePhotos, remoteReleases] = await Promise.all([
+            fetchCollectionFromFirestore<InstallationPhoto>('installationPhotos', 5000).catch(() => []),
+            fetchCollectionFromFirestore<ReleaseDocument>('releaseDocuments', 5000).catch(() => [])
           ]);
 
           const freshLeadIds = new Set<string>();
@@ -581,24 +577,7 @@ export const orderService = {
             valid.forEach(r => { if (r.leadId) freshLeadIds.add(r.leadId); });
           }
 
-          // 3. Challans reconciliation
-          if (Array.isArray(remoteChallans)) {
-            const valid = remoteChallans.filter(c => c && c.id && !freshDeleted.has(c.id) && (!c.leadId || !freshDeleted.has(c.leadId)));
-            const validIds = new Set(valid.map(c => c.id));
-            const currentLocal = await db.challans.toArray().catch(() => []);
-            for (const lc of currentLocal) {
-              if (!validIds.has(lc.id) || freshDeleted.has(lc.id) || (lc.leadId && freshDeleted.has(lc.leadId))) {
-                const age = Date.now() - new Date(lc.createdAt || 0).getTime();
-                if (age > 2 * 60 * 1000 || freshDeleted.has(lc.id) || (lc.leadId && freshDeleted.has(lc.leadId))) {
-                  await db.challans.delete(lc.id).catch(() => {});
-                }
-              }
-            }
-            if (valid.length > 0) {
-              await db.challans.bulkPut(valid).catch(() => {});
-            }
-            valid.forEach(c => { if (c.leadId) freshLeadIds.add(c.leadId); });
-          }
+          challans.forEach(c => { if (c.leadId && !freshDeleted.has(c.leadId)) freshLeadIds.add(c.leadId); });
 
           leadIds.clear();
           freshLeadIds.forEach(id => leadIds.add(id));

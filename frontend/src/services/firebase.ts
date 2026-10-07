@@ -1,11 +1,10 @@
 import { compressImage, compressDataUrl, type ImageCompressionConfig } from './imageCompressionService';
 
 // Backend API URL (relies on current origin / Vite proxy or explicit backend URL)
-const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || "";
+const BACKEND_URL = import.meta.env.DEV ? "" : (import.meta.env.VITE_BACKEND_URL || "");
 const buildApiUrl = (path: string) => `${BACKEND_URL}${path}`;
 
-// Safe compatibility stubs for legacy Firebase imports
-export const TARGET_DATABASE_ID = "green_energy_crm";
+// Safe compatibility stub for legacy auth import
 export const auth: any = {
   currentUser: null,
   onAuthStateChanged: (callback: any) => {
@@ -14,8 +13,6 @@ export const auth: any = {
   },
   signOut: async () => {}
 };
-export const storage: any = {};
-export const firestoreDb: any = {};
 
 const B2_KEY_ID = import.meta.env.VITE_B2_KEY_ID || '005ff217b03db580000000001';
 const B2_APP_KEY = import.meta.env.VITE_B2_APPLICATION_KEY || 'K005gOTKgViCFANig1DqeD7fLVoNU80';
@@ -137,6 +134,14 @@ async function uploadViaClientDirectB2(base64Data: string, storagePath: string, 
  */
 async function uploadViaBackend(base64Data: string, storagePath: string, contentType: string): Promise<string | null> {
   return withExponentialBackoff(async () => {
+    // 1. Prioritize direct client-to-B2 upload (0 VPS RAM, 0 VPS bandwidth!)
+    try {
+      const directUrl = await uploadViaClientDirectB2(base64Data, storagePath, contentType);
+      if (directUrl && (directUrl.startsWith('http://') || directUrl.startsWith('https://'))) {
+        return directUrl;
+      }
+    } catch (_) {}
+
     const currentOrigin = typeof window !== 'undefined' ? window.location.origin : '';
     const backendUrl = import.meta.env.VITE_BACKEND_URL || '';
 
@@ -541,32 +546,6 @@ if (typeof window !== 'undefined') {
   }, 15000);
 }
 
-let isFirestoreQuotaExhausted = false;
-let quotaExhaustedCooldownUntil = 0;
-
-export function checkFirestoreQuotaAvailable(): boolean {
-  if (isFirestoreQuotaExhausted) {
-    if (Date.now() < quotaExhaustedCooldownUntil) {
-      return false;
-    }
-    isFirestoreQuotaExhausted = false;
-  }
-  return true;
-}
-
-export function handleFirestoreQuotaExhausted(err: any): boolean {
-  const errMsg = String(err?.message || err?.code || '');
-  if (errMsg.includes('resource-exhausted') || errMsg.includes('Quota exceeded') || err?.code === 'resource-exhausted') {
-    if (!isFirestoreQuotaExhausted) {
-      console.warn("⚠️ Firebase Firestore daily free quota (50,000 reads) exceeded for today. CRM is seamlessly operating in fast offline-native mode using local Dexie IndexedDB.");
-    }
-    isFirestoreQuotaExhausted = true;
-    quotaExhaustedCooldownUntil = Date.now() + 15 * 60 * 1000;
-    return true;
-  }
-  return false;
-}
-
 /**
  * Saves or updates a document in MongoDB Atlas via Backend API
  */
@@ -685,9 +664,15 @@ export async function syncAllLocalDataToFirestore(force: boolean = false): Promi
     const { db, getDeletedRecordIdsSet, markRecordAsDeleted } = await import('./db');
     const deletedIds = await getDeletedRecordIdsSet();
 
-    // Fast Bulk Bootstrap Sync from Backend API (fetches all core collections in 1 shot)
+    // Fast Bulk Bootstrap Sync from Backend API (with Delta Sync support for 99% bandwidth savings)
     try {
-      const bRes = await fetch(buildApiUrl('/api/sync/bootstrap'), { signal: AbortSignal.timeout(25000) });
+      const lastBootstrapTime = localStorage.getItem('ges_last_bootstrap_time');
+      const localLeadsCount = await db.leads.count().catch(() => 0);
+      const syncUrl = (lastBootstrapTime && localLeadsCount > 0)
+        ? buildApiUrl(`/api/sync/bootstrap?since=${encodeURIComponent(lastBootstrapTime)}`)
+        : buildApiUrl('/api/sync/bootstrap');
+
+      const bRes = await fetch(syncUrl, { signal: AbortSignal.timeout(25000) });
       if (bRes.ok) {
         const bData = await bRes.json();
         if (bData && bData.success) {
@@ -726,9 +711,13 @@ export async function syncAllLocalDataToFirestore(force: boolean = false): Promi
             const valid = bData.expenses.filter((ex: any) => ex?.id && !deletedIds.has(ex.id));
             if (valid.length > 0) await db.expenses.bulkPut(valid);
           }
+          if (bData.timestamp) {
+            localStorage.setItem('ges_last_bootstrap_time', bData.timestamp);
+          }
           if (typeof window !== 'undefined') {
             window.dispatchEvent(new CustomEvent('app-realtime-update'));
           }
+          return;
         }
       }
     } catch (e) {
@@ -1252,9 +1241,9 @@ export function initializeRealtimeFirestoreSync(): void {
       syncAllLocalDataToFirestore(false).catch(() => {});
     });
 
-    // 4. Periodic safety sync every 30 seconds
+    // 4. Periodic safety sync every 5 minutes (real-time stream is active for instant changes)
     setInterval(() => {
       syncAllLocalDataToFirestore(false).catch(() => {});
-    }, 30000);
+    }, 5 * 60 * 1000);
   }
 }

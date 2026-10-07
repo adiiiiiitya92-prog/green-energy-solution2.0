@@ -92,7 +92,7 @@ export async function uploadToB2(buffer, storagePath, contentType = 'application
 }
 
 /**
- * Fetches/Streams file from Backblaze B2 for Backend proxy serving
+ * Obtains authorized URL from Backblaze B2 for fast, 0-RAM direct client redirection
  */
 export async function getFileStreamFromB2(storagePath) {
   const auth = await getB2Auth();
@@ -104,7 +104,7 @@ export async function getFileStreamFromB2(storagePath) {
     body: JSON.stringify({
       bucketId: B2_BUCKET_ID,
       fileNamePrefix: cleanPath,
-      validDurationInSeconds: 3600
+      validDurationInSeconds: 86400 // 24 hours
     })
   });
 
@@ -114,17 +114,10 @@ export async function getFileStreamFromB2(storagePath) {
 
   const dnldData = await dnldAuthRes.json();
   const fileUrl = `${auth.downloadUrl}/file/${B2_BUCKET_NAME}/${cleanPath}?Authorization=${encodeURIComponent(dnldData.authorizationToken)}`;
-
-  const fileRes = await fetch(fileUrl);
-  if (!fileRes.ok) {
-    throw new Error(`Failed to fetch file from B2: ${fileRes.status}`);
-  }
-
-  const contentType = fileRes.headers.get('content-type') || (cleanPath.endsWith('.pdf') ? 'application/pdf' : 'image/webp');
-  const buffer = Buffer.from(await fileRes.arrayBuffer());
+  const contentType = cleanPath.endsWith('.pdf') ? 'application/pdf' : 'image/webp';
 
   return {
-    contentType,
-    buffer
+    fileUrl,
+    contentType
   };
 }

@@ -313,7 +313,6 @@ export default defineConfig({
         manualChunks(id) {
           if (id.includes('node_modules')) {
             if (id.includes('tesseract.js')) return 'vendor-tesseract';
-            if (id.includes('firebase')) return 'vendor-firebase';
             if (id.includes('lucide-react')) return 'vendor-icons';
             if (id.includes('jspdf') || id.includes('html2canvas')) return 'vendor-pdf';
             if (id.includes('leaflet') || id.includes('@react-google-maps')) return 'vendor-maps';

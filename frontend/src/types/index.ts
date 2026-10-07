@@ -2,7 +2,7 @@ export interface Profile {
   id: string;
   fullName: string;
   phone: string;
-  role: 'super_admin' | 'admin' | 'field_employee' | 'inventory_manager' | 'dealer';
+  role: 'super_admin' | 'admin' | 'field_employee' | 'inventory_manager' | 'dealer' | 'sales_person';
   email?: string;
   aadhaarNumber?: string;
   panNumber?: string;

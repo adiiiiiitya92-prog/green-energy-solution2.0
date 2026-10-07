@@ -4,7 +4,7 @@ import { saveRecordToFirestore, fetchCollectionFromFirestore } from './firebase'
 import { b2bBusinessService } from './b2bBusinessService';
 import { stockTransactionService } from './stockTransactionService';
 
-const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || '';
+const BACKEND_URL = import.meta.env.DEV ? '' : (import.meta.env.VITE_BACKEND_URL || '');
 
 let lastChallanRemoteSync = 0;
 const CHALLAN_SYNC_INTERVAL = 30 * 1000; // 30 seconds fresh sync throttle
@@ -28,7 +28,6 @@ export const challanService = {
             const validRemoteIds = new Set(validRemote.map(c => c.id));
 
             if (validRemote.length > 0) {
-              const prevCount = await db.challans.count();
               await db.challans.bulkPut(validRemote);
 
               // Clean up stale deleted local challans only when a valid remote list is confirmed
@@ -40,11 +39,6 @@ export const challanService = {
                     await db.challans.delete(lc.id).catch(() => {});
                   }
                 }
-              }
-
-              const nextCount = await db.challans.count();
-              if (typeof window !== 'undefined' && prevCount !== nextCount) {
-                window.dispatchEvent(new CustomEvent('app-realtime-update'));
               }
             }
           }

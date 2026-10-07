@@ -316,6 +316,9 @@ export default defineConfig({
             if (id.includes('lucide-react')) return 'vendor-icons';
             if (id.includes('jspdf') || id.includes('html2canvas')) return 'vendor-pdf';
             if (id.includes('leaflet') || id.includes('@react-google-maps')) return 'vendor-maps';
+            if (id.includes('browser-image-compression')) return 'vendor-compression';
+            if (id.includes('react-signature-canvas') || id.includes('signature_pad')) return 'vendor-signature';
+            if (id.includes('suncalc')) return 'vendor-suncalc';
             if (id.includes('react') || id.includes('react-dom') || id.includes('react-router-dom')) return 'vendor-react';
             if (id.includes('dexie')) return 'vendor-dexie';
             return 'vendor-libs';

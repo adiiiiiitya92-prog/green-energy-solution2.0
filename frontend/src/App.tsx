@@ -151,22 +151,14 @@ export const App: React.FC = () => {
         }
       });
     }
+  }, []);
 
-    // Preload core route chunks in the background so sidebar navigation is 100% instant
-    const preloadTimer = setTimeout(() => {
-      import('./views/SuperAdmin/Dashboard').catch(() => {});
-      import('./views/Admin/Leads').catch(() => {});
-      import('./views/Admin/Challans').catch(() => {});
-      import('./views/Admin/Products').catch(() => {});
-      import('./views/Admin/Complaints').catch(() => {});
-      import('./views/Admin/Employees').catch(() => {});
-      import('./views/SuperAdmin/Expenses').catch(() => {});
-      import('./views/FieldEmployee/Visits').catch(() => {});
-      import('./views/Admin/B2BBusinesses').catch(() => {});
-      import('./views/InventoryManager/InventoryPanel').catch(() => {});
-    }, 800);
+  // ONLY sync with MongoDB and preload route chunks AFTER the user is authenticated!
+  // This keeps the Login screen 100% lightweight and instant on mobile 4G.
+  useEffect(() => {
+    if (!isAuthenticated) return;
 
-    // Defer heavy cloud sync and listeners until after initial render so UI is instant
+    // Defer cloud sync until 2 seconds after authenticated dashboard mounts
     const syncTimer = setTimeout(() => {
       import('./services/firebase').then(({ syncAllLocalDataToFirestore, initializeRealtimeFirestoreSync }) => {
         initializeRealtimeFirestoreSync();
@@ -174,11 +166,24 @@ export const App: React.FC = () => {
       }).catch(err => console.warn('Background sync init note:', err));
     }, 2000);
 
+    // Preload primary routes on idle so mobile bandwidth is never congested
+    const preloadTimer = setTimeout(() => {
+      if ('requestIdleCallback' in window) {
+        (window as any).requestIdleCallback(() => {
+          import('./views/Admin/Leads').catch(() => {});
+          import('./views/Admin/Challans').catch(() => {});
+          import('./views/Admin/Products').catch(() => {});
+        });
+      } else {
+        import('./views/Admin/Leads').catch(() => {});
+      }
+    }, 3500);
+
     return () => {
-      clearTimeout(preloadTimer);
       clearTimeout(syncTimer);
+      clearTimeout(preloadTimer);
     };
-  }, []);
+  }, [isAuthenticated]);
 
   if (isLoading) {
     return (

@@ -275,7 +275,7 @@ export async function syncDeletedRecordsFromFirestore(force: boolean = false): P
   return activeDeletedSyncPromise;
 }
 
-export async function markRecordAsDeleted(id: string, collectionName: string): Promise<void> {
+export async function markRecordAsDeleted(id: string, collectionName: string, syncToRemote: boolean = true): Promise<void> {
   if (!id) return;
   const deletedObj: DeletedRecord = {
     id,
@@ -287,10 +287,12 @@ export async function markRecordAsDeleted(id: string, collectionName: string): P
   } catch (err) {
     console.warn(`Error marking ${collectionName}/${id} as deleted:`, err);
   }
-  try {
-    const { saveRecordToFirestore } = await import('./firebase');
-    saveRecordToFirestore('deletedRecords', id, deletedObj).catch(() => {});
-  } catch (_) {}
+  if (syncToRemote) {
+    try {
+      const { saveRecordToFirestore } = await import('./firebase');
+      saveRecordToFirestore('deletedRecords', id, deletedObj).catch(() => {});
+    } catch (_) {}
+  }
 }
 
 export async function getDeletedRecordIdsSet(forceSync: boolean = false): Promise<Set<string>> {

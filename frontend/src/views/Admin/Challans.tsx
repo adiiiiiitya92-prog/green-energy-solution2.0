@@ -1386,6 +1386,16 @@ export const Challans: React.FC = () => {
     return true;
   });
 
+  const [currentPage, setCurrentPage] = useState(1);
+  const ITEMS_PER_PAGE = 30;
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [searchTerm, typeFilter, startDate, endDate]);
+
+  const totalPages = Math.ceil(filteredChallans.length / ITEMS_PER_PAGE) || 1;
+  const paginatedChallans = filteredChallans.slice((currentPage - 1) * ITEMS_PER_PAGE, currentPage * ITEMS_PER_PAGE);
+
   const filteredStockTxns = stockTxns.filter(st => {
     const q = (stockTxnSearch || '').toLowerCase();
     return (
@@ -1511,7 +1521,7 @@ export const Challans: React.FC = () => {
 
       {/* Challan List */}
       <div className="grid grid-cols-1 gap-4">
-        {filteredChallans.map((ch) => {
+        {paginatedChallans.map((ch) => {
           const isExpanded = expandedChallanId === ch.id;
           const isB2B = ch.type === 'b2b';
           const clientTitle = isB2B ? (ch.businessName || 'B2B Client') : ch.leadName;
@@ -1770,6 +1780,37 @@ export const Challans: React.FC = () => {
             <p className="text-xs text-slate-400 font-bold">No delivery challans recorded yet. Tap "B2B Challan" or "New Lead Challan" to dispatch inventory.</p>
           </div>
         )}
+
+        {totalPages > 1 && (
+          <div className="flex flex-col sm:flex-row items-center justify-between gap-3 bg-white p-4 rounded-2xl border border-slate-200 mt-2">
+            <div className="text-xs font-bold text-slate-500">
+              Showing <span className="text-slate-800">{(currentPage - 1) * ITEMS_PER_PAGE + 1}</span> to{' '}
+              <span className="text-slate-800">{Math.min(currentPage * ITEMS_PER_PAGE, filteredChallans.length)}</span> of{' '}
+              <span className="text-emerald-700 font-extrabold">{filteredChallans.length}</span> Challans
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                disabled={currentPage <= 1}
+                onClick={() => { setCurrentPage(p => Math.max(1, p - 1)); window.scrollTo({ top: 0, behavior: 'smooth' }); }}
+                className="px-3 py-1.5 rounded-lg border border-slate-200 text-xs font-bold text-slate-700 disabled:opacity-40 disabled:cursor-not-allowed hover:bg-slate-50 cursor-pointer"
+              >
+                Previous
+              </button>
+              <span className="text-xs font-black text-slate-700 px-2">
+                Page {currentPage} of {totalPages}
+              </span>
+              <button
+                type="button"
+                disabled={currentPage >= totalPages}
+                onClick={() => { setCurrentPage(p => Math.min(totalPages, p + 1)); window.scrollTo({ top: 0, behavior: 'smooth' }); }}
+                className="px-3 py-1.5 rounded-lg border border-slate-200 text-xs font-bold text-slate-700 disabled:opacity-40 disabled:cursor-not-allowed hover:bg-slate-50 cursor-pointer"
+              >
+                Next
+              </button>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Add Challan Modal (B2B or Standard Lead) */}
@@ -1955,45 +1996,52 @@ export const Challans: React.FC = () => {
                               No matching leads found for "{leadSearchQuery}"
                             </div>
                           ) : (
-                            filteredLeads.map(l => (
-                              <div
-                                key={l.id}
-                                onClick={() => handleSelectLead(l)}
-                                className={`p-3 hover:bg-emerald-50/80 cursor-pointer transition-colors flex items-center justify-between gap-3 ${
-                                  selectedLeadId === l.id ? 'bg-emerald-50 border-l-4 border-emerald-600' : ''
-                                }`}
-                              >
-                                <div className="min-w-0 flex-1">
-                                  <div className="flex items-center gap-2">
-                                    <span className="font-extrabold text-slate-900 text-xs truncate">{l.name}</span>
-                                    <span className={`px-2 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wider ${
-                                      l.status === 'confirmed' ? 'bg-emerald-100 text-emerald-800' :
-                                      l.status === 'installed' ? 'bg-indigo-100 text-indigo-800' :
-                                      l.status === 'quotation_sent' ? 'bg-amber-100 text-amber-800' :
-                                      'bg-slate-100 text-slate-600'
-                                    }`}>
-                                      {l.status?.replace('_', ' ')}
-                                    </span>
-                                  </div>
-                                  <div className="text-[11px] text-slate-500 flex flex-wrap items-center gap-x-3 gap-y-0.5 mt-0.5">
-                                    <span className="flex items-center gap-1 font-semibold text-slate-700">
-                                      📞 {l.phoneNumber}
-                                    </span>
-                                    {l.requirement && (
-                                      <span className="text-emerald-700 font-bold truncate">
-                                        ⚡ {l.requirement}
-                                      </span>
-                                    )}
-                                  </div>
-                                </div>
-                                <button
-                                  type="button"
-                                  className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-[10px] font-bold shrink-0 shadow-xs cursor-pointer"
+                            <>
+                              {filteredLeads.slice(0, 30).map(l => (
+                                <div
+                                  key={l.id}
+                                  onClick={() => handleSelectLead(l)}
+                                  className={`p-3 hover:bg-emerald-50/80 cursor-pointer transition-colors flex items-center justify-between gap-3 ${
+                                    selectedLeadId === l.id ? 'bg-emerald-50 border-l-4 border-emerald-600' : ''
+                                  }`}
                                 >
-                                  Select
-                                </button>
-                              </div>
-                            ))
+                                  <div className="min-w-0 flex-1">
+                                    <div className="flex items-center gap-2">
+                                      <span className="font-extrabold text-slate-900 text-xs truncate">{l.name}</span>
+                                      <span className={`px-2 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wider ${
+                                        l.status === 'confirmed' ? 'bg-emerald-100 text-emerald-800' :
+                                        l.status === 'installed' ? 'bg-indigo-100 text-indigo-800' :
+                                        l.status === 'quotation_sent' ? 'bg-amber-100 text-amber-800' :
+                                        'bg-slate-100 text-slate-600'
+                                      }`}>
+                                        {l.status?.replace('_', ' ')}
+                                      </span>
+                                    </div>
+                                    <div className="text-[11px] text-slate-500 flex flex-wrap items-center gap-x-3 gap-y-0.5 mt-0.5">
+                                      <span className="flex items-center gap-1 font-semibold text-slate-700">
+                                        📞 {l.phoneNumber}
+                                      </span>
+                                      {l.requirement && (
+                                        <span className="text-emerald-700 font-bold truncate">
+                                          ⚡ {l.requirement}
+                                        </span>
+                                      )}
+                                    </div>
+                                  </div>
+                                  <button
+                                    type="button"
+                                    className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-[10px] font-bold shrink-0 shadow-xs cursor-pointer"
+                                  >
+                                    Select
+                                  </button>
+                                </div>
+                              ))}
+                              {filteredLeads.length > 30 && (
+                                <div className="p-2.5 text-center text-[10px] font-bold text-slate-500 bg-slate-50 border-t border-slate-100">
+                                  Showing top 30 of {filteredLeads.length} leads. Type name or phone to narrow down search.
+                                </div>
+                              )}
+                            </>
                           )}
                         </div>
                       )}

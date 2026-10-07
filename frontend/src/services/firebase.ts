@@ -560,8 +560,10 @@ export async function saveRecordToFirestore(collectionName: string, id: string, 
     if (res.ok) {
       dequeuePendingSave(collectionName, id);
       console.log(`✅ MongoDB synced [${collectionName}/${id}] -> DB: [green_energy_crm]`);
-      // Broadcast update across tabs
-      broadcastDataUpdate(collectionName, id);
+      // Broadcast update across tabs (skip deletedRecords tombstones to prevent storm)
+      if (collectionName !== 'deletedRecords') {
+        broadcastDataUpdate(collectionName, id);
+      }
       return;
     }
   } catch (err) {
@@ -678,13 +680,14 @@ export async function syncAllLocalDataToFirestore(force: boolean = false): Promi
       if (bRes.ok) {
         const bData = await bRes.json();
         if (bData && bData.success) {
-          if (Array.isArray(bData.deletedRecords)) {
-            for (const rd of bData.deletedRecords) {
-              if (rd.id) {
-                deletedIds.add(rd.id);
-                await markRecordAsDeleted(rd.id, rd.collectionName || 'leads');
-              }
-            }
+          if (Array.isArray(bData.deletedRecords) && bData.deletedRecords.length > 0) {
+            const toPut = bData.deletedRecords.filter((rd: any) => rd?.id).map((rd: any) => ({
+              id: rd.id,
+              collectionName: rd.collectionName || 'leads',
+              deletedAt: rd.deletedAt || new Date().toISOString()
+            }));
+            for (const item of toPut) deletedIds.add(item.id);
+            await db.deletedRecords.bulkPut(toPut).catch(() => {});
           }
           if (Array.isArray(bData.leads) && bData.leads.length > 0) {
             const valid = bData.leads.filter((l: any) => l?.id && !deletedIds.has(l.id));
@@ -728,14 +731,15 @@ export async function syncAllLocalDataToFirestore(force: boolean = false): Promi
 
     // 1. Fetch remote deletedRecords tombstones first
     try {
-      const remoteDeleted = await fetchCollectionFromFirestore<{ id: string; collectionName: string }>('deletedRecords', 4000);
-      if (Array.isArray(remoteDeleted)) {
-        for (const rd of remoteDeleted) {
-          if (rd.id) {
-            deletedIds.add(rd.id);
-            await markRecordAsDeleted(rd.id, rd.collectionName || 'leads');
-          }
-        }
+      const remoteDeleted = await fetchCollectionFromFirestore<{ id: string; collectionName: string; deletedAt?: string }>('deletedRecords', 4000);
+      if (Array.isArray(remoteDeleted) && remoteDeleted.length > 0) {
+        const toPut = remoteDeleted.filter((rd: any) => rd?.id).map((rd: any) => ({
+          id: rd.id,
+          collectionName: rd.collectionName || 'leads',
+          deletedAt: rd.deletedAt || new Date().toISOString()
+        }));
+        for (const item of toPut) deletedIds.add(item.id);
+        await db.deletedRecords.bulkPut(toPut).catch(() => {});
       }
     } catch (_) {}
 
@@ -1184,7 +1188,7 @@ export function connectCrossDeviceRealtimeStream(): void {
           const { db, getDeletedRecordIdsSet, markRecordAsDeleted } = await import('./db');
 
           if (action === 'delete') {
-            await markRecordAsDeleted(id, collection);
+            await markRecordAsDeleted(id, collection, false);
             if ((db as any)[collection]) {
               await (db as any)[collection].delete(id).catch(() => {});
             }

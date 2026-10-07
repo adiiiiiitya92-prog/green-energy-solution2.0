@@ -1,5 +1,5 @@
 import React, { useEffect, Suspense, lazy } from 'react';
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { useAuthStore } from './store/authStore';
 import { Layout } from './components/Common/Layout';
 
@@ -10,16 +10,16 @@ function lazyWithRetry<T extends React.ComponentType<any>>(
   return lazy(async () => {
     try {
       return await componentImport();
-    } catch (error) {
-      // First attempt a brief 300ms retry (handles transient Vite dev re-optimizations or brief network hiccup)
+    } catch (error: any) {
+      // First attempt a brief 300ms retry (handles brief network glitch)
       try {
         await new Promise(r => setTimeout(r, 300));
         return await componentImport();
-      } catch (retryError) {
+      } catch (retryError: any) {
         if (!import.meta.env.DEV) {
-          const reloadKey = 'ges_lazy_reload_' + window.location.pathname;
-          if (!sessionStorage.getItem(reloadKey)) {
-            sessionStorage.setItem(reloadKey, '1');
+          const lastReload = Number(sessionStorage.getItem('ges_last_chunk_reload') || 0);
+          if (Date.now() - lastReload > 10000) {
+            sessionStorage.setItem('ges_last_chunk_reload', String(Date.now()));
             window.location.reload();
             return new Promise<{ default: T }>(() => {});
           }
@@ -30,16 +30,21 @@ function lazyWithRetry<T extends React.ComponentType<any>>(
   });
 }
 
+interface ErrorBoundaryProps {
+  children: React.ReactNode;
+  locationKey?: string;
+}
+
 interface ErrorBoundaryState {
   hasError: boolean;
   error?: Error;
 }
 
-class RouteErrorBoundary extends React.Component<
-  { children: React.ReactNode },
+class RouteErrorBoundaryClass extends React.Component<
+  ErrorBoundaryProps,
   ErrorBoundaryState
 > {
-  constructor(props: { children: React.ReactNode }) {
+  constructor(props: ErrorBoundaryProps) {
     super(props);
     this.state = { hasError: false };
   }
@@ -50,6 +55,13 @@ class RouteErrorBoundary extends React.Component<
 
   componentDidCatch(error: Error, errorInfo: React.ErrorInfo) {
     console.warn('RouteErrorBoundary caught an error:', error, errorInfo);
+  }
+
+  componentDidUpdate(prevProps: ErrorBoundaryProps) {
+    // Automatically reset error state whenever user navigates to another section!
+    if (prevProps.locationKey !== this.props.locationKey && this.state.hasError) {
+      this.setState({ hasError: false, error: undefined });
+    }
   }
 
   handleRetry = () => {
@@ -66,11 +78,11 @@ class RouteErrorBoundary extends React.Component<
           </div>
           <h2 className="text-xl font-bold text-slate-800 tracking-tight">Section Updated</h2>
           <p className="text-sm text-slate-500 max-w-md">
-            This module has updated. Click below to refresh and load the latest view.
+            This module has updated with the latest version. Click below to reload and view latest updates.
           </p>
           <button
             onClick={this.handleRetry}
-            className="px-6 py-2.5 bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white font-semibold rounded-xl text-sm shadow-md transition"
+            className="px-6 py-2.5 bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white font-semibold rounded-xl text-sm shadow-md transition cursor-pointer"
           >
             Refresh View
           </button>
@@ -80,6 +92,15 @@ class RouteErrorBoundary extends React.Component<
     return this.props.children;
   }
 }
+
+const RouteErrorBoundary: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const location = useLocation();
+  return (
+    <RouteErrorBoundaryClass locationKey={location.pathname} key={location.pathname}>
+      {children}
+    </RouteErrorBoundaryClass>
+  );
+};
 
 const Login = lazyWithRetry(() => import('./views/Login').then(m => ({ default: m.Login })));
 const Dashboard = lazyWithRetry(() => import('./views/SuperAdmin/Dashboard').then(m => ({ default: m.Dashboard })));

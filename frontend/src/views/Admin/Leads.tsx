@@ -507,6 +507,29 @@ export const Leads: React.FC = () => {
   const [reportEndDate, setReportEndDate] = useState('');
   const [balanceFilter, setBalanceFilter] = useState<'all' | 'pending' | 'partially_paid' | 'fully_paid' | 'no_quote'>('all');
 
+  // ⚡ High-Performance Virtual Pagination (Prevents Browser Out Of Memory Crashes with 8,000+ leads)
+  const [currentPage, setCurrentPage] = useState<number>(1);
+  const [pageSize, setPageSize] = useState<number>(40);
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [
+    searchTerm,
+    statusFilter,
+    employeeFilter,
+    hotFilter,
+    loanFilter,
+    dispatchFilter,
+    rawFilter,
+    balanceFilter,
+    confirmedDateFilterType,
+    confirmedFilterDate,
+    confirmedFilterMonth,
+    confirmedFilterYear,
+    confirmedFilterStartDate,
+    confirmedFilterEndDate
+  ]);
+
   const leadFinancialMap = React.useMemo(() => {
     const map: Record<string, LeadReportItem> = {};
     if (!Array.isArray(leads) || leads.length === 0) return map;
@@ -1143,6 +1166,37 @@ export const Leads: React.FC = () => {
         followUpCompleted: false
       });
 
+      const optimisticLead: Lead = {
+        id: newLeadId,
+        name: leadName.trim(),
+        phoneNumber: leadPhone.trim(),
+        email: leadEmail.trim() || undefined,
+        requirement: leadRequirement.trim(),
+        description: leadDescription.trim(),
+        assignedSalesPersonId: salesId,
+        assignedAdminId: adminId,
+        assignedEmployeeId: salesId || adminId,
+        createdBy: currentUser?.fullName || currentUser?.id || 'Admin',
+        createdByDealer: isDealer || undefined,
+        dealerId: isDealer ? currentUser?.id : undefined,
+        dealerName: isDealer ? (currentUser?.fullName || 'Authorized Dealer') : undefined,
+        status: 'new',
+        isHot: leadIsHot,
+        clientRating: leadIsHot ? 5 : 3,
+        isLoan: leadIsLoan,
+        loanBankName: leadIsLoan ? leadLoanBankName.trim() || undefined : undefined,
+        nextFollowUpDate: formattedFollowUpDate,
+        followUpNotes: leadFollowUpNotes.trim() || undefined,
+        followUpSetAt: formattedFollowUpDate ? nowIso : undefined,
+        followUpSetBy: formattedFollowUpDate ? (currentUser?.fullName || 'Admin') : undefined,
+        followUpCompleted: false,
+        createdAt: nowIso,
+        updatedAt: nowIso
+      };
+
+      // ⚡ Optimistic UI update: prepend to list instantly
+      setLeads(prev => [optimisticLead, ...prev]);
+
       // Reset
       localStorage.removeItem('draft_lead_form');
       setLeadName('');
@@ -1163,15 +1217,7 @@ export const Leads: React.FC = () => {
 
       // Switch filter to 'all' so that the new lead is immediately visible in the list
       handleSetRawFilter('all');
-
-      await loadData();
-      if (newLeadId) {
-        const freshLead = await leadService.getLeadById(newLeadId);
-        if (freshLead) {
-          handleSelectLead(freshLead, true);
-        }
-      }
-      window.dispatchEvent(new CustomEvent('app-realtime-update'));
+      handleSelectLead(optimisticLead, true);
     } catch (err: any) {
       console.error('Error creating lead:', err);
       alert(`❌ Failed to create lead: ${err?.message || 'Unknown error'}`);
@@ -1306,10 +1352,17 @@ export const Leads: React.FC = () => {
     const isSuperAdmin = currentRole === 'super_admin' || currentUser?.role === 'super_admin';
     if (isSuperAdmin) {
       if (confirm('WARNING: Are you sure you want to permanently delete this lead?')) {
-        await leadService.deleteLead(id, true);
-        alert('Lead permanently deleted.');
-        setSelectedLead(null);
-        loadData();
+        // ⚡ Optimistic UI update: remove instantly from UI (0ms lag!)
+        setLeads(prev => prev.filter(l => l.id !== id));
+        if (selectedLead?.id === id) {
+          setSelectedLead(null);
+        }
+        try {
+          await leadService.deleteLead(id, true);
+        } catch (err) {
+          console.error('Delete failed:', err);
+          loadData(); // Revert on failure
+        }
       }
       return;
     }
@@ -4754,42 +4807,46 @@ export const Leads: React.FC = () => {
               })()}
             </div>
           ) : (() => {
-            const rawLeadsCount = leads.filter(l => {
-              const fin = leadFinancialMap[l.id];
-              const hasNoPayment = !fin || (fin.paidAmount || 0) === 0;
-              return (l.status === 'new' || l.status === 'quotation_sent') && hasNoPayment && !dispatchedLeadIds.has(l.id);
-            }).length;
-
-            const confirmedLeadsCount = leads.filter(l => {
-              const fin = leadFinancialMap[l.id];
-              const hasPayment = !!fin && (fin.paidAmount || 0) > 0;
-              const isDispatched = dispatchedLeadIds.has(l.id);
-              const isRaw = (l.status === 'new' || l.status === 'quotation_sent') && !hasPayment && !isDispatched;
-              return !isRaw;
-            }).length;
-
-            const pendingBalanceLeadsCount = leads.filter(l => {
-              const fin = leadFinancialMap[l.id];
-              const hasPayment = !!fin && (fin.paidAmount || 0) > 0;
-              const isDispatched = dispatchedLeadIds.has(l.id);
-              const isRaw = (l.status === 'new' || l.status === 'quotation_sent') && !hasPayment && !isDispatched;
-              return !isRaw && fin && fin.pendingBalance > 0;
-            }).length;
-
-            const hotLeadsCount = leads.filter(l => {
-              const fin = leadFinancialMap[l.id];
-              const hasPayment = !!fin && (fin.paidAmount || 0) > 0;
-              const isConfirmedOrPaid = ['confirmed', 'registered', 'installed', 'closed'].includes(l.status) || hasPayment;
-              return (l.isHot || (l.clientRating && l.clientRating >= 4)) && !isConfirmedOrPaid;
-            }).length;
-
-            const processDonePaymentDueCount = leads.filter(l => {
-              const isProcessDone = (l.status === 'closed' || l.status === 'installed' || dispatchedLeadIds.has(l.id) || installationEvidenceLeadIds.has(l.id));
-              const fin = leadFinancialMap[l.id];
-              return isProcessDone && fin && fin.pendingBalance > 0;
-            }).length;
-
-            const loanLeadsCount = leads.filter(l => Boolean(l.isLoan)).length;
+            const {
+              rawLeadsCount,
+              confirmedLeadsCount,
+              pendingBalanceLeadsCount,
+              hotLeadsCount,
+              processDonePaymentDueCount,
+              loanLeadsCount
+            } = (() => {
+              let raw = 0, confirmed = 0, pending = 0, hot = 0, processDone = 0, loan = 0;
+              for (let i = 0; i < leads.length; i++) {
+                const l = leads[i];
+                if (l.isLoan) loan++;
+                const fin = leadFinancialMap[l.id];
+                const hasPayment = Boolean(fin && (fin.paidAmount || 0) > 0);
+                const isDispatched = dispatchedLeadIds.has(l.id);
+                const isRaw = (l.status === 'new' || l.status === 'quotation_sent') && !hasPayment && !isDispatched;
+                if (isRaw) {
+                  raw++;
+                } else {
+                  confirmed++;
+                  if (fin && fin.pendingBalance > 0) pending++;
+                }
+                const isConfirmedOrPaid = ['confirmed', 'registered', 'installed', 'closed'].includes(l.status) || hasPayment;
+                if ((l.isHot || (l.clientRating && l.clientRating >= 4)) && !isConfirmedOrPaid) {
+                  hot++;
+                }
+                const isProcDone = (l.status === 'closed' || l.status === 'installed' || isDispatched || installationEvidenceLeadIds.has(l.id));
+                if (isProcDone && fin && fin.pendingBalance > 0) {
+                  processDone++;
+                }
+              }
+              return {
+                rawLeadsCount: raw,
+                confirmedLeadsCount: confirmed,
+                pendingBalanceLeadsCount: pending,
+                hotLeadsCount: hot,
+                processDonePaymentDueCount: processDone,
+                loanLeadsCount: loan
+              };
+            })();
 
             const filteredLeads = leads.filter(lead => {
               const searchStr = (searchTerm || '').toLowerCase().trim();
@@ -4892,6 +4949,12 @@ export const Leads: React.FC = () => {
 
               return matchesSearch && matchesStatus && matchesEmployee && matchesHot && matchesBalance && matchesDispatch && matchesRaw && matchesLoan && matchesConfirmedDate;
             });
+
+            // ⚡ Pagination calculations (40 leads per page keeps DOM size below 1,500 nodes)
+            const totalPages = Math.ceil(filteredLeads.length / pageSize) || 1;
+            const validCurrentPage = Math.min(Math.max(1, currentPage), totalPages);
+            const startIndex = (validCurrentPage - 1) * pageSize;
+            const paginatedLeads = filteredLeads.slice(startIndex, startIndex + pageSize);
 
             return (
               <>
@@ -5572,9 +5635,71 @@ export const Leads: React.FC = () => {
                   </div>
                 )}
 
+                {/* Top Pagination Bar */}
+                {totalPages > 1 && (
+                  <div className="flex flex-col sm:flex-row items-center justify-between gap-3 bg-white p-3 rounded-2xl border border-slate-200 shadow-2xs">
+                    <div className="flex items-center gap-2 text-xs font-bold text-slate-600">
+                      <span>Showing</span>
+                      <span className="text-slate-900 font-extrabold font-mono">
+                        {(startIndex + 1).toLocaleString()} - {Math.min(startIndex + pageSize, filteredLeads.length).toLocaleString()}
+                      </span>
+                      <span>of</span>
+                      <span className="text-emerald-700 font-extrabold font-mono">{filteredLeads.length.toLocaleString()}</span>
+                      <span>Leads</span>
+                    </div>
+
+                    <div className="flex items-center gap-1.5 flex-wrap justify-center">
+                      <button
+                        type="button"
+                        disabled={validCurrentPage === 1}
+                        onClick={() => {
+                          setCurrentPage(prev => Math.max(1, prev - 1));
+                          window.scrollTo({ top: 0, behavior: 'smooth' });
+                        }}
+                        className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 disabled:opacity-40 disabled:hover:bg-slate-100 text-slate-700 rounded-xl text-xs font-bold transition-all cursor-pointer disabled:cursor-not-allowed flex items-center gap-1"
+                      >
+                        <ChevronLeft className="w-3.5 h-3.5" />
+                        <span>Prev</span>
+                      </button>
+
+                      <span className="px-3 py-1 text-xs font-bold text-slate-700 bg-slate-50 border border-slate-200 rounded-xl">
+                        Page <span className="font-extrabold text-slate-900">{validCurrentPage}</span> of <span className="font-extrabold text-slate-900">{totalPages}</span>
+                      </span>
+
+                      <button
+                        type="button"
+                        disabled={validCurrentPage >= totalPages}
+                        onClick={() => {
+                          setCurrentPage(prev => Math.min(totalPages, prev + 1));
+                          window.scrollTo({ top: 0, behavior: 'smooth' });
+                        }}
+                        className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 disabled:opacity-40 disabled:hover:bg-slate-100 text-slate-700 rounded-xl text-xs font-bold transition-all cursor-pointer disabled:cursor-not-allowed flex items-center gap-1"
+                      >
+                        <span>Next</span>
+                        <ChevronLeft className="w-3.5 h-3.5 rotate-180" />
+                      </button>
+
+                      <select
+                        value={pageSize}
+                        onChange={(e) => {
+                          setPageSize(Number(e.target.value));
+                          setCurrentPage(1);
+                        }}
+                        className="ml-2 px-2.5 py-1.5 bg-slate-100 border border-slate-200 rounded-xl text-xs font-bold text-slate-700 cursor-pointer"
+                        title="Items per page"
+                      >
+                        <option value={20}>20 / page</option>
+                        <option value={40}>40 / page</option>
+                        <option value={80}>80 / page</option>
+                        <option value={150}>150 / page</option>
+                      </select>
+                    </div>
+                  </div>
+                )}
+
                 {/* Leads Cards Grid */}
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  {filteredLeads.map((lead) => {
+                  {paginatedLeads.map((lead) => {
                     const isHot = lead.isHot || (lead.clientRating && lead.clientRating >= 4);
                     const rating = lead.clientRating || (lead.isHot ? 5 : 0);
                     const fin = leadFinancialMap[lead.id];
@@ -5998,6 +6123,68 @@ export const Leads: React.FC = () => {
                     </div>
                   )}
                 </div>
+
+                {/* Bottom Pagination Bar */}
+                {totalPages > 1 && (
+                  <div className="flex flex-col sm:flex-row items-center justify-between gap-3 bg-white p-3 rounded-2xl border border-slate-200 shadow-2xs mt-4">
+                    <div className="flex items-center gap-2 text-xs font-bold text-slate-600">
+                      <span>Showing</span>
+                      <span className="text-slate-900 font-extrabold font-mono">
+                        {(startIndex + 1).toLocaleString()} - {Math.min(startIndex + pageSize, filteredLeads.length).toLocaleString()}
+                      </span>
+                      <span>of</span>
+                      <span className="text-emerald-700 font-extrabold font-mono">{filteredLeads.length.toLocaleString()}</span>
+                      <span>Leads</span>
+                    </div>
+
+                    <div className="flex items-center gap-1.5 flex-wrap justify-center">
+                      <button
+                        type="button"
+                        disabled={validCurrentPage === 1}
+                        onClick={() => {
+                          setCurrentPage(prev => Math.max(1, prev - 1));
+                          window.scrollTo({ top: 0, behavior: 'smooth' });
+                        }}
+                        className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 disabled:opacity-40 disabled:hover:bg-slate-100 text-slate-700 rounded-xl text-xs font-bold transition-all cursor-pointer disabled:cursor-not-allowed flex items-center gap-1"
+                      >
+                        <ChevronLeft className="w-3.5 h-3.5" />
+                        <span>Prev</span>
+                      </button>
+
+                      <span className="px-3 py-1 text-xs font-bold text-slate-700 bg-slate-50 border border-slate-200 rounded-xl">
+                        Page <span className="font-extrabold text-slate-900">{validCurrentPage}</span> of <span className="font-extrabold text-slate-900">{totalPages}</span>
+                      </span>
+
+                      <button
+                        type="button"
+                        disabled={validCurrentPage >= totalPages}
+                        onClick={() => {
+                          setCurrentPage(prev => Math.min(totalPages, prev + 1));
+                          window.scrollTo({ top: 0, behavior: 'smooth' });
+                        }}
+                        className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 disabled:opacity-40 disabled:hover:bg-slate-100 text-slate-700 rounded-xl text-xs font-bold transition-all cursor-pointer disabled:cursor-not-allowed flex items-center gap-1"
+                      >
+                        <span>Next</span>
+                        <ChevronLeft className="w-3.5 h-3.5 rotate-180" />
+                      </button>
+
+                      <select
+                        value={pageSize}
+                        onChange={(e) => {
+                          setPageSize(Number(e.target.value));
+                          setCurrentPage(1);
+                        }}
+                        className="ml-2 px-2.5 py-1.5 bg-slate-100 border border-slate-200 rounded-xl text-xs font-bold text-slate-700 cursor-pointer"
+                        title="Items per page"
+                      >
+                        <option value={20}>20 / page</option>
+                        <option value={40}>40 / page</option>
+                        <option value={80}>80 / page</option>
+                        <option value={150}>150 / page</option>
+                      </select>
+                    </div>
+                  </div>
+                )}
               </>
             );
           })()}

@@ -344,16 +344,16 @@ export const leadService = {
     for (const sa of shadows) await markRecordAsDeleted(sa.id, 'shadowAnalyses');
 
     // 4. Remote wipe from Cloud Firestore & Backend REST API
-    deleteRecordFromFirestore('leads', id);
-    deleteRecordFromFirestore('clientRegistrations', id);
-    for (const q of quotes) deleteRecordFromFirestore('quotations', q.id);
-    for (const oc of ocs) deleteRecordFromFirestore('orderConfirmations', oc.id);
-    for (const cd of clientDocs) deleteRecordFromFirestore('clientDocuments', cd.id);
-    for (const p of photos) deleteRecordFromFirestore('installationPhotos', p.id);
-    for (const r of releases) deleteRecordFromFirestore('releaseDocuments', r.id);
-    for (const v of visits) deleteRecordFromFirestore('fieldVisitReports', v.id);
-    for (const ch of challans) deleteRecordFromFirestore('challans', ch.id);
-    for (const sa of shadows) deleteRecordFromFirestore('shadowAnalyses', sa.id);
+    deleteRecordFromFirestore('leads', id); // Sends single broadcast for this lead
+    deleteRecordFromFirestore('clientRegistrations', id, true);
+    for (const q of quotes) deleteRecordFromFirestore('quotations', q.id, true);
+    for (const oc of ocs) deleteRecordFromFirestore('orderConfirmations', oc.id, true);
+    for (const cd of clientDocs) deleteRecordFromFirestore('clientDocuments', cd.id, true);
+    for (const p of photos) deleteRecordFromFirestore('installationPhotos', p.id, true);
+    for (const r of releases) deleteRecordFromFirestore('releaseDocuments', r.id, true);
+    for (const v of visits) deleteRecordFromFirestore('fieldVisitReports', v.id, true);
+    for (const ch of challans) deleteRecordFromFirestore('challans', ch.id, true);
+    for (const sa of shadows) deleteRecordFromFirestore('shadowAnalyses', sa.id, true);
 
     fetch(`${BACKEND_URL}/api/leads/${id}`, { method: 'DELETE' }).catch(() => {});
     return { success: true };

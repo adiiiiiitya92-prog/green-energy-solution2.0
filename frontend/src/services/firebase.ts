@@ -629,7 +629,7 @@ export async function fetchCollectionFromFirestore<T extends { id?: string; isDe
 /**
  * Deletes a document from MongoDB Atlas via Backend API
  */
-export async function deleteRecordFromFirestore(collectionName: string, id: string): Promise<void> {
+export async function deleteRecordFromFirestore(collectionName: string, id: string, silent: boolean = false): Promise<void> {
   if (!id) return;
   try {
     const res = await fetch(buildApiUrl(`/api/firestore/${encodeCollectionPath(collectionName)}/${encodeURIComponent(id)}`), {
@@ -637,7 +637,9 @@ export async function deleteRecordFromFirestore(collectionName: string, id: stri
     });
     if (res.ok) {
       console.log(`🗑️ MongoDB deleted [${collectionName}/${id}]`);
-      broadcastDataUpdate(collectionName, id);
+      if (!silent) {
+        broadcastDataUpdate(collectionName, id);
+      }
     }
   } catch (err) {
     console.warn(`MongoDB delete note [${collectionName}/${id}]:`, err);

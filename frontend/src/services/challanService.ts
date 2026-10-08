@@ -4,13 +4,26 @@ import { saveRecordToFirestore, fetchCollectionFromFirestore } from './firebase'
 import { b2bBusinessService } from './b2bBusinessService';
 import { stockTransactionService } from './stockTransactionService';
 
-const BACKEND_URL = import.meta.env.DEV ? '' : (import.meta.env.VITE_BACKEND_URL || '');
+const DEFAULT_VPS_BACKEND = 'https://solar.187.126.120.54.sslip.io';
+const BACKEND_URL = import.meta.env.DEV ? '' : (import.meta.env.VITE_BACKEND_URL || DEFAULT_VPS_BACKEND);
 
 let lastChallanRemoteSync = 0;
 const CHALLAN_SYNC_INTERVAL = 30 * 1000; // 30 seconds fresh sync throttle
 let activeChallanSyncPromise: Promise<void> | null = null;
 
 export const challanService = {
+  async getChallansByLeadId(leadId: string): Promise<Challan[]> {
+    if (!leadId) return [];
+    try {
+      const all = await this.getChallans();
+      const cleanLeadId = String(leadId).trim();
+      return all.filter(c => String(c.leadId || '').trim() === cleanLeadId);
+    } catch (err) {
+      console.warn('Error fetching challans by leadId:', err);
+      const local = await db.challans.where({ leadId }).toArray().catch(() => []);
+      return local;
+    }
+  },
   async getChallans(forceFresh: boolean = false): Promise<Challan[]> {
     const deletedIds = await getDeletedRecordIdsSet(forceFresh);
     const localChallans = await db.challans.orderBy('createdAt').reverse().toArray();

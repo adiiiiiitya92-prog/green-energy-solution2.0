@@ -2,7 +2,8 @@ import { db, markRecordAsDeleted, getDeletedRecordIdsSet } from './db';
 import type { Lead, Profile } from '../types';
 import { saveRecordToFirestore, deleteRecordFromFirestore, fetchCollectionFromFirestore } from './firebase';
 
-const BACKEND_URL = import.meta.env.DEV ? '' : (import.meta.env.VITE_BACKEND_URL || '');
+const DEFAULT_VPS_BACKEND = 'https://solar.187.126.120.54.sslip.io';
+const BACKEND_URL = import.meta.env.DEV ? '' : (import.meta.env.VITE_BACKEND_URL || DEFAULT_VPS_BACKEND);
 
 export const filterLeadsForUser = (
   leads: Lead[],

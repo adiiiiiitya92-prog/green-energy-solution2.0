@@ -2,7 +2,8 @@ import { db } from './db';
 import type { StockTransaction, Product } from '../types';
 import { saveRecordToFirestore, fetchCollectionFromFirestore } from './firebase';
 
-const BACKEND_URL = import.meta.env.DEV ? '' : (import.meta.env.VITE_BACKEND_URL || '');
+const DEFAULT_VPS_BACKEND = 'https://solar.187.126.120.54.sslip.io';
+const BACKEND_URL = import.meta.env.DEV ? '' : (import.meta.env.VITE_BACKEND_URL || DEFAULT_VPS_BACKEND);
 
 export const stockTransactionService = {
   async addTransaction(txn: Omit<StockTransaction, 'id'>): Promise<string> {

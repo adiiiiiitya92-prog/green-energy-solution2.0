@@ -1,7 +1,8 @@
 import { compressImage, compressDataUrl, type ImageCompressionConfig } from './imageCompressionService';
 
 // Backend API URL (relies on current origin / Vite proxy or explicit backend URL)
-const BACKEND_URL = import.meta.env.DEV ? "" : (import.meta.env.VITE_BACKEND_URL || "");
+export const DEFAULT_VPS_BACKEND = "https://solar.187.126.120.54.sslip.io";
+const BACKEND_URL = import.meta.env.DEV ? "" : (import.meta.env.VITE_BACKEND_URL || DEFAULT_VPS_BACKEND);
 const buildApiUrl = (path: string) => `${BACKEND_URL}${path}`;
 
 // Safe compatibility stub for legacy auth import
@@ -216,13 +217,14 @@ export async function getMasterB2DownloadAuth(): Promise<B2CachedAuth | null> {
 
   pendingAuthPromise = (async () => {
     try {
-      const backendUrl = import.meta.env.VITE_BACKEND_URL || '';
+      const backendUrl = import.meta.env.VITE_BACKEND_URL || DEFAULT_VPS_BACKEND;
       const currentOrigin = typeof window !== 'undefined' ? window.location.origin : '';
       const authEndpoints = Array.from(new Set([
         buildApiUrl('/api/b2-upload-url'),
+        backendUrl ? `${backendUrl}/api/b2-upload-url` : '',
+        `${DEFAULT_VPS_BACKEND}/api/b2-upload-url`,
         '/api/b2-upload-url',
         `${currentOrigin}/api/b2-upload-url`,
-        backendUrl ? `${backendUrl}/api/b2-upload-url` : '',
         '/.netlify/functions/b2-upload-url'
       ])).filter(Boolean);
 
@@ -293,26 +295,35 @@ if (typeof window !== 'undefined') {
   }, 100);
 }
 
+export function extractCleanB2Path(storagePathOrUrl: string): string {
+  if (!storagePathOrUrl || typeof storagePathOrUrl !== 'string') return '';
+  const trimmed = storagePathOrUrl.trim();
+  if (trimmed.startsWith('data:') || trimmed.startsWith('blob:')) return '';
+  let path = trimmed;
+  if (path.includes('/file/')) {
+    path = path.replace(/^https?:\/\/[^\/]+\/file\/[^\/]+\//i, '');
+  } else if (path.startsWith('http://') || path.startsWith('https://')) {
+    if (!path.includes('backblazeb2.com') && !path.includes('api/files/')) {
+      return ''; // External non-B2 URL, leave as is
+    }
+    path = path.replace(/^https?:\/\/[^\/]+\/api\/files\//i, '');
+  }
+  return path.split('?')[0].replace(/^\/+/, '');
+}
+
 export function getQuickB2Url(storagePathOrUrl: any): string {
   if (!storagePathOrUrl) return '';
   if (typeof storagePathOrUrl !== 'string') return '';
   if (storagePathOrUrl.startsWith('data:') || storagePathOrUrl.startsWith('blob:')) {
     return storagePathOrUrl;
   }
-  if (!storagePathOrUrl.includes('backblazeb2.com') && !storagePathOrUrl.includes('/file/')) {
+  const cleanPath = extractCleanB2Path(storagePathOrUrl);
+  if (!cleanPath) {
     return storagePathOrUrl;
   }
-
-  let cleanPath = storagePathOrUrl.replace(/^https?:\/\/[^\/]+\/file\/[^\/]+\//, '');
-  cleanPath = cleanPath.split('?')[0].replace(/^\/+/, '');
-  if (!cleanPath) return storagePathOrUrl;
 
   if (b2AuthCache && b2AuthCache.downloadAuthToken) {
     return `${b2AuthCache.downloadUrl}/file/${b2AuthCache.bucketName}/${cleanPath}?Authorization=${encodeURIComponent(b2AuthCache.downloadAuthToken)}`;
-  }
-
-  if (storagePathOrUrl.includes('Authorization=')) {
-    return storagePathOrUrl;
   }
 
   getMasterB2DownloadAuth().then((auth) => {
@@ -320,7 +331,8 @@ export function getQuickB2Url(storagePathOrUrl: any): string {
       window.dispatchEvent(new CustomEvent('b2-auth-refreshed'));
     }
   }).catch(() => {});
-  return storagePathOrUrl.split('?')[0];
+
+  return `${DEFAULT_VPS_BACKEND}/api/files/${cleanPath}`;
 }
 
 export async function getFreshB2SignedUrl(storagePathOrUrl: string): Promise<string> {
@@ -329,13 +341,11 @@ export async function getFreshB2SignedUrl(storagePathOrUrl: string): Promise<str
   if (storagePathOrUrl.startsWith('data:') || storagePathOrUrl.startsWith('blob:')) {
     return storagePathOrUrl;
   }
-  if (!storagePathOrUrl.includes('backblazeb2.com') && !storagePathOrUrl.includes('/file/')) {
+
+  const cleanPath = extractCleanB2Path(storagePathOrUrl);
+  if (!cleanPath) {
     return storagePathOrUrl;
   }
-
-  let cleanPath = storagePathOrUrl.replace(/^https?:\/\/[^\/]+\/file\/[^\/]+\//, '');
-  cleanPath = cleanPath.split('?')[0].replace(/^\/+/, '');
-  if (!cleanPath) return storagePathOrUrl;
 
   try {
     const auth = await getMasterB2DownloadAuth();
@@ -346,11 +356,7 @@ export async function getFreshB2SignedUrl(storagePathOrUrl: string): Promise<str
     console.warn("Signed URL refresh note:", err);
   }
 
-  if (storagePathOrUrl.includes('Authorization=')) {
-    return storagePathOrUrl;
-  }
-
-  return storagePathOrUrl.split('?')[0];
+  return `${DEFAULT_VPS_BACKEND}/api/files/${cleanPath}`;
 }
 
 /**

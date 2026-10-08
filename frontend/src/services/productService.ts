@@ -2,7 +2,8 @@ import { db, markRecordAsDeleted, getDeletedRecordIdsSet } from './db';
 import type { Product } from '../types';
 import { saveRecordToFirestore, deleteRecordFromFirestore, fetchCollectionFromFirestore } from './firebase';
 
-const BACKEND_URL = import.meta.env.DEV ? '' : (import.meta.env.VITE_BACKEND_URL || '');
+const DEFAULT_VPS_BACKEND = 'https://solar.187.126.120.54.sslip.io';
+const BACKEND_URL = import.meta.env.DEV ? '' : (import.meta.env.VITE_BACKEND_URL || DEFAULT_VPS_BACKEND);
 
 let lastProductRemoteSync = 0;
 const PRODUCT_SYNC_INTERVAL = 15 * 60 * 1000;

@@ -33,7 +33,7 @@ import {
   ChevronLeft, Trash2, Send, Star, FileCheck, CheckCircle, Compass, X, Eye, Download,
   CreditCard, Wallet, Edit3, MessageSquare, Bell, Flame, FileText,
   BarChart3, FileSpreadsheet, Printer, Calendar, RotateCcw, Sparkles, Truck, AlertCircle,
-  Layers, Sun, Zap, Landmark, MapPin, Loader2, Lock
+  Layers, Sun, Zap, Landmark, MapPin, Loader2, Lock, ExternalLink
 } from 'lucide-react';
 import dayjs from 'dayjs';
 
@@ -3737,12 +3737,15 @@ export const Leads: React.FC = () => {
                                             : (doc.fileBlob instanceof Blob || doc.fileBlob instanceof File)
                                               ? URL.createObjectURL(doc.fileBlob)
                                               : (doc as any).fileUrl || (doc as any).url || '';
-                                          if (!rawUrl) return;
+                                          if (!rawUrl) {
+                                            alert('Document file is not available.');
+                                            return;
+                                          }
                                           const freshUrl = await getFreshB2SignedUrl(rawUrl);
                                           setPreviewDoc({
                                             name: (doc.docType || 'document').replace(/_/g, ' ').toUpperCase(),
                                             url: freshUrl,
-                                            type: (doc.fileBlob as any)?.type || (freshUrl.includes('.pdf') ? 'application/pdf' : 'image/webp')
+                                            type: (doc.fileBlob as any)?.type || (freshUrl.toLowerCase().includes('.pdf') ? 'application/pdf' : 'image/webp')
                                           });
                                         }}
                                         className="text-[10px] text-emerald-600 hover:text-emerald-800 font-black cursor-pointer"
@@ -3757,7 +3760,10 @@ export const Leads: React.FC = () => {
                                             : (doc.fileBlob instanceof Blob || doc.fileBlob instanceof File)
                                               ? URL.createObjectURL(doc.fileBlob)
                                               : (doc as any).fileUrl || (doc as any).url || '';
-                                          if (!rawUrl) return;
+                                          if (!rawUrl) {
+                                            alert('Document file is not available for download.');
+                                            return;
+                                          }
                                           const freshUrl = await getFreshB2SignedUrl(rawUrl);
                                           const a = document.createElement('a');
                                           a.href = freshUrl;
@@ -4085,7 +4091,9 @@ export const Leads: React.FC = () => {
                                 <button
                                   type="button"
                                   onClick={async () => {
-                                    const rawUrl = typeof doc.fileBlob === 'string' ? doc.fileBlob : (doc.fileBlob instanceof Blob ? URL.createObjectURL(doc.fileBlob) : '');
+                                    const rawUrl = typeof doc.fileBlob === 'string'
+                                      ? doc.fileBlob
+                                      : (doc.fileBlob instanceof Blob ? URL.createObjectURL(doc.fileBlob) : (doc as any).fileUrl || (doc as any).url || '');
                                     const url = await getFreshB2SignedUrl(rawUrl);
                                     if (url && (url.startsWith('http') || url.startsWith('blob:'))) {
                                       setPreviewDoc({
@@ -4327,12 +4335,15 @@ export const Leads: React.FC = () => {
                                 : (rel.fileBlob instanceof Blob || rel.fileBlob instanceof File)
                                   ? URL.createObjectURL(rel.fileBlob)
                                   : (rel as any).fileUrl || (rel as any).url || '';
-                              if (!rawUrl) return;
+                              if (!rawUrl) {
+                                alert('Release document file is not available.');
+                                return;
+                              }
                               const freshUrl = await getFreshB2SignedUrl(rawUrl);
                               setPreviewDoc({
                                 name: 'Release Handover Document',
                                 url: freshUrl,
-                                type: (rel.fileBlob as any)?.type || (freshUrl.includes('.pdf') ? 'application/pdf' : 'image/webp')
+                                type: (rel.fileBlob as any)?.type || (freshUrl.toLowerCase().includes('.pdf') ? 'application/pdf' : 'image/webp')
                               });
                             }}
                             className="text-xs text-emerald-700 hover:text-emerald-900 font-black cursor-pointer bg-white px-3 py-1.5 rounded-lg border border-emerald-200 shadow-2xs flex items-center gap-1"
@@ -4349,7 +4360,10 @@ export const Leads: React.FC = () => {
                                 : (rel.fileBlob instanceof Blob || rel.fileBlob instanceof File)
                                   ? URL.createObjectURL(rel.fileBlob)
                                   : (rel as any).fileUrl || (rel as any).url || '';
-                              if (!rawUrl) return;
+                              if (!rawUrl) {
+                                alert('Release document file is not available for download.');
+                                return;
+                              }
                               const freshUrl = await getFreshB2SignedUrl(rawUrl);
                               const a = document.createElement('a');
                               a.href = freshUrl;
@@ -6805,52 +6819,116 @@ export const Leads: React.FC = () => {
         </div>
       )}
       {/* Document Preview Modal */}
-      {previewDoc && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-xs p-4">
-          <div className="bg-white rounded-2xl border border-slate-200 shadow-2xl w-full max-w-3xl p-6 m-4 animate-scale-in flex flex-col max-h-[90vh]">
-            <div className="flex justify-between items-center pb-4 border-b border-slate-100 mb-4">
-              <h3 className="text-sm font-black text-slate-900">{previewDoc.name} PREVIEW</h3>
-              <button
-                onClick={() => {
-                  URL.revokeObjectURL(previewDoc.url);
-                  setPreviewDoc(null);
-                }}
-                className="p-1 hover:bg-slate-100 rounded-lg text-slate-400 hover:text-slate-900 cursor-pointer"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-            
-            <div className="flex-1 overflow-auto bg-slate-50 rounded-xl p-4 flex justify-center items-center min-h-[400px]">
-              {previewDoc.type.startsWith('image/') ? (
-                <img
-                  src={previewDoc.url}
-                  alt="Document Preview"
-                  className="max-w-full max-h-[60vh] object-contain rounded-lg shadow-sm"
-                />
-              ) : (
-                <iframe
-                  src={previewDoc.url}
-                  title="Document PDF Preview"
-                  className="w-full h-[60vh] rounded-lg border border-slate-200 bg-white"
-                />
-              )}
-            </div>
-            
-            <div className="flex justify-end pt-4 mt-2">
-              <button
-                onClick={() => {
-                  URL.revokeObjectURL(previewDoc.url);
-                  setPreviewDoc(null);
-                }}
-                className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-xl font-bold text-xs cursor-pointer"
-              >
-                Close Preview
-              </button>
+      {previewDoc && (() => {
+        const isPdf = (previewDoc.type || '').toLowerCase().includes('pdf') ||
+                      previewDoc.url.toLowerCase().includes('.pdf') ||
+                      previewDoc.url.startsWith('data:application/pdf');
+
+        const handleDownloadPreview = () => {
+          try {
+            const ext = isPdf ? '.pdf' : '.webp';
+            const fileName = `${previewDoc.name.replace(/\s+/g, '_')}${previewDoc.name.toLowerCase().endsWith(ext) ? '' : ext}`;
+            const a = document.createElement('a');
+            a.href = previewDoc.url;
+            a.download = fileName;
+            a.target = '_blank';
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+          } catch (e) {
+            window.open(previewDoc.url, '_blank');
+          }
+        };
+
+        const closePreview = () => {
+          if (previewDoc.url && previewDoc.url.startsWith('blob:')) {
+            try { URL.revokeObjectURL(previewDoc.url); } catch (_) {}
+          }
+          setPreviewDoc(null);
+        };
+
+        return (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/70 backdrop-blur-xs p-4 animate-fade-in">
+            <div className="bg-white rounded-2xl border border-slate-200 shadow-2xl w-full max-w-4xl p-6 m-4 flex flex-col max-h-[92vh] animate-scale-in">
+              <div className="flex justify-between items-center pb-4 border-b border-slate-100 mb-3">
+                <div className="min-w-0 pr-4">
+                  <h3 className="text-sm font-black text-slate-900 truncate">{previewDoc.name} PREVIEW</h3>
+                  <p className="text-[10px] text-slate-400 font-medium">Uploaded Document &bull; {isPdf ? 'PDF File' : 'Image File'}</p>
+                </div>
+                <div className="flex items-center gap-2 shrink-0">
+                  <a
+                    href={previewDoc.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer shadow-2xs"
+                  >
+                    <ExternalLink className="w-3.5 h-3.5" />
+                    <span>Open Tab</span>
+                  </a>
+                  <button
+                    type="button"
+                    onClick={handleDownloadPreview}
+                    className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer shadow-md"
+                  >
+                    <Download className="w-3.5 h-3.5" />
+                    <span>Download</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={closePreview}
+                    className="p-1.5 hover:bg-slate-100 rounded-lg text-slate-400 hover:text-slate-900 cursor-pointer transition-colors"
+                  >
+                    <X className="w-5 h-5" />
+                  </button>
+                </div>
+              </div>
+              
+              <div className="flex-1 overflow-auto bg-slate-900/5 rounded-xl p-4 flex justify-center items-center min-h-[420px] border border-slate-100">
+                {isPdf ? (
+                  <iframe
+                    src={previewDoc.url}
+                    title="Document PDF Preview"
+                    className="w-full h-[65vh] rounded-lg border border-slate-200 bg-white shadow-sm"
+                  />
+                ) : (
+                  <img
+                    src={previewDoc.url}
+                    alt="Document Preview"
+                    className="max-w-full max-h-[65vh] object-contain rounded-lg shadow-md border border-slate-200 bg-white"
+                    onError={(e) => {
+                      const target = e.currentTarget;
+                      target.style.display = 'none';
+                      const parent = target.parentElement;
+                      if (parent && !parent.querySelector('.doc-preview-error-fallback')) {
+                        const fallbackDiv = document.createElement('div');
+                        fallbackDiv.className = 'doc-preview-error-fallback text-center p-8 space-y-3';
+                        fallbackDiv.innerHTML = `
+                          <p class="text-sm font-bold text-slate-700">Preview image could not be rendered directly in modal.</p>
+                          <a href="${previewDoc.url}" target="_blank" rel="noopener noreferrer" class="inline-flex items-center gap-1.5 px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold shadow-md cursor-pointer">
+                            Open Document in New Tab
+                          </a>
+                        `;
+                        parent.appendChild(fallbackDiv);
+                      }
+                    }}
+                  />
+                )}
+              </div>
+              
+              <div className="flex justify-between items-center pt-4 mt-2 border-t border-slate-100 text-xs">
+                <span className="text-[11px] text-slate-400">If preview does not render in your browser, click "Open Tab".</span>
+                <button
+                  type="button"
+                  onClick={closePreview}
+                  className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl font-bold text-xs cursor-pointer transition-colors"
+                >
+                  Close Preview
+                </button>
+              </div>
             </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
       {/* Quotation Preview Modal — Pure 8-Page PDF View Mode or Custom Edit Mode */}
       {selectedQuotationForPreview && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/70 backdrop-blur-xs p-2 sm:p-4 animate-fade-in">

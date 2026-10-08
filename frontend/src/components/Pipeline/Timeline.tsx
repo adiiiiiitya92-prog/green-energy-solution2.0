@@ -8,7 +8,7 @@ import { employeeService } from '../../services/employeeService';
 import { pdfService } from '../../services/pdfService';
 import { getFreshB2SignedUrl, getQuickB2Url } from '../../services/firebase';
 import dayjs from 'dayjs';
-import { Eye, Download, X, Trash2, Compass, Truck, Camera } from 'lucide-react';
+import { Eye, Download, X, Trash2, Compass, Truck, Camera, ExternalLink } from 'lucide-react';
 
 interface TimelineProps {
   lead: Lead;
@@ -27,37 +27,36 @@ export const Timeline: React.FC<TimelineProps> = ({ lead }) => {
   const [previewItem, setPreviewItem] = useState<{ url: string; title: string } | null>(null);
 
   const loadData = async () => {
-    const qList = await quotationService.getQuotationsByLeadId(lead.id);
-    setQuotations(qList);
+    try {
+      const [qList, conf, docs, reg, photoList, relList, visitList, chList, users] = await Promise.all([
+        quotationService.getQuotationsByLeadId(lead.id).catch(() => []),
+        orderService.getOrderConfirmationByLeadId(lead.id).catch(() => null),
+        orderService.getClientDocumentsByLeadId(lead.id).catch(() => []),
+        orderService.getClientRegistrationByLeadId(lead.id).catch(() => null),
+        orderService.getInstallationPhotosByLeadId(lead.id).catch(() => []),
+        orderService.getReleaseDocumentsByLeadId(lead.id).catch(() => []),
+        visitService.getVisitReportsByLead(lead.id).catch(() => []),
+        challanService.getChallansByLeadId(lead.id).catch(() => []),
+        employeeService.getAllProfiles().catch(() => [])
+      ]);
 
-    const conf = await orderService.getOrderConfirmationByLeadId(lead.id);
-    setConfirmation(conf || null);
+      setQuotations(qList);
+      setConfirmation(conf || null);
+      setDocuments(docs);
+      setRegistration(reg || null);
+      setPhotos(photoList);
+      setRelease(relList);
+      setVisits(visitList);
+      setChallans(chList);
 
-    const docs = await orderService.getClientDocumentsByLeadId(lead.id);
-    setDocuments(docs);
-
-    const reg = await orderService.getClientRegistrationByLeadId(lead.id);
-    setRegistration(reg || null);
-
-    const photoList = await orderService.getInstallationPhotosByLeadId(lead.id);
-    setPhotos(photoList);
-
-    const relList = await orderService.getReleaseDocumentsByLeadId(lead.id);
-    setRelease(relList);
-
-    const visitList = await visitService.getVisitReportsByLead(lead.id);
-    setVisits(visitList);
-
-    const chList = await challanService.getChallansByLeadId(lead.id);
-    setChallans(chList);
-    setVisits(visitList);
-
-    const users = await employeeService.getAllProfiles();
-    const userMap: Record<string, string> = {};
-    users.forEach(u => {
-      userMap[u.id] = u.fullName;
-    });
-    setProfiles(userMap);
+      const userMap: Record<string, string> = {};
+      users.forEach(u => {
+        userMap[u.id] = u.fullName;
+      });
+      setProfiles(userMap);
+    } catch (err) {
+      console.warn("Timeline loadData note:", err);
+    }
   };
 
   useEffect(() => {
@@ -741,7 +740,16 @@ export const Timeline: React.FC<TimelineProps> = ({ lead }) => {
             {/* Modal Header */}
             <div className="bg-slate-900 text-white px-6 py-4 flex justify-between items-center border-b border-slate-800">
               <h3 className="font-bold text-sm truncate">{previewItem.title}</h3>
-              <div className="flex items-center gap-3">
+              <div className="flex items-center gap-2">
+                <a
+                  href={previewItem.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="bg-slate-800 hover:bg-slate-700 text-slate-200 px-3 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer shadow-sm border border-slate-700"
+                >
+                  <ExternalLink className="w-3.5 h-3.5" />
+                  <span>Open Tab</span>
+                </a>
                 <button
                   type="button"
                   onClick={() => handleDownloadFile(previewItem.url, `${previewItem.title.replace(/\s+/g, '_')}`)}
@@ -762,13 +770,29 @@ export const Timeline: React.FC<TimelineProps> = ({ lead }) => {
 
             {/* Modal Body */}
             <div className="p-6 bg-slate-900 flex items-center justify-center overflow-auto flex-1 min-h-[300px]">
-              {previewItem.url.startsWith('data:application/pdf') || previewItem.url.includes('.pdf') ? (
+              {previewItem.url.toLowerCase().includes('.pdf') || previewItem.url.startsWith('data:application/pdf') ? (
                 <iframe src={previewItem.url} className="w-full h-[650px] border-0 rounded-xl bg-white" title={previewItem.title} />
               ) : (
                 <img
                   src={previewItem.url || undefined}
                   alt={previewItem.title}
                   className="max-w-full max-h-[70vh] object-contain rounded-xl shadow-lg border border-slate-800 bg-black/50"
+                  onError={(e) => {
+                    const target = e.currentTarget;
+                    target.style.display = 'none';
+                    const parent = target.parentElement;
+                    if (parent && !parent.querySelector('.preview-error-fallback')) {
+                      const div = document.createElement('div');
+                      div.className = 'preview-error-fallback text-center p-6 text-slate-300 space-y-3';
+                      div.innerHTML = `
+                        <p class="text-sm font-semibold">Preview could not be rendered directly in modal.</p>
+                        <a href="${previewItem.url}" target="_blank" rel="noopener noreferrer" class="inline-flex items-center gap-1.5 px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-bold">
+                          Open in New Tab
+                        </a>
+                      `;
+                      parent.appendChild(div);
+                    }
+                  }}
                 />
               )}
             </div>

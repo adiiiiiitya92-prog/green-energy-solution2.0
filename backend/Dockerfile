@@ -5,8 +5,8 @@
 
 FROM node:20-alpine AS production
 
-# Install tzdata and curl for health checks
-RUN apk add --no-cache tzdata curl
+# Install tzdata, curl, and tini (for PID 1 signal forwarding and zombie reaping)
+RUN apk add --no-cache tzdata curl tini
 
 # Set Indian Standard Time for accurate business logging
 ENV TZ=Asia/Kolkata
@@ -31,6 +31,9 @@ EXPOSE 5050
 # Docker native healthcheck: verifies backend responsiveness every 30s
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
   CMD curl -f http://127.0.0.1:5050/api/health || exit 1
+
+# Use tini as the PID 1 init process to forward signals and reap zombie processes cleanly
+ENTRYPOINT ["/sbin/tini", "--"]
 
 # Start Node with optimal V8 heap cap (512MB) to trigger timely garbage collection
 CMD ["node", "--max-old-space-size=512", "server.js"]

@@ -42,12 +42,12 @@ export async function connectMongo() {
   try {
     console.log(`🔌 Connecting to MongoDB Atlas (${dbName})...`);
     client = new MongoClient(uri, {
-      maxPoolSize: 10, // Optimized for VPS resource efficiency
+      maxPoolSize: 20, // Increased for smooth multi-user concurrency without queue timeouts
       minPoolSize: 2,
       maxIdleTimeMS: 30000,
-      serverSelectionTimeoutMS: 15000,
-      connectTimeoutMS: 15000,
-      socketTimeoutMS: 45000,
+      serverSelectionTimeoutMS: 20000,
+      connectTimeoutMS: 20000,
+      socketTimeoutMS: 60000,
     });
 
     await client.connect();
@@ -56,6 +56,13 @@ export async function connectMongo() {
 
     client.on('close', () => {
       console.warn('MongoDB Atlas connection closed. Will reconnect on next query.');
+      db = null;
+      client = null;
+      memoryCache.clear();
+    });
+
+    client.on('error', (err) => {
+      console.warn('MongoDB Atlas connection error:', err?.message);
       db = null;
       client = null;
       memoryCache.clear();
@@ -213,7 +220,26 @@ export async function findDocuments(collectionName, filter = {}, options = {}) {
     cursor = cursor.skip(options.skip);
   }
 
-  const docs = await cursor.toArray();
+  let docs;
+  try {
+    docs = await cursor.toArray();
+  } catch (err) {
+    if (err.name === 'MongoNetworkTimeoutError' || err.name === 'MongoNetworkError' || String(err.message || '').includes('timed out')) {
+      console.warn(`[Mongo Retry] Network timeout on ${collectionName}, refreshing pool & retrying once...`);
+      db = null;
+      client = null;
+      const reconnectedDb = await connectMongo();
+      const colRetry = reconnectedDb.collection(collectionName);
+      let cursorRetry = colRetry.find(query, projection ? { projection } : {});
+      if (options.sort) cursorRetry = cursorRetry.sort(options.sort);
+      if (options.limit && options.limit > 0) cursorRetry = cursorRetry.limit(options.limit);
+      if (options.skip && options.skip > 0) cursorRetry = cursorRetry.skip(options.skip);
+      docs = await cursorRetry.toArray();
+    } else {
+      throw err;
+    }
+  }
+
   const cleaned = docs.map(cleanDoc);
 
   if (isCacheable) {

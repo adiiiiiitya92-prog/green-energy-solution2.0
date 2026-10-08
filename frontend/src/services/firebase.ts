@@ -295,6 +295,37 @@ if (typeof window !== 'undefined') {
   }, 100);
 }
 
+// Safe WeakMap cache for browser Blob/File object URLs to prevent memory leaks and out-of-memory browser crashes
+const blobUrlCache = new WeakMap<Blob | File, string>();
+
+export function getSafeBlobUrl(fileOrBlobOrUrl: any): string {
+  if (!fileOrBlobOrUrl) return '';
+  if (typeof fileOrBlobOrUrl === 'string') {
+    return getQuickB2Url(fileOrBlobOrUrl);
+  }
+  if (fileOrBlobOrUrl instanceof Blob || fileOrBlobOrUrl instanceof File) {
+    if (blobUrlCache.has(fileOrBlobOrUrl)) {
+      return blobUrlCache.get(fileOrBlobOrUrl)!;
+    }
+    try {
+      const url = URL.createObjectURL(fileOrBlobOrUrl);
+      blobUrlCache.set(fileOrBlobOrUrl, url);
+      return url;
+    } catch (_) {
+      return '';
+    }
+  }
+  if (typeof fileOrBlobOrUrl === 'object') {
+    if (fileOrBlobOrUrl.url && typeof fileOrBlobOrUrl.url === 'string') {
+      return getQuickB2Url(fileOrBlobOrUrl.url);
+    }
+    if (fileOrBlobOrUrl.data && typeof fileOrBlobOrUrl.data === 'string') {
+      return fileOrBlobOrUrl.data;
+    }
+  }
+  return '';
+}
+
 export function extractCleanB2Path(storagePathOrUrl: string): string {
   if (!storagePathOrUrl || typeof storagePathOrUrl !== 'string') return '';
   const trimmed = storagePathOrUrl.trim();
@@ -314,37 +345,44 @@ export function extractCleanB2Path(storagePathOrUrl: string): string {
 export function getQuickB2Url(storagePathOrUrl: any): string {
   if (!storagePathOrUrl) return '';
   if (typeof storagePathOrUrl !== 'string') return '';
-  if (storagePathOrUrl.startsWith('data:') || storagePathOrUrl.startsWith('blob:')) {
-    return storagePathOrUrl;
+  const trimmed = storagePathOrUrl.trim();
+  if (trimmed.startsWith('data:') || trimmed.startsWith('blob:')) {
+    return trimmed;
   }
-  const cleanPath = extractCleanB2Path(storagePathOrUrl);
+  const cleanPath = extractCleanB2Path(trimmed);
   if (!cleanPath) {
-    return storagePathOrUrl;
+    return trimmed;
   }
 
-  if (b2AuthCache && b2AuthCache.downloadAuthToken) {
+  // 1. If valid cached download auth token exists, use direct Backblaze URL
+  if (b2AuthCache && b2AuthCache.downloadAuthToken && b2AuthCache.expiresAt > Date.now() + 60000) {
     return `${b2AuthCache.downloadUrl}/file/${b2AuthCache.bucketName}/${cleanPath}?Authorization=${encodeURIComponent(b2AuthCache.downloadAuthToken)}`;
   }
 
+  // 2. Trigger async token refresh in background
   getMasterB2DownloadAuth().then((auth) => {
     if (auth?.downloadAuthToken && typeof window !== 'undefined') {
       window.dispatchEvent(new CustomEvent('b2-auth-refreshed'));
     }
   }).catch(() => {});
 
-  return `${DEFAULT_VPS_BACKEND}/api/files/${cleanPath}`;
+  // 3. Fallback to VPS backend streaming proxy (works immediately without waiting)
+  const isLocalHost = typeof window !== 'undefined' && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
+  const base = isLocalHost ? '' : (import.meta.env.VITE_BACKEND_URL || DEFAULT_VPS_BACKEND);
+  return `${base}/api/files/${cleanPath}`;
 }
 
 export async function getFreshB2SignedUrl(storagePathOrUrl: string): Promise<string> {
   if (!storagePathOrUrl) return storagePathOrUrl;
   if (typeof storagePathOrUrl !== 'string') return storagePathOrUrl;
-  if (storagePathOrUrl.startsWith('data:') || storagePathOrUrl.startsWith('blob:')) {
-    return storagePathOrUrl;
+  const trimmed = storagePathOrUrl.trim();
+  if (trimmed.startsWith('data:') || trimmed.startsWith('blob:')) {
+    return trimmed;
   }
 
-  const cleanPath = extractCleanB2Path(storagePathOrUrl);
+  const cleanPath = extractCleanB2Path(trimmed);
   if (!cleanPath) {
-    return storagePathOrUrl;
+    return trimmed;
   }
 
   try {
@@ -356,7 +394,9 @@ export async function getFreshB2SignedUrl(storagePathOrUrl: string): Promise<str
     console.warn("Signed URL refresh note:", err);
   }
 
-  return `${DEFAULT_VPS_BACKEND}/api/files/${cleanPath}`;
+  const isLocalHost = typeof window !== 'undefined' && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
+  const base = isLocalHost ? '' : (import.meta.env.VITE_BACKEND_URL || DEFAULT_VPS_BACKEND);
+  return `${base}/api/files/${cleanPath}`;
 }
 
 /**

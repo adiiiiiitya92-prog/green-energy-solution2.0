@@ -18,7 +18,7 @@ import { Timeline } from '../../components/Pipeline/Timeline';
 import { SignatureCapture } from '../../components/Signature/SignatureCapture';
 import { LeadDispatchModal } from '../../components/Common/LeadDispatchModal';
 import { compressImage } from '../../services/imageCompressionService';
-import { uploadImageToFirebase, uploadPdfToFirebase, getFreshB2SignedUrl, getQuickB2Url } from '../../services/firebase';
+import { uploadImageToFirebase, uploadPdfToFirebase, getFreshB2SignedUrl, getQuickB2Url, getSafeBlobUrl } from '../../services/firebase';
 import { acquireCurrentGpsLocation, applyGpsWatermark, type GpsWatermarkData } from '../../services/watermarkService';
 import { DcrDocument } from './DcrDocument';
 import { WcrDocument } from './WcrDocument';
@@ -1016,13 +1016,30 @@ export const Leads: React.FC = () => {
 
   const isLoadingDataRef = useRef(false);
   const pendingReloadRef = useRef(false);
+  const lastLoadDataTimeRef = useRef(0);
+  const isMountedRef = useRef(true);
 
-  const loadData = async () => {
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
+
+  const loadData = async (force: boolean = false) => {
+    if (!isMountedRef.current) return;
+    const now = Date.now();
+    // Cooldown throttle: avoid running loadData more than once every 6 seconds unless explicitly forced
+    if (!force && now - lastLoadDataTimeRef.current < 6000) {
+      return;
+    }
     if (isLoadingDataRef.current) {
       pendingReloadRef.current = true;
       return;
     }
     isLoadingDataRef.current = true;
+    lastLoadDataTimeRef.current = now;
+
     try {
       const [list, challans, allQuotes, evidenceIds, allOcs, empList, profiles] = await Promise.all([
         leadService.getLeads(),
@@ -1033,6 +1050,8 @@ export const Leads: React.FC = () => {
         employeeService.getEmployees().catch(() => []),
         employeeService.getAllProfiles().catch(() => [])
       ]);
+
+      if (!isMountedRef.current) return;
 
       const filteredList = filterLeadsForUser(list, currentUser, currentRole);
 
@@ -1074,6 +1093,8 @@ export const Leads: React.FC = () => {
         });
       }
 
+      if (!isMountedRef.current) return;
+
       // Single batched update to prevent screen flickering
       setLeads(filteredList);
       if (evidenceIds) setInstallationEvidenceLeadIds(evidenceIds);
@@ -1086,16 +1107,18 @@ export const Leads: React.FC = () => {
       setEmployeeNames(names);
       setEmployeeProfiles(profsMap);
 
-      productService.getProducts().then(setCatalogProducts).catch(() => {});
+      productService.getProducts().then(prods => {
+        if (isMountedRef.current) setCatalogProducts(prods);
+      }).catch(() => {});
     } catch (e) {
       console.warn("Leads loadData error note:", e);
     } finally {
       isLoadingDataRef.current = false;
-      if (pendingReloadRef.current) {
+      if (pendingReloadRef.current && isMountedRef.current) {
         pendingReloadRef.current = false;
         setTimeout(() => {
-          loadData();
-        }, 300);
+          if (isMountedRef.current) loadData();
+        }, 5000);
       }
     }
   };
@@ -1119,7 +1142,7 @@ export const Leads: React.FC = () => {
   }, [searchParams]);
 
   useEffect(() => {
-    loadData().then(async () => {
+    loadData(true).then(async () => {
       // Restore selected lead from sessionStorage on refresh only if not viewing a filtered list
       const savedLeadId = sessionStorage.getItem('leads_selectedLeadId');
       const urlFilter = searchParams.get('filter') || searchParams.get('rawFilter');
@@ -1127,7 +1150,7 @@ export const Leads: React.FC = () => {
       if (savedLeadId && !selectedLead && !urlFilter && rawFilterSaved !== 'process_done_payment_pending') {
         try {
           const lead = await leadService.getLeadById(savedLeadId);
-          if (lead) {
+          if (lead && isMountedRef.current) {
             handleSelectLead(lead, true);
             const isLeadRaw = (lead.status === 'new' || lead.status === 'quotation_sent');
             if (isLeadRaw && (!rawFilterSaved || rawFilterSaved === 'confirmed')) {
@@ -1139,17 +1162,31 @@ export const Leads: React.FC = () => {
     });
 
     let realtimeDebounceTimer: any = null;
+    let lastRealtimeTimestamp = 0;
+
     const handleRealtimeUpdate = (e?: any) => {
+      if (!isMountedRef.current) return;
       const col = e?.detail?.collectionName;
-      // Only react if event is generic or relevant to leads pipeline
+      // Only react if event is relevant to leads pipeline
       if (col && !['leads', 'quotations', 'challans', 'orderConfirmations', 'profiles', 'installationPhotos', 'releaseDocuments'].includes(col)) {
         return;
       }
+
+      const now = Date.now();
+      // Throttle event storm: handle at most once every 6 seconds
+      if (now - lastRealtimeTimestamp < 6000) {
+        return;
+      }
+      lastRealtimeTimestamp = now;
+
       if (realtimeDebounceTimer) clearTimeout(realtimeDebounceTimer);
       realtimeDebounceTimer = setTimeout(() => {
-        loadData();
-      }, 3000);
+        if (isMountedRef.current) {
+          loadData();
+        }
+      }, 4000);
     };
+
     window.addEventListener('app-realtime-update', handleRealtimeUpdate);
     return () => {
       if (realtimeDebounceTimer) clearTimeout(realtimeDebounceTimer);
@@ -3734,18 +3771,18 @@ export const Leads: React.FC = () => {
                                         onClick={async () => {
                                           const rawUrl = typeof doc.fileBlob === 'string'
                                             ? doc.fileBlob
-                                            : (doc.fileBlob instanceof Blob || doc.fileBlob instanceof File)
-                                              ? URL.createObjectURL(doc.fileBlob)
-                                              : (doc as any).fileUrl || (doc as any).url || '';
+                                            : getSafeBlobUrl(doc.fileBlob) || (doc as any).fileUrl || (doc as any).url || '';
                                           if (!rawUrl) {
                                             alert('Document file is not available.');
                                             return;
                                           }
                                           const freshUrl = await getFreshB2SignedUrl(rawUrl);
+                                          const clean = freshUrl.split('?')[0].toLowerCase();
+                                          const isDocPdf = clean.endsWith('.pdf') || (doc.fileBlob as any)?.type === 'application/pdf';
                                           setPreviewDoc({
                                             name: (doc.docType || 'document').replace(/_/g, ' ').toUpperCase(),
                                             url: freshUrl,
-                                            type: (doc.fileBlob as any)?.type || (freshUrl.toLowerCase().includes('.pdf') ? 'application/pdf' : 'image/webp')
+                                            type: isDocPdf ? 'application/pdf' : 'image/webp'
                                           });
                                         }}
                                         className="text-[10px] text-emerald-600 hover:text-emerald-800 font-black cursor-pointer"
@@ -3757,9 +3794,7 @@ export const Leads: React.FC = () => {
                                         onClick={async () => {
                                           const rawUrl = typeof doc.fileBlob === 'string'
                                             ? doc.fileBlob
-                                            : (doc.fileBlob instanceof Blob || doc.fileBlob instanceof File)
-                                              ? URL.createObjectURL(doc.fileBlob)
-                                              : (doc as any).fileUrl || (doc as any).url || '';
+                                            : getSafeBlobUrl(doc.fileBlob) || (doc as any).fileUrl || (doc as any).url || '';
                                           if (!rawUrl) {
                                             alert('Document file is not available for download.');
                                             return;
@@ -3909,9 +3944,7 @@ export const Leads: React.FC = () => {
                   {installPhotos.map((photo) => {
                     const rawUrl = typeof photo.photoBlob === 'string'
                       ? photo.photoBlob
-                      : (photo.photoBlob instanceof Blob || photo.photoBlob instanceof File)
-                        ? URL.createObjectURL(photo.photoBlob)
-                        : (photo as any).photoUrl || (photo as any).url || '';
+                      : getSafeBlobUrl(photo.photoBlob) || (photo as any).photoUrl || (photo as any).url || '';
                     const objectUrl = rawUrl ? getQuickB2Url(rawUrl) : '';
                     const locText = photo.location?.placeName || (photo.location?.latitude != null && photo.location?.longitude != null ? `${photo.location.latitude.toFixed(4)}, ${photo.location.longitude.toFixed(4)}` : 'Location captured');
                     return (
@@ -4093,13 +4126,15 @@ export const Leads: React.FC = () => {
                                   onClick={async () => {
                                     const rawUrl = typeof doc.fileBlob === 'string'
                                       ? doc.fileBlob
-                                      : (doc.fileBlob instanceof Blob ? URL.createObjectURL(doc.fileBlob) : (doc as any).fileUrl || (doc as any).url || '');
+                                      : getSafeBlobUrl(doc.fileBlob) || (doc as any).fileUrl || (doc as any).url || '';
                                     const url = await getFreshB2SignedUrl(rawUrl);
+                                    const clean = (url || '').split('?')[0].toLowerCase();
+                                    const isDocPdf = clean.endsWith('.pdf') || (doc.fileBlob as any)?.type === 'application/pdf';
                                     if (url && (url.startsWith('http') || url.startsWith('blob:'))) {
                                       setPreviewDoc({
                                         name: getDocTitle(doc.docType),
                                         url: url,
-                                        type: 'application/pdf'
+                                        type: isDocPdf ? 'application/pdf' : 'image/webp'
                                       });
                                     } else if (doc.formData) {
                                       setEditingDocData(doc.formData);
@@ -4109,7 +4144,7 @@ export const Leads: React.FC = () => {
                                       setPreviewDoc({
                                         name: getDocTitle(doc.docType),
                                         url: url || '',
-                                        type: 'application/pdf'
+                                        type: isDocPdf ? 'application/pdf' : 'image/webp'
                                       });
                                     }
                                   }}
@@ -4332,18 +4367,18 @@ export const Leads: React.FC = () => {
                               const rel = releaseDocs[0];
                               const rawUrl = typeof rel.fileBlob === 'string'
                                 ? rel.fileBlob
-                                : (rel.fileBlob instanceof Blob || rel.fileBlob instanceof File)
-                                  ? URL.createObjectURL(rel.fileBlob)
-                                  : (rel as any).fileUrl || (rel as any).url || '';
+                                : getSafeBlobUrl(rel.fileBlob) || (rel as any).fileUrl || (rel as any).url || '';
                               if (!rawUrl) {
                                 alert('Release document file is not available.');
                                 return;
                               }
                               const freshUrl = await getFreshB2SignedUrl(rawUrl);
+                              const clean = freshUrl.split('?')[0].toLowerCase();
+                              const isDocPdf = clean.endsWith('.pdf') || (rel.fileBlob as any)?.type === 'application/pdf';
                               setPreviewDoc({
                                 name: 'Release Handover Document',
                                 url: freshUrl,
-                                type: (rel.fileBlob as any)?.type || (freshUrl.toLowerCase().includes('.pdf') ? 'application/pdf' : 'image/webp')
+                                type: isDocPdf ? 'application/pdf' : 'image/webp'
                               });
                             }}
                             className="text-xs text-emerald-700 hover:text-emerald-900 font-black cursor-pointer bg-white px-3 py-1.5 rounded-lg border border-emerald-200 shadow-2xs flex items-center gap-1"
@@ -4357,9 +4392,7 @@ export const Leads: React.FC = () => {
                               const rel = releaseDocs[0];
                               const rawUrl = typeof rel.fileBlob === 'string'
                                 ? rel.fileBlob
-                                : (rel.fileBlob instanceof Blob || rel.fileBlob instanceof File)
-                                  ? URL.createObjectURL(rel.fileBlob)
-                                  : (rel as any).fileUrl || (rel as any).url || '';
+                                : getSafeBlobUrl(rel.fileBlob) || (rel as any).fileUrl || (rel as any).url || '';
                               if (!rawUrl) {
                                 alert('Release document file is not available for download.');
                                 return;
@@ -6820,9 +6853,9 @@ export const Leads: React.FC = () => {
       )}
       {/* Document Preview Modal */}
       {previewDoc && (() => {
-        const isPdf = (previewDoc.type || '').toLowerCase().includes('pdf') ||
-                      previewDoc.url.toLowerCase().includes('.pdf') ||
-                      previewDoc.url.startsWith('data:application/pdf');
+        const cleanDocUrl = (previewDoc.url || '').split('?')[0].toLowerCase();
+        const isDocImage = cleanDocUrl.endsWith('.webp') || cleanDocUrl.endsWith('.png') || cleanDocUrl.endsWith('.jpg') || cleanDocUrl.endsWith('.jpeg') || (previewDoc.type || '').startsWith('image/');
+        const isPdf = !isDocImage && ((previewDoc.type || '').toLowerCase().includes('pdf') || cleanDocUrl.endsWith('.pdf') || previewDoc.url.startsWith('data:application/pdf'));
 
         const handleDownloadPreview = () => {
           try {

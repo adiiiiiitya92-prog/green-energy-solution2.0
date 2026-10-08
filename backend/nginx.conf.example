@@ -33,6 +33,26 @@ server {
     client_body_buffer_size 128k;
     client_max_body_size 10m; # Reject payloads > 10MB early at Nginx layer
 
+    # Real-time SSE event stream (never buffered, persistent keep-alive)
+    location /api/realtime/stream {
+        proxy_pass http://127.0.0.1:5050;
+        proxy_http_version 1.1;
+        proxy_set_header Connection '';
+        proxy_buffering off;
+        proxy_cache off;
+        chunked_transfer_encoding off;
+        proxy_read_timeout 86400s;
+        proxy_send_timeout 86400s;
+    }
+
+    # Direct Backblaze B2 File Stream Proxy
+    location /api/files/ {
+        proxy_pass http://127.0.0.1:5050;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_read_timeout 300s;
+    }
+
     location / {
         limit_req zone=ges_api_limit burst=50 nodelay;
 

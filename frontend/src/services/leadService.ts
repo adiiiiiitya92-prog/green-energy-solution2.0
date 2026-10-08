@@ -122,7 +122,7 @@ export const leadService = {
       }
     }
 
-    // Auto-heal leads that have an uploaded release document (run at most once per session)
+    // Ensure local status aligns with existing release documents without firing cloud broadcast storms
     if (!hasHealedReleaseLeads) {
       hasHealedReleaseLeads = true;
       try {
@@ -135,11 +135,10 @@ export const leadService = {
             lead.status = 'closed';
             lead.updatedAt = new Date().toISOString();
             await db.leads.put(lead);
-            saveRecordToFirestore('leads', lead.id, lead).catch(() => {});
           }
         }
       } catch (e) {
-        console.warn("Auto-heal release leads note:", e);
+        console.warn("Local release alignment note:", e);
       }
     }
 

@@ -6,7 +6,7 @@ import { visitService } from '../../services/visitService';
 import { challanService } from '../../services/challanService';
 import { employeeService } from '../../services/employeeService';
 import { pdfService } from '../../services/pdfService';
-import { getFreshB2SignedUrl, getQuickB2Url } from '../../services/firebase';
+import { getFreshB2SignedUrl, getQuickB2Url, getSafeBlobUrl } from '../../services/firebase';
 import dayjs from 'dayjs';
 import { Eye, Download, X, Trash2, Compass, Truck, Camera, ExternalLink } from 'lucide-react';
 
@@ -67,25 +67,9 @@ export const Timeline: React.FC<TimelineProps> = ({ lead }) => {
     return dayjs(isoStr).format('DD MMM YYYY, hh:mm A [IST]');
   };
 
-  // Safe helper to convert any Blob, Data URL, or Backblaze / Firebase HTTPS string into a fast renderable URL
+  // Safe helper to convert any Blob, Data URL, or Backblaze / Firebase HTTPS string into a fast renderable URL without memory leaks
   const renderBlobImage = (fileOrBlobOrUrl: any): string => {
-    if (!fileOrBlobOrUrl) return '';
-    if (typeof fileOrBlobOrUrl === 'string') {
-      const trimmed = fileOrBlobOrUrl.trim();
-      return getQuickB2Url(trimmed);
-    }
-    if (fileOrBlobOrUrl instanceof Blob || fileOrBlobOrUrl instanceof File) {
-      try {
-        return URL.createObjectURL(fileOrBlobOrUrl);
-      } catch (e) {
-        return '';
-      }
-    }
-    if (typeof fileOrBlobOrUrl === 'object') {
-      if (fileOrBlobOrUrl.url && typeof fileOrBlobOrUrl.url === 'string') return getQuickB2Url(fileOrBlobOrUrl.url.trim());
-      if (fileOrBlobOrUrl.data && typeof fileOrBlobOrUrl.data === 'string') return fileOrBlobOrUrl.data;
-    }
-    return '';
+    return getSafeBlobUrl(fileOrBlobOrUrl);
   };
 
   // Safe helper to trigger browser download for any document format with fresh signed URL
@@ -770,31 +754,36 @@ export const Timeline: React.FC<TimelineProps> = ({ lead }) => {
 
             {/* Modal Body */}
             <div className="p-6 bg-slate-900 flex items-center justify-center overflow-auto flex-1 min-h-[300px]">
-              {previewItem.url.toLowerCase().includes('.pdf') || previewItem.url.startsWith('data:application/pdf') ? (
-                <iframe src={previewItem.url} className="w-full h-[650px] border-0 rounded-xl bg-white" title={previewItem.title} />
-              ) : (
-                <img
-                  src={previewItem.url || undefined}
-                  alt={previewItem.title}
-                  className="max-w-full max-h-[70vh] object-contain rounded-xl shadow-lg border border-slate-800 bg-black/50"
-                  onError={(e) => {
-                    const target = e.currentTarget;
-                    target.style.display = 'none';
-                    const parent = target.parentElement;
-                    if (parent && !parent.querySelector('.preview-error-fallback')) {
-                      const div = document.createElement('div');
-                      div.className = 'preview-error-fallback text-center p-6 text-slate-300 space-y-3';
-                      div.innerHTML = `
-                        <p class="text-sm font-semibold">Preview could not be rendered directly in modal.</p>
-                        <a href="${previewItem.url}" target="_blank" rel="noopener noreferrer" class="inline-flex items-center gap-1.5 px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-bold">
-                          Open in New Tab
-                        </a>
-                      `;
-                      parent.appendChild(div);
-                    }
-                  }}
-                />
-              )}
+              {(() => {
+                const cleanUrl = (previewItem.url || '').split('?')[0].toLowerCase();
+                const isImage = cleanUrl.endsWith('.webp') || cleanUrl.endsWith('.png') || cleanUrl.endsWith('.jpg') || cleanUrl.endsWith('.jpeg');
+                const isPdf = !isImage && (cleanUrl.endsWith('.pdf') || previewItem.url.startsWith('data:application/pdf'));
+                return isPdf ? (
+                  <iframe src={previewItem.url} className="w-full h-[650px] border-0 rounded-xl bg-white" title={previewItem.title} />
+                ) : (
+                  <img
+                    src={previewItem.url || undefined}
+                    alt={previewItem.title}
+                    className="max-w-full max-h-[70vh] object-contain rounded-xl shadow-lg border border-slate-800 bg-black/50"
+                    onError={(e) => {
+                      const target = e.currentTarget;
+                      target.style.display = 'none';
+                      const parent = target.parentElement;
+                      if (parent && !parent.querySelector('.preview-error-fallback')) {
+                        const div = document.createElement('div');
+                        div.className = 'preview-error-fallback text-center p-6 text-slate-300 space-y-3';
+                        div.innerHTML = `
+                          <p class="text-sm font-semibold">Preview could not be rendered directly in modal.</p>
+                          <a href="${previewItem.url}" target="_blank" rel="noopener noreferrer" class="inline-flex items-center gap-1.5 px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-bold">
+                            Open in New Tab
+                          </a>
+                        `;
+                        parent.appendChild(div);
+                      }
+                    }}
+                  />
+                );
+              })()}
             </div>
           </div>
         </div>

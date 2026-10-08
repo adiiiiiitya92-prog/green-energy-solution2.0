@@ -11,6 +11,13 @@ let lastEvidenceRemoteSync = 0;
 const EVIDENCE_SYNC_INTERVAL = 5 * 60 * 1000; // 5 minutes fresh sync throttle
 let activeEvidenceSyncPromise: Promise<void> | null = null;
 
+// Short-lived query throttle maps to avoid hammering MongoDB Atlas on rapid UI updates
+const emptyLeadOcThrottle = new Map<string, number>();
+const emptyLeadRegThrottle = new Map<string, number>();
+const emptyLeadDocsThrottle = new Map<string, number>();
+const emptyLeadPhotosThrottle = new Map<string, number>();
+const emptyLeadReleasesThrottle = new Map<string, number>();
+
 export const orderService = {
   // Order Confirmations
   async getOrderConfirmationByLeadId(leadId: string): Promise<OrderConfirmation | undefined> {
@@ -20,24 +27,31 @@ export const orderService = {
     let oc = await db.orderConfirmations.where({ leadId }).first();
     if (oc && deletedIds.has(oc.id)) return undefined;
 
-    const needsFresh = !oc || (!oc.clientSignatureBlob && !oc.confirmationPdfBlob);
-    if (needsFresh) {
-      try {
-        const remoteOcs = await fetchCollectionFromFirestore<OrderConfirmation>('orderConfirmations', 6000, { leadId, full: true });
-        if (Array.isArray(remoteOcs) && remoteOcs.length > 0) {
-          const freshDeleted = await getDeletedRecordIdsSet();
-          const validRemote = remoteOcs.filter(o => !freshDeleted.has(o.id) && !freshDeleted.has(o.leadId));
-          if (validRemote.length > 0) {
-            for (const rOc of validRemote) {
-              const existing = await db.orderConfirmations.get(rOc.id);
-              await db.orderConfirmations.put({ ...existing, ...rOc });
-            }
-            oc = await db.orderConfirmations.where({ leadId }).first();
+    // If local record is already present, trust local cache
+    if (oc) return oc;
+
+    const now = Date.now();
+    const lastChecked = emptyLeadOcThrottle.get(leadId) || 0;
+    if (now - lastChecked < 30000) {
+      return undefined;
+    }
+    emptyLeadOcThrottle.set(leadId, now);
+
+    try {
+      const remoteOcs = await fetchCollectionFromFirestore<OrderConfirmation>('orderConfirmations', 6000, { leadId, full: true });
+      if (Array.isArray(remoteOcs) && remoteOcs.length > 0) {
+        const freshDeleted = await getDeletedRecordIdsSet();
+        const validRemote = remoteOcs.filter(o => !freshDeleted.has(o.id) && !freshDeleted.has(o.leadId));
+        if (validRemote.length > 0) {
+          for (const rOc of validRemote) {
+            const existing = await db.orderConfirmations.get(rOc.id);
+            await db.orderConfirmations.put({ ...existing, ...rOc });
           }
+          oc = await db.orderConfirmations.where({ leadId }).first();
         }
-      } catch (err) {
-        console.warn("Firestore orderConfirmations sync note:", err);
       }
+    } catch (err) {
+      console.warn("Firestore orderConfirmations sync note:", err);
     }
 
     if (oc && deletedIds.has(oc.id)) return undefined;
@@ -164,8 +178,13 @@ export const orderService = {
 
     let reg = await db.clientRegistrations.get(leadId);
     if (!reg) {
+      const now = Date.now();
+      const lastChecked = emptyLeadRegThrottle.get(leadId) || 0;
+      if (now - lastChecked < 30000) return undefined;
+      emptyLeadRegThrottle.set(leadId, now);
+
       try {
-        const remoteRegs = await fetchCollectionFromFirestore<ClientRegistration>('clientRegistrations');
+        const remoteRegs = await fetchCollectionFromFirestore<ClientRegistration>('clientRegistrations', 4000, { leadId });
         if (Array.isArray(remoteRegs) && remoteRegs.length > 0) {
           const freshDeleted = await getDeletedRecordIdsSet();
           const validRemote = remoteRegs.filter(r => !freshDeleted.has(r.leadId));
@@ -219,6 +238,11 @@ export const orderService = {
 
     const hasMissingBlobs = validLocal.some(d => !d.fileBlob && !(d as any).fileUrl && !(d as any).url && !(d as any).storagePath);
     if (validLocal.length === 0 || hasMissingBlobs) {
+      const now = Date.now();
+      const lastChecked = emptyLeadDocsThrottle.get(leadId) || 0;
+      if (validLocal.length === 0 && now - lastChecked < 30000) return [];
+      emptyLeadDocsThrottle.set(leadId, now);
+
       try {
         const remoteDocs = await fetchCollectionFromFirestore<ClientDocument>('clientDocuments', 12000, { leadId, full: true });
         if (Array.isArray(remoteDocs) && remoteDocs.length > 0) {
@@ -353,6 +377,11 @@ export const orderService = {
 
     const hasMissingBlobs = validLocal.some(p => !p.photoBlob && !(p as any).photoUrl && !(p as any).url);
     if (validLocal.length === 0 || hasMissingBlobs) {
+      const now = Date.now();
+      const lastChecked = emptyLeadPhotosThrottle.get(leadId) || 0;
+      if (validLocal.length === 0 && now - lastChecked < 30000) return [];
+      emptyLeadPhotosThrottle.set(leadId, now);
+
       try {
         const remotePhotos = await fetchCollectionFromFirestore<InstallationPhoto>('installationPhotos', 12000, { leadId, full: true });
         if (Array.isArray(remotePhotos) && remotePhotos.length > 0) {
@@ -432,6 +461,11 @@ export const orderService = {
 
     const hasMissingBlobs = validLocal.some(r => !r.fileBlob && !(r as any).fileUrl && !(r as any).url);
     if (validLocal.length === 0 || hasMissingBlobs) {
+      const now = Date.now();
+      const lastChecked = emptyLeadReleasesThrottle.get(leadId) || 0;
+      if (validLocal.length === 0 && now - lastChecked < 30000) return [];
+      emptyLeadReleasesThrottle.set(leadId, now);
+
       try {
         const remoteReleases = await fetchCollectionFromFirestore<ReleaseDocument>('releaseDocuments', 12000, { leadId, full: true });
         if (Array.isArray(remoteReleases) && remoteReleases.length > 0) {

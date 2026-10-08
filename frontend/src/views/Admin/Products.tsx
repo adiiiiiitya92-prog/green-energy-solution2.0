@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useMemo } from 'react';
 import { isMeterUnit, type Product, type ProductUnit } from '../../types';
 import { db } from '../../services/db';
 import { productService } from '../../services/productService';
@@ -195,8 +195,10 @@ export const Products: React.FC = () => {
     }, 3000);
   };
 
-  const loadProducts = async () => {
-    await challanService.reconcileProductStockWithChallans().catch(() => {});
+  const loadProducts = async (reconcile: boolean = false) => {
+    if (reconcile) {
+      await challanService.reconcileProductStockWithChallans().catch(() => {});
+    }
     const list = await productService.getProducts();
     setProducts(list);
     // If serials management modal is open, keep its state live and synchronized
@@ -214,12 +216,17 @@ export const Products: React.FC = () => {
   };
 
   useEffect(() => {
-    loadProducts();
+    loadProducts(true);
     let debounceTimer: any = null;
-    const handleRealtimeUpdate = () => {
+    const handleRealtimeUpdate = (e?: any) => {
+      const col = e?.detail?.collectionName;
+      if (col && !['products', 'challans', 'stockTransactions'].includes(col)) {
+        return;
+      }
       if (debounceTimer) clearTimeout(debounceTimer);
       debounceTimer = setTimeout(() => {
-        loadProducts();
+        // Do NOT run reconciliation on real-time event updates to prevent infinite loops
+        loadProducts(false);
       }, 1500);
     };
     window.addEventListener('app-realtime-update', handleRealtimeUpdate);
@@ -682,6 +689,29 @@ export const Products: React.FC = () => {
   const commercialProducts = products.filter(p => p.category !== 'bom_item');
   const bomProducts = products.filter(p => p.category === 'bom_item');
 
+  // Pre-calculate stock statistics once to prevent massive array allocations during table/grid rendering
+  const productStockStatsMap = useMemo(() => {
+    const map = new Map<string, { availableCount: number; soldCount: number; totalUnits: number }>();
+    for (let pIdx = 0; pIdx < products.length; pIdx++) {
+      const p = products[pIdx];
+      if (!p.productUnits || p.productUnits.length === 0) {
+        const qty = p.stockQuantity || 0;
+        map.set(p.id, { availableCount: qty, soldCount: 0, totalUnits: qty });
+      } else {
+        let available = 0;
+        let sold = 0;
+        const uLen = p.productUnits.length;
+        for (let i = 0; i < uLen; i++) {
+          const st = p.productUnits[i].status;
+          if (st === 'available' || !st) available++;
+          else sold++;
+        }
+        map.set(p.id, { availableCount: available, soldCount: sold, totalUnits: uLen });
+      }
+    }
+    return map;
+  }, [products]);
+
   const currentTabProducts = activeTab === 'commercial'
     ? commercialProducts
     : (selectedBomCategoryFilter === 'all'
@@ -1094,15 +1124,10 @@ export const Products: React.FC = () => {
                   </thead>
                   <tbody className="divide-y divide-slate-100 text-xs">
                     {filteredProducts.map((p, idx) => {
-                      const unitsList = p.productUnits && p.productUnits.length > 0
-                        ? p.productUnits
-                        : (p.serialNumbers || []).map((sn, i) => ({ id: `u_${i}`, unitNumber: i + 1, serialNumber: sn, status: 'available' as const }));
-
-                      const availableCount = unitsList.length > 0
-                        ? unitsList.filter(u => u.status === 'available' || !u.status).length
-                        : (p.stockQuantity || 0);
-                      const soldCount = unitsList.filter(u => u.status && u.status !== 'available').length;
-                      const totalUnits = unitsList.length || p.stockQuantity || 0;
+                      const stats = productStockStatsMap.get(p.id) || { availableCount: p.stockQuantity || 0, soldCount: 0, totalUnits: p.stockQuantity || 0 };
+                      const availableCount = stats.availableCount;
+                      const soldCount = stats.soldCount;
+                      const totalUnits = stats.totalUnits;
                       const isLowStock = activeTab === 'commercial' && p.minStockThreshold !== undefined && availableCount <= p.minStockThreshold;
                       const isOutOfStock = availableCount === 0;
 
@@ -1269,15 +1294,10 @@ export const Products: React.FC = () => {
             /* GRID VIEW (CARDS) */
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
               {filteredProducts.map((p) => {
-                const unitsList = p.productUnits && p.productUnits.length > 0
-                  ? p.productUnits
-                  : (p.serialNumbers || []).map((sn, i) => ({ id: `u_${i}`, unitNumber: i + 1, serialNumber: sn, status: 'available' as const }));
-
-                const availableCount = unitsList.length > 0
-                  ? unitsList.filter(u => u.status === 'available' || !u.status).length
-                  : (p.stockQuantity || 0);
-                const soldCount = unitsList.filter(u => u.status && u.status !== 'available').length;
-                const totalUnits = unitsList.length || p.stockQuantity || 0;
+                const stats = productStockStatsMap.get(p.id) || { availableCount: p.stockQuantity || 0, soldCount: 0, totalUnits: p.stockQuantity || 0 };
+                const availableCount = stats.availableCount;
+                const soldCount = stats.soldCount;
+                const totalUnits = stats.totalUnits;
 
                 return (
                   <div

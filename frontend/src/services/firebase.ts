@@ -686,6 +686,32 @@ export async function fetchCollectionFromFirestore<T extends { id?: string; isDe
 }
 
 /**
+ * Fetches a single document by ID from MongoDB Atlas via Backend API
+ */
+export async function fetchDocumentFromFirestore<T extends { id?: string; isDeleted?: boolean }>(
+  collectionName: string,
+  id: string,
+  timeoutMs: number = 8000
+): Promise<T | null> {
+  if (!id) return null;
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    const res = await fetch(buildApiUrl(`/api/firestore/${encodeCollectionPath(collectionName)}/${encodeURIComponent(id)}`), {
+      signal: controller.signal
+    });
+    clearTimeout(timer);
+    if (!res.ok) return null;
+    const doc = await res.json();
+    if (!doc || doc.isDeleted) return null;
+    return doc as T;
+  } catch (_) {
+    return null;
+  }
+}
+
+
+/**
  * Deletes a document from MongoDB Atlas via Backend API
  */
 export async function deleteRecordFromFirestore(collectionName: string, id: string, silent: boolean = false): Promise<void> {
@@ -777,7 +803,7 @@ export async function syncAllLocalDataToFirestore(force: boolean = false): Promi
             localStorage.setItem('ges_last_bootstrap_time', bData.timestamp);
           }
           if (typeof window !== 'undefined') {
-            window.dispatchEvent(new CustomEvent('app-realtime-update'));
+            window.dispatchEvent(new CustomEvent('app-realtime-update', { detail: { source: 'bootstrap' } }));
           }
           return;
         }
@@ -1187,7 +1213,7 @@ export async function syncAllLocalDataToFirestore(force: boolean = false): Promi
 
     console.log('🔥 Smart reconciliation completed with MongoDB Atlas [green_energy_crm]!');
     if (typeof window !== 'undefined') {
-      window.dispatchEvent(new CustomEvent('app-realtime-update'));
+      window.dispatchEvent(new CustomEvent('app-realtime-update', { detail: { source: 'reconciliation' } }));
     }
   } catch (err) {
     console.warn('syncAllLocalDataToFirestore note:', err);
@@ -1196,18 +1222,32 @@ export async function syncAllLocalDataToFirestore(force: boolean = false): Promi
 
 // Multi-tab BroadcastChannel for zero-latency inter-tab updates
 const tabSessionId = typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).substring(2);
-const realtimeChannel = typeof BroadcastChannel !== 'undefined' ? new BroadcastChannel('app_realtime_broadcast_channel') : null;
+const realtimeChannel = typeof window !== 'undefined' && typeof BroadcastChannel !== 'undefined' ? new BroadcastChannel('app_realtime_broadcast_channel') : null;
+// In-memory broadcast deduplication to prevent runaway event storms
+const broadcastThrottleMap = new Map<string, number>();
 
 function broadcastDataUpdate(collectionName: string, id: string) {
-  if (typeof window !== 'undefined') {
-    window.dispatchEvent(new CustomEvent('app-realtime-update', { detail: { collectionName, id } }));
-    if (realtimeChannel) {
-      try {
-        realtimeChannel.postMessage({ type: 'REALTIME_UPDATE', collectionName, id, originTabId: tabSessionId });
-      } catch (_) {}
+  if (typeof window === 'undefined') return;
+  const key = `${collectionName}:${id}`;
+  const now = Date.now();
+  if (broadcastThrottleMap.has(key) && now - (broadcastThrottleMap.get(key) || 0) < 1000) {
+    return; // suppress duplicate broadcast within 1 second
+  }
+  broadcastThrottleMap.set(key, now);
+  if (broadcastThrottleMap.size > 200) {
+    for (const [k, t] of broadcastThrottleMap.entries()) {
+      if (now - t > 10000) broadcastThrottleMap.delete(k);
     }
   }
+
+  window.dispatchEvent(new CustomEvent('app-realtime-update', { detail: { collectionName, id } }));
+  if (realtimeChannel) {
+    try {
+      realtimeChannel.postMessage({ type: 'REALTIME_UPDATE', collectionName, id, originTabId: tabSessionId });
+    } catch (_) {}
+  }
 }
+
 
 if (realtimeChannel) {
   realtimeChannel.onmessage = (event) => {

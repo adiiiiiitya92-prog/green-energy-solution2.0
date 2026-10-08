@@ -31,14 +31,20 @@ export const DeletionApprovalsModal: React.FC<DeletionApprovalsModalProps> = ({ 
   };
 
   useEffect(() => {
-    if (isOpen) {
-      loadRequests();
-    }
-    const handleRealtimeUpdate = () => {
-      loadRequests();
+    if (!isOpen) return;
+    loadRequests();
+    let debounceTimer: any = null;
+    const handleRealtimeUpdate = (e?: any) => {
+      const col = e?.detail?.collectionName;
+      if (col && col !== 'deletionRequests') return;
+      if (debounceTimer) clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(() => {
+        loadRequests();
+      }, 1000);
     };
     window.addEventListener('app-realtime-update', handleRealtimeUpdate);
     return () => {
+      if (debounceTimer) clearTimeout(debounceTimer);
       window.removeEventListener('app-realtime-update', handleRealtimeUpdate);
     };
   }, [isOpen]);

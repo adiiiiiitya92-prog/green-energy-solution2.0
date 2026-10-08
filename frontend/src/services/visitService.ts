@@ -41,7 +41,7 @@ export const visitService = {
 
     if (validVisits.length === 0) {
       try {
-        const remoteVisits = await fetchCollectionFromFirestore<FieldVisitReport>('fieldVisitReports');
+        const remoteVisits = await fetchCollectionFromFirestore<FieldVisitReport>('fieldVisitReports', 5000, { employeeId });
         if (remoteVisits && remoteVisits.length > 0) {
           const freshDeleted = await getDeletedRecordIdsSet();
           const validRemote = remoteVisits.filter(v => !freshDeleted.has(v.id) && (!v.leadId || !freshDeleted.has(v.leadId)));
@@ -67,7 +67,7 @@ export const visitService = {
 
     if (validVisits.length === 0) {
       try {
-        const remoteVisits = await fetchCollectionFromFirestore<FieldVisitReport>('fieldVisitReports');
+        const remoteVisits = await fetchCollectionFromFirestore<FieldVisitReport>('fieldVisitReports', 5000, { leadId });
         if (remoteVisits && remoteVisits.length > 0) {
           const freshDeleted = await getDeletedRecordIdsSet();
           const validRemote = remoteVisits.filter(v => !freshDeleted.has(v.id) && v.leadId === leadId);

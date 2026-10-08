@@ -195,8 +195,8 @@ export async function findDocuments(collectionName, filter = {}, options = {}) {
     };
   }
 
-  // In bulk product lists, project out massive serial numbers (cuts response from 2.2 MB to 24 KB!)
-  if (collectionName === 'products' && !options.full && !options.includeDetails) {
+  // Only project out serial numbers if explicitly requested (e.g. lightweight summary views)
+  if (collectionName === 'products' && options.excludeUnits) {
     if (!projection) projection = {};
     projection.serialNumbers = 0;
     projection.productUnits = 0;

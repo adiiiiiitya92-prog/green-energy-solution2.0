@@ -26,8 +26,11 @@ export const Timeline: React.FC<TimelineProps> = ({ lead }) => {
   const [challans, setChallans] = useState<Challan[]>([]);
   const [profiles, setProfiles] = useState<Record<string, string>>({});
   const [previewItem, setPreviewItem] = useState<{ url: string; title: string } | null>(null);
+  const isFetchingRef = React.useRef(false);
 
   const loadData = async () => {
+    if (isFetchingRef.current) return;
+    isFetchingRef.current = true;
     try {
       const [qList, conf, docs, reg, photoList, relList, visitList, chList, users] = await Promise.all([
         quotationService.getQuotationsByLeadId(lead.id).catch(() => []),
@@ -57,6 +60,8 @@ export const Timeline: React.FC<TimelineProps> = ({ lead }) => {
       setProfiles(userMap);
     } catch (err) {
       console.warn("Timeline loadData note:", err);
+    } finally {
+      isFetchingRef.current = false;
     }
   };
 

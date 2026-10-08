@@ -62,19 +62,31 @@ export const LeaveRequests: React.FC = () => {
 
   useEffect(() => {
     loadRequests();
-    const handleRealtime = () => loadRequests();
+    let debounceTimer: any = null;
+    const triggerDebouncedLoad = () => {
+      if (debounceTimer) clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(() => {
+        loadRequests();
+      }, 1500);
+    };
+
+    const handleRealtime = (e?: any) => {
+      const col = e?.detail?.collectionName;
+      if (col && col !== 'leaveRequests') return;
+      triggerDebouncedLoad();
+    };
+
     window.addEventListener('app-realtime-update', handleRealtime);
-    window.addEventListener('storage', handleRealtime);
 
     let bc: BroadcastChannel | null = null;
     try {
       bc = new BroadcastChannel('ges_crm_realtime');
-      bc.onmessage = () => loadRequests();
+      bc.onmessage = () => triggerDebouncedLoad();
     } catch (_) {}
 
     return () => {
+      if (debounceTimer) clearTimeout(debounceTimer);
       window.removeEventListener('app-realtime-update', handleRealtime);
-      window.removeEventListener('storage', handleRealtime);
       if (bc) bc.close();
     };
   }, [currentUser]);

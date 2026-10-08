@@ -1,6 +1,6 @@
 import { db, markRecordAsDeleted, getDeletedRecordIdsSet } from './db';
 import type { Quotation, OrderConfirmation, ClientRegistration, BomItem } from '../types';
-import { saveRecordToFirestore, deleteRecordFromFirestore, fetchCollectionFromFirestore } from './firebase';
+import { saveRecordToFirestore, deleteRecordFromFirestore, fetchCollectionFromFirestore, fetchDocumentFromFirestore } from './firebase';
 
 export const BOM_CATEGORY_ORDER = [
   'Solar Panels (PV Modules)',
@@ -195,15 +195,14 @@ export const quotationService = {
 
     let q = await db.quotations.get(id);
     
-    // If not found locally, try Firestore sync
+    // If not found locally, fetch ONLY this specific document from MongoDB Atlas
     if (!q) {
       try {
-        const remoteQuotes = await fetchCollectionFromFirestore<Quotation>('quotations');
-        if (Array.isArray(remoteQuotes) && remoteQuotes.length > 0) {
-          const freshDeleted = await getDeletedRecordIdsSet();
-          const validRemote = remoteQuotes.filter(item => !freshDeleted.has(item.id));
-          await db.quotations.bulkPut(validRemote.map(sanitizeQuotationRecord));
-          q = await db.quotations.get(id);
+        const remoteQ = await fetchDocumentFromFirestore<Quotation>('quotations', id);
+        if (remoteQ && !deletedRecordIds.has(remoteQ.id)) {
+          const sanitized = sanitizeQuotationRecord(remoteQ);
+          await db.quotations.put(sanitized);
+          q = sanitized;
         }
       } catch (err) {
         console.warn("Firestore quotation fetch note:", err);
@@ -221,17 +220,16 @@ export const quotationService = {
     let quotes = await db.quotations.where({ leadId }).reverse().sortBy('createdAt');
     let validQuotes = quotes.filter(q => !deletedRecordIds.has(q.id) && q.items && q.items.length > 0 && getQuotationTotalAmount(q) > 0);
 
-    // If local cache is empty, sync from Firestore first (handles fresh device scenarios)
+    // If local cache is empty, fetch ONLY for this leadId (never fetch the entire company quotations!)
     if (validQuotes.length === 0) {
       try {
-        const remoteQuotes = await fetchCollectionFromFirestore<Quotation>('quotations');
+        const remoteQuotes = await fetchCollectionFromFirestore<Quotation>('quotations', 5000, { leadId, full: true });
         if (Array.isArray(remoteQuotes) && remoteQuotes.length > 0) {
           const freshDeleted = await getDeletedRecordIdsSet();
           const forThisLead = remoteQuotes.filter(q => !freshDeleted.has(q.id) && q.leadId === leadId && q.items && q.items.length > 0 && getQuotationTotalAmount(q) > 0);
           if (forThisLead.length > 0) {
             await db.quotations.bulkPut(forThisLead.map(sanitizeQuotationRecord));
           }
-          // Re-read after sync
           quotes = await db.quotations.where({ leadId }).reverse().sortBy('createdAt');
           validQuotes = quotes.filter(q => !freshDeleted.has(q.id) && q.items && q.items.length > 0 && getQuotationTotalAmount(q) > 0);
         }

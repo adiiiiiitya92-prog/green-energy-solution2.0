@@ -124,7 +124,9 @@ export const Complaints: React.FC = () => {
     loadData(true);
 
     let debounceTimer: any = null;
-    const handleRealtimeUpdate = () => {
+    const handleRealtimeUpdate = (e?: any) => {
+      const col = e?.detail?.collectionName;
+      if (col && !['complaints', 'leads', 'profiles'].includes(col)) return;
       if (debounceTimer) clearTimeout(debounceTimer);
       debounceTimer = setTimeout(() => {
         loadData(true);

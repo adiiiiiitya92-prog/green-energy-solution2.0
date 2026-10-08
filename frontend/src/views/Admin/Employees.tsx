@@ -52,12 +52,19 @@ export const Employees: React.FC = () => {
 
   useEffect(() => {
     loadEmployees();
-    const handleRealtimeUpdate = () => loadEmployees();
+    let debounceTimer: any = null;
+    const handleRealtimeUpdate = (e?: any) => {
+      const col = e?.detail?.collectionName;
+      if (col && col !== 'profiles') return;
+      if (debounceTimer) clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(() => {
+        loadEmployees();
+      }, 1500);
+    };
     window.addEventListener('app-realtime-update', handleRealtimeUpdate);
-    window.addEventListener('storage', handleRealtimeUpdate);
     return () => {
+      if (debounceTimer) clearTimeout(debounceTimer);
       window.removeEventListener('app-realtime-update', handleRealtimeUpdate);
-      window.removeEventListener('storage', handleRealtimeUpdate);
     };
   }, []);
 

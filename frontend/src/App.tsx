@@ -151,9 +151,8 @@ export const App: React.FC = () => {
 
     // Defer cloud sync until 2 seconds after authenticated dashboard mounts
     const syncTimer = setTimeout(() => {
-      import('./services/firebase').then(({ syncAllLocalDataToFirestore, initializeRealtimeFirestoreSync }) => {
+      import('./services/firebase').then(({ initializeRealtimeFirestoreSync }) => {
         initializeRealtimeFirestoreSync();
-        syncAllLocalDataToFirestore();
       }).catch(err => console.warn('Background sync init note:', err));
     }, 2000);
 

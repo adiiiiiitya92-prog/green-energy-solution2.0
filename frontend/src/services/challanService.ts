@@ -11,7 +11,10 @@ let lastChallanRemoteSync = 0;
 const CHALLAN_SYNC_INTERVAL = 30 * 1000; // 30 seconds fresh sync throttle
 let activeChallanSyncPromise: Promise<void> | null = null;
 
+let lastReconciliationTime = 0;
+
 export const challanService = {
+
   async getChallansByLeadId(leadId: string): Promise<Challan[]> {
     if (!leadId) return [];
     try {
@@ -83,7 +86,13 @@ export const challanService = {
    * If any product has serial numbers dispatched in a challan but marked 'available',
    * or if available stock count does not match the active units count, it fixes them automatically!
    */
-  async reconcileProductStockWithChallans(): Promise<number> {
+  async reconcileProductStockWithChallans(force: boolean = false): Promise<number> {
+    const now = Date.now();
+    if (!force && now - lastReconciliationTime < 30000) {
+      return 0; // Throttle: do not run more than once per 30 seconds
+    }
+    lastReconciliationTime = now;
+
     const deletedIds = await getDeletedRecordIdsSet();
     const challans = await db.challans.toArray().catch(() => []);
     const activeChallans = challans.filter(c => !deletedIds.has(c.id) && c.status !== 'cancelled' && (!c.leadId || !deletedIds.has(c.leadId)));
@@ -132,11 +141,11 @@ export const challanService = {
         ? p.productUnits.map(u => ({ ...u }))
         : (p.serialNumbers && Array.isArray(p.serialNumbers) && p.serialNumbers.length > 0
             ? p.serialNumbers.map((sn, idx) => ({
-                id: `unit_${idx + 1}_${Date.now()}_${idx}`,
+                id: `unit_${p.id}_${idx + 1}`,
                 unitNumber: idx + 1,
                 serialNumber: sn,
                 status: 'available' as const,
-                addedAt: p.createdAt || new Date().toISOString()
+                addedAt: p.createdAt || '2026-01-01T00:00:00.000Z'
               }))
             : []);
 

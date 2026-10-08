@@ -37,7 +37,16 @@ export const productService = {
           const freshDeleted = await getDeletedRecordIdsSet();
           const validRemote = remoteProds.filter(p => !freshDeleted.has(p.id));
           if (validRemote.length > 0) {
-            await db.products.bulkPut(validRemote);
+            for (const vr of validRemote) {
+              const existing = await db.products.get(vr.id);
+              if (existing) {
+                const mergedUnits = (vr.productUnits && vr.productUnits.length > 0) ? vr.productUnits : existing.productUnits;
+                const mergedSerials = (vr.serialNumbers && vr.serialNumbers.length > 0) ? vr.serialNumbers : existing.serialNumbers;
+                await db.products.put({ ...existing, ...vr, ...(mergedUnits ? { productUnits: mergedUnits } : {}), ...(mergedSerials ? { serialNumbers: mergedSerials } : {}) });
+              } else {
+                await db.products.put(vr);
+              }
+            }
           }
         }
       } catch (err) {

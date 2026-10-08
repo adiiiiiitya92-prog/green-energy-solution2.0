@@ -90,18 +90,18 @@ export const B2BBusinesses: React.FC = () => {
   useEffect(() => {
     loadData(true);
     let realtimeDebounceTimer: any = null;
-    const handleRealtimeUpdate = () => {
+    const handleRealtimeUpdate = (e?: any) => {
+      const col = e?.detail?.collectionName;
+      if (col && !['b2bBusinesses', 'challans'].includes(col)) return;
       if (realtimeDebounceTimer) clearTimeout(realtimeDebounceTimer);
       realtimeDebounceTimer = setTimeout(() => {
         loadData(true);
       }, 1500);
     };
     window.addEventListener('app-realtime-update', handleRealtimeUpdate);
-    window.addEventListener('storage', handleRealtimeUpdate);
     return () => {
       if (realtimeDebounceTimer) clearTimeout(realtimeDebounceTimer);
       window.removeEventListener('app-realtime-update', handleRealtimeUpdate);
-      window.removeEventListener('storage', handleRealtimeUpdate);
     };
   }, []);
 

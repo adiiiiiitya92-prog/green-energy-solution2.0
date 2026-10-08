@@ -18,7 +18,7 @@ import { Timeline } from '../../components/Pipeline/Timeline';
 import { SignatureCapture } from '../../components/Signature/SignatureCapture';
 import { LeadDispatchModal } from '../../components/Common/LeadDispatchModal';
 import { compressImage } from '../../services/imageCompressionService';
-import { uploadImageToFirebase, uploadPdfToFirebase, getFreshB2SignedUrl, getQuickB2Url, getSafeBlobUrl } from '../../services/firebase';
+import { uploadImageToFirebase, uploadPdfToFirebase, getFreshB2SignedUrl, getQuickB2Url, getSafeBlobUrl, buildApiUrl } from '../../services/firebase';
 import { acquireCurrentGpsLocation, applyGpsWatermark, type GpsWatermarkData } from '../../services/watermarkService';
 import { DcrDocument } from './DcrDocument';
 import { WcrDocument } from './WcrDocument';
@@ -3769,9 +3769,28 @@ export const Leads: React.FC = () => {
                                       <button
                                         type="button"
                                         onClick={async () => {
-                                          const rawUrl = typeof doc.fileBlob === 'string'
+                                          let rawUrl = typeof doc.fileBlob === 'string'
                                             ? doc.fileBlob
-                                            : getSafeBlobUrl(doc.fileBlob) || (doc as any).fileUrl || (doc as any).url || '';
+                                            : getSafeBlobUrl(doc.fileBlob) || (doc as any).fileUrl || (doc as any).url || (doc as any).storagePath || '';
+                                          if (!rawUrl && doc.id) {
+                                            try {
+                                              const localDoc = await db.clientDocuments.get(doc.id);
+                                              rawUrl = localDoc?.fileBlob || (localDoc as any)?.fileUrl || (localDoc as any)?.url || '';
+                                              if (!rawUrl) {
+                                                const res = await fetch(buildApiUrl(`/api/firestore/clientDocuments/${encodeURIComponent(doc.id)}`));
+                                                if (res.ok) {
+                                                  const freshDoc = await res.json();
+                                                  rawUrl = freshDoc?.fileBlob || freshDoc?.fileUrl || freshDoc?.url || '';
+                                                  if (rawUrl) {
+                                                    await db.clientDocuments.put({ ...doc, ...freshDoc, fileBlob: rawUrl });
+                                                    setKycDocs(prev => prev.map(d => d.id === doc.id ? { ...d, ...freshDoc, fileBlob: rawUrl } : d));
+                                                  }
+                                                }
+                                              }
+                                            } catch (e) {
+                                              console.warn("Doc resolve error:", e);
+                                            }
+                                          }
                                           if (!rawUrl) {
                                             alert('Document file is not available.');
                                             return;
@@ -3792,9 +3811,28 @@ export const Leads: React.FC = () => {
                                       <button
                                         type="button"
                                         onClick={async () => {
-                                          const rawUrl = typeof doc.fileBlob === 'string'
+                                          let rawUrl = typeof doc.fileBlob === 'string'
                                             ? doc.fileBlob
-                                            : getSafeBlobUrl(doc.fileBlob) || (doc as any).fileUrl || (doc as any).url || '';
+                                            : getSafeBlobUrl(doc.fileBlob) || (doc as any).fileUrl || (doc as any).url || (doc as any).storagePath || '';
+                                          if (!rawUrl && doc.id) {
+                                            try {
+                                              const localDoc = await db.clientDocuments.get(doc.id);
+                                              rawUrl = localDoc?.fileBlob || (localDoc as any)?.fileUrl || (localDoc as any)?.url || '';
+                                              if (!rawUrl) {
+                                                const res = await fetch(buildApiUrl(`/api/firestore/clientDocuments/${encodeURIComponent(doc.id)}`));
+                                                if (res.ok) {
+                                                  const freshDoc = await res.json();
+                                                  rawUrl = freshDoc?.fileBlob || freshDoc?.fileUrl || freshDoc?.url || '';
+                                                  if (rawUrl) {
+                                                    await db.clientDocuments.put({ ...doc, ...freshDoc, fileBlob: rawUrl });
+                                                    setKycDocs(prev => prev.map(d => d.id === doc.id ? { ...d, ...freshDoc, fileBlob: rawUrl } : d));
+                                                  }
+                                                }
+                                              }
+                                            } catch (e) {
+                                              console.warn("Doc download resolve error:", e);
+                                            }
+                                          }
                                           if (!rawUrl) {
                                             alert('Document file is not available for download.');
                                             return;

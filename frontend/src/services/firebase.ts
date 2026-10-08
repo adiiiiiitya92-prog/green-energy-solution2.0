@@ -3,7 +3,7 @@ import { compressImage, compressDataUrl, type ImageCompressionConfig } from './i
 // Backend API URL (relies on current origin / Vite proxy or explicit backend URL)
 export const DEFAULT_VPS_BACKEND = "https://solar.187.126.120.54.sslip.io";
 const BACKEND_URL = import.meta.env.DEV ? "" : (import.meta.env.VITE_BACKEND_URL || DEFAULT_VPS_BACKEND);
-const buildApiUrl = (path: string) => `${BACKEND_URL}${path}`;
+export const buildApiUrl = (path: string) => `${BACKEND_URL}${path}`;
 
 // Safe compatibility stub for legacy auth import
 export const auth: any = {
@@ -625,13 +625,25 @@ export async function saveRecordToFirestore(collectionName: string, id: string, 
  */
 export async function fetchCollectionFromFirestore<T extends { id?: string; isDeleted?: boolean; leadId?: string }>(
   collectionName: string,
-  timeoutMs: number = 25000
+  timeoutMs: number = 25000,
+  queryParams?: Record<string, string | number | boolean | undefined>
 ): Promise<T[]> {
   try {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
 
-    const res = await fetch(buildApiUrl(`/api/firestore/${encodeCollectionPath(collectionName)}`), {
+    let endpoint = `/api/firestore/${encodeCollectionPath(collectionName)}`;
+    if (queryParams && Object.keys(queryParams).length > 0) {
+      const search = new URLSearchParams();
+      for (const [k, v] of Object.entries(queryParams)) {
+        if (v !== undefined && v !== null) {
+          search.append(k, String(v));
+        }
+      }
+      endpoint += `?${search.toString()}`;
+    }
+
+    const res = await fetch(buildApiUrl(endpoint), {
       signal: controller.signal
     });
     clearTimeout(timer);

@@ -173,27 +173,34 @@ export async function findDocuments(collectionName, filter = {}, options = {}) {
     delete query.id;
   }
 
-  // Optimized Projections: exclude massive base64 blobs and array bloat during list views
-  const defaultExcluded = {
-    signatureBlob: 0,
-    clientSignatureBlob: 0,
-    confirmationPdfBlob: 0,
-    bankDocumentBlob: 0,
-    vehiclePhotoBlob: 0,
-    pdfBlob: 0,
-    fileBlob: 0,
-    photoBlob: 0,
-    photoBlobs: 0,
-    billProofBlob: 0
-  };
+  // Collections whose primary purpose is to store media references (Backblaze B2 URLs)
+  const mediaCollections = new Set(['clientDocuments', 'installationPhotos', 'releaseDocuments']);
+  const isMediaCollection = mediaCollections.has(collectionName);
+  const isSpecificQuery = Boolean(filter.leadId || filter.id || filter._id);
+
+  // Optimized Projections: exclude massive base64 blobs and array bloat only during non-media bulk lists
+  let projection = options.projection;
+  if (!projection && !options.full && !isMediaCollection && !isSpecificQuery) {
+    projection = {
+      signatureBlob: 0,
+      clientSignatureBlob: 0,
+      confirmationPdfBlob: 0,
+      bankDocumentBlob: 0,
+      vehiclePhotoBlob: 0,
+      pdfBlob: 0,
+      fileBlob: 0,
+      photoBlob: 0,
+      photoBlobs: 0,
+      billProofBlob: 0
+    };
+  }
 
   // In bulk product lists, project out massive serial numbers (cuts response from 2.2 MB to 24 KB!)
   if (collectionName === 'products' && !options.full && !options.includeDetails) {
-    defaultExcluded.serialNumbers = 0;
-    defaultExcluded.productUnits = 0;
+    if (!projection) projection = {};
+    projection.serialNumbers = 0;
+    projection.productUnits = 0;
   }
-
-  const projection = options.projection || (options.full ? undefined : defaultExcluded);
 
   let cursor = col.find(query, projection ? { projection } : {});
   if (options.sort) {

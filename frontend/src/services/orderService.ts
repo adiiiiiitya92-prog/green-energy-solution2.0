@@ -20,18 +20,17 @@ export const orderService = {
     let oc = await db.orderConfirmations.where({ leadId }).first();
     if (oc && deletedIds.has(oc.id)) return undefined;
 
-    if (!oc) {
+    const needsFresh = !oc || (!oc.clientSignatureBlob && !oc.confirmationPdfBlob);
+    if (needsFresh) {
       try {
-        const remoteOcs = await fetchCollectionFromFirestore<OrderConfirmation>('orderConfirmations', 4000);
+        const remoteOcs = await fetchCollectionFromFirestore<OrderConfirmation>('orderConfirmations', 6000, { leadId, full: true });
         if (Array.isArray(remoteOcs) && remoteOcs.length > 0) {
           const freshDeleted = await getDeletedRecordIdsSet();
           const validRemote = remoteOcs.filter(o => !freshDeleted.has(o.id) && !freshDeleted.has(o.leadId));
           if (validRemote.length > 0) {
             for (const rOc of validRemote) {
-              const local = await db.orderConfirmations.get(rOc.id);
-              if (!local) {
-                await db.orderConfirmations.put(rOc);
-              }
+              const existing = await db.orderConfirmations.get(rOc.id);
+              await db.orderConfirmations.put({ ...existing, ...rOc });
             }
             oc = await db.orderConfirmations.where({ leadId }).first();
           }
@@ -218,20 +217,18 @@ export const orderService = {
     }
     let validLocal = localDocs.filter(d => !deletedIds.has(d.id));
 
-    if (validLocal.length === 0) {
+    const hasMissingBlobs = validLocal.some(d => !d.fileBlob && !(d as any).fileUrl && !(d as any).url && !(d as any).storagePath);
+    if (validLocal.length === 0 || hasMissingBlobs) {
       try {
-        const remoteDocs = await fetchCollectionFromFirestore<ClientDocument>('clientDocuments');
+        const remoteDocs = await fetchCollectionFromFirestore<ClientDocument>('clientDocuments', 12000, { leadId, full: true });
         if (Array.isArray(remoteDocs) && remoteDocs.length > 0) {
           const freshDeleted = await getDeletedRecordIdsSet();
           const validRemote = remoteDocs.filter(d => !freshDeleted.has(d.id) && !freshDeleted.has(d.leadId));
           if (validRemote.length > 0) {
             for (const vd of validRemote) {
               const existing = await db.clientDocuments.get(vd.id);
-              if (existing?.fileBlob && !vd.fileBlob) {
-                await db.clientDocuments.put({ ...vd, fileBlob: existing.fileBlob });
-              } else {
-                await db.clientDocuments.put(vd);
-              }
+              const mergedBlob = vd.fileBlob || (vd as any).fileUrl || (vd as any).url || existing?.fileBlob;
+              await db.clientDocuments.put({ ...existing, ...vd, ...(mergedBlob ? { fileBlob: mergedBlob } : {}) });
             }
             let reRead = await db.clientDocuments.where('leadId').equals(leadId).toArray().catch(() => []);
             if (reRead.length === 0) {
@@ -354,20 +351,18 @@ export const orderService = {
     }
     let validLocal = localPhotos.filter(p => !deletedIds.has(p.id));
 
-    if (validLocal.length === 0) {
+    const hasMissingBlobs = validLocal.some(p => !p.photoBlob && !(p as any).photoUrl && !(p as any).url);
+    if (validLocal.length === 0 || hasMissingBlobs) {
       try {
-        const remotePhotos = await fetchCollectionFromFirestore<InstallationPhoto>('installationPhotos');
+        const remotePhotos = await fetchCollectionFromFirestore<InstallationPhoto>('installationPhotos', 12000, { leadId, full: true });
         if (Array.isArray(remotePhotos) && remotePhotos.length > 0) {
           const freshDeleted = await getDeletedRecordIdsSet();
           const validRemote = remotePhotos.filter(p => !freshDeleted.has(p.id) && !freshDeleted.has(p.leadId));
           if (validRemote.length > 0) {
             for (const vr of validRemote) {
               const existing = await db.installationPhotos.get(vr.id);
-              if (existing?.photoBlob && !vr.photoBlob) {
-                await db.installationPhotos.put({ ...vr, photoBlob: existing.photoBlob });
-              } else {
-                await db.installationPhotos.put(vr);
-              }
+              const mergedBlob = vr.photoBlob || (vr as any).photoUrl || (vr as any).url || existing?.photoBlob;
+              await db.installationPhotos.put({ ...existing, ...vr, ...(mergedBlob ? { photoBlob: mergedBlob } : {}) });
             }
             let reRead = await db.installationPhotos.where('leadId').equals(leadId).toArray().catch(() => []);
             if (reRead.length === 0) {
@@ -435,20 +430,18 @@ export const orderService = {
     }
     let validLocal = localReleases.filter(r => !deletedIds.has(r.id));
 
-    if (validLocal.length === 0) {
+    const hasMissingBlobs = validLocal.some(r => !r.fileBlob && !(r as any).fileUrl && !(r as any).url);
+    if (validLocal.length === 0 || hasMissingBlobs) {
       try {
-        const remoteReleases = await fetchCollectionFromFirestore<ReleaseDocument>('releaseDocuments');
+        const remoteReleases = await fetchCollectionFromFirestore<ReleaseDocument>('releaseDocuments', 12000, { leadId, full: true });
         if (Array.isArray(remoteReleases) && remoteReleases.length > 0) {
           const freshDeleted = await getDeletedRecordIdsSet();
           const validRemote = remoteReleases.filter(r => !freshDeleted.has(r.id) && !freshDeleted.has(r.leadId));
           if (validRemote.length > 0) {
             for (const vr of validRemote) {
               const existing = await db.releaseDocuments.get(vr.id);
-              if (existing?.fileBlob && !vr.fileBlob) {
-                await db.releaseDocuments.put({ ...vr, fileBlob: existing.fileBlob });
-              } else {
-                await db.releaseDocuments.put(vr);
-              }
+              const mergedBlob = vr.fileBlob || (vr as any).fileUrl || (vr as any).url || existing?.fileBlob;
+              await db.releaseDocuments.put({ ...existing, ...vr, ...(mergedBlob ? { fileBlob: mergedBlob } : {}) });
             }
             let reRead = await db.releaseDocuments.where('leadId').equals(leadId).toArray().catch(() => []);
             if (reRead.length === 0) {

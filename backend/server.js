@@ -190,6 +190,9 @@ app.get(['/api/firestore/:collection', '/api/db/:collection'], async (req, res) 
     }
 
     const options = { sort };
+    if (req.query.full === 'true' || req.query.leadId) {
+      options.full = true;
+    }
     if (req.query.limit) {
       const parsedLimit = parseInt(req.query.limit, 10);
       if (!isNaN(parsedLimit) && parsedLimit > 0) options.limit = parsedLimit;

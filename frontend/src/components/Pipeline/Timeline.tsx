@@ -6,7 +6,8 @@ import { visitService } from '../../services/visitService';
 import { challanService } from '../../services/challanService';
 import { employeeService } from '../../services/employeeService';
 import { pdfService } from '../../services/pdfService';
-import { getFreshB2SignedUrl, getQuickB2Url, getSafeBlobUrl } from '../../services/firebase';
+import { getFreshB2SignedUrl, getQuickB2Url, getSafeBlobUrl, buildApiUrl } from '../../services/firebase';
+import { db } from '../../services/db';
 import dayjs from 'dayjs';
 import { Eye, Download, X, Trash2, Compass, Truck, Camera, ExternalLink } from 'lucide-react';
 
@@ -72,9 +73,37 @@ export const Timeline: React.FC<TimelineProps> = ({ lead }) => {
     return getSafeBlobUrl(fileOrBlobOrUrl);
   };
 
+  // Safe resolver to ensure document file URL is loaded from local DB or backend API if missing in state
+  const resolveDocFile = async (doc: any): Promise<string> => {
+    let raw = doc?.fileBlob || doc?.fileUrl || doc?.url || doc?.storagePath || '';
+    if (!raw && doc?.id) {
+      try {
+        const localDoc = await db.clientDocuments.get(doc.id);
+        raw = localDoc?.fileBlob || (localDoc as any)?.fileUrl || (localDoc as any)?.url || '';
+        if (!raw) {
+          const res = await fetch(buildApiUrl(`/api/firestore/clientDocuments/${encodeURIComponent(doc.id)}`));
+          if (res.ok) {
+            const freshDoc = await res.json();
+            raw = freshDoc?.fileBlob || freshDoc?.fileUrl || freshDoc?.url || '';
+            if (raw) {
+              await db.clientDocuments.put({ ...doc, ...freshDoc, fileBlob: raw });
+            }
+          }
+        }
+      } catch (e) {
+        console.warn("Doc resolve fallback note:", e);
+      }
+    }
+    return raw;
+  };
+
   // Safe helper to trigger browser download for any document format with fresh signed URL
-  const handleDownloadFile = async (fileOrBlobOrUrl: any, defaultFileName: string) => {
-    const rawUrl = renderBlobImage(fileOrBlobOrUrl);
+  const handleDownloadFile = async (fileOrBlobOrUrl: any, defaultFileName: string, docContext?: any) => {
+    let target = fileOrBlobOrUrl;
+    if (!target && docContext) {
+      target = await resolveDocFile(docContext);
+    }
+    const rawUrl = renderBlobImage(target);
     if (!rawUrl) {
       alert('The file URL is missing or not available for this document.');
       return;
@@ -109,8 +138,12 @@ export const Timeline: React.FC<TimelineProps> = ({ lead }) => {
     }
   };
 
-  const handleViewPreview = async (fileOrBlobOrUrl: any, title: string) => {
-    const rawUrl = renderBlobImage(fileOrBlobOrUrl);
+  const handleViewPreview = async (fileOrBlobOrUrl: any, title: string, docContext?: any) => {
+    let target = fileOrBlobOrUrl;
+    if (!target && docContext) {
+      target = await resolveDocFile(docContext);
+    }
+    const rawUrl = renderBlobImage(target);
     if (!rawUrl) {
       alert(`The document preview for "${title}" is not available.`);
       return;
@@ -523,14 +556,15 @@ export const Timeline: React.FC<TimelineProps> = ({ lead }) => {
             </span>
             <div className="space-y-2 mt-2">
               {documents.map((doc) => {
-                const docFile = doc.fileBlob || (doc as any).fileUrl;
+                const docFile = doc.fileBlob || (doc as any).fileUrl || (doc as any).url || (doc as any).storagePath;
+                const docTitle = `${(doc.docType || 'document').toUpperCase().replace(/_/g, ' ')} - ${lead.name}`;
                 return (
                   <div key={doc.id} className="flex justify-between items-center text-xs p-2 bg-slate-50 border border-slate-100 rounded-lg hover:bg-slate-100 transition-colors">
                     <span className="font-semibold text-slate-700 uppercase">{(doc.docType || 'document').replace(/_/g, ' ')}</span>
                     <div className="flex items-center gap-2">
                       <button
                         type="button"
-                        onClick={() => handleViewPreview(docFile, `${(doc.docType || 'document').toUpperCase().replace(/_/g, ' ')} - ${lead.name}`)}
+                        onClick={() => handleViewPreview(docFile, docTitle, doc)}
                         className="text-slate-600 hover:text-slate-800 font-bold cursor-pointer flex items-center gap-1 bg-white border border-slate-200 px-2 py-0.5 rounded shadow-xs"
                       >
                         <Eye className="w-3 h-3 text-slate-500" />
@@ -538,7 +572,7 @@ export const Timeline: React.FC<TimelineProps> = ({ lead }) => {
                       </button>
                       <button
                         type="button"
-                        onClick={() => handleDownloadFile(docFile, `${doc.docType}_${lead.name.replace(/\s+/g, '_')}`)}
+                        onClick={() => handleDownloadFile(docFile, `${doc.docType}_${lead.name.replace(/\s+/g, '_')}`, doc)}
                         className="text-indigo-600 hover:text-indigo-700 font-bold cursor-pointer flex items-center gap-1 bg-indigo-50 px-2 py-0.5 rounded shadow-xs"
                       >
                         <Download className="w-3 h-3 text-indigo-500" />

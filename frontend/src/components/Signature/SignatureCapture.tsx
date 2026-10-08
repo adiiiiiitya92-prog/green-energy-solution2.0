@@ -22,9 +22,9 @@ export const SignatureCapture: React.FC<SignatureCaptureProps> = ({ onSave, onCl
 
     const canvas = sigPad.current?.getCanvas();
     if (canvas) {
-      const dataUrl = canvas.toDataURL('image/png');
       canvas.toBlob((blob) => {
         if (blob) {
+          const dataUrl = URL.createObjectURL(blob);
           onSave(blob, dataUrl);
         }
       }, 'image/png');

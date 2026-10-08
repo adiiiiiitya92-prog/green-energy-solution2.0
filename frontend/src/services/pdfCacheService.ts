@@ -48,6 +48,11 @@ export async function setCachedPdfBlob(key: string, blob: Blob): Promise<void> {
   if (!key || !blob) return;
   const cleanKey = getCleanKey(key);
 
+  // Keep at most 2 PDF blobs in JS memory cache to prevent mobile RAM exhaustion
+  if (memoryPdfCache.size >= 2) {
+    const oldestKey = memoryPdfCache.keys().next().value;
+    if (oldestKey) memoryPdfCache.delete(oldestKey);
+  }
   memoryPdfCache.set(cleanKey, blob);
 
   try {

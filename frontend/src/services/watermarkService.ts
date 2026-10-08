@@ -100,8 +100,8 @@ export async function applyGpsWatermark(
       const naturalW = img.naturalWidth || img.width || 1280;
       const naturalH = img.naturalHeight || img.height || 720;
 
-      // Scale down gently if gigantic (> 2048px) to maintain great speed & quality
-      const maxDim = 2048;
+      // Scale down gently if gigantic (> 1200px) to maintain crystal-clear quality with 70% lower RAM
+      const maxDim = 1200;
       let targetW = naturalW;
       let targetH = naturalH;
       if (Math.max(naturalW, naturalH) > maxDim) {
@@ -223,14 +223,19 @@ export async function applyGpsWatermark(
         ctx.fillText(`👤 ${custText}${labelText}${amtText}`, textX, cursorY);
       }
 
-      // 4. Output as Blob and DataURL
+      // 4. Output as Blob and lightweight Object URL (avoids massive base64 in React state)
       canvas.toBlob(
         (blob) => {
           if (!blob) {
+            canvas.width = 0;
+            canvas.height = 0;
             reject(new Error('Canvas toBlob failed.'));
             return;
           }
-          const watermarkedDataUrl = canvas.toDataURL('image/jpeg', 0.90);
+          const watermarkedDataUrl = URL.createObjectURL(blob);
+          // Free canvas backing store from memory immediately
+          canvas.width = 0;
+          canvas.height = 0;
           resolve({
             watermarkedBlob: blob,
             watermarkedDataUrl,
@@ -238,7 +243,7 @@ export async function applyGpsWatermark(
           });
         },
         'image/jpeg',
-        0.90
+        0.82
       );
     };
 

@@ -728,45 +728,85 @@ export const QuotationDocument: React.FC<{
     }
   };
 
-  // Generate Proposal HTML for 8 Pages
-  const proposalHtml = createNewQuotationProposalHtml(
-    {
-      consumerName: consumerName || selectedLead?.name || 'Valued Customer',
-      consumerMobile: consumerMobile || selectedLead?.phoneNumber || '',
-      consumerEmail: consumerEmail || selectedLead?.email || '',
-      consumerNo,
-      sanctionLoad,
-      proposalId,
-      proposalDate,
-      createdBy: preparedBy,
-      city,
-      statePin,
-      systemCapacity,
-      pvModuleMake,
-      inverterMake,
-      structureType,
-      items,
-      bomItems,
-      subtotal,
-      grandTotal,
-      subsidyAmount,
-      gstRate
-    },
+  // Generate Proposal HTML for 8 Pages (Memoized to prevent memory churn & infinite re-render loop)
+  const proposalHtml = React.useMemo(() => {
+    return createNewQuotationProposalHtml(
+      {
+        consumerName: consumerName || selectedLead?.name || 'Valued Customer',
+        consumerMobile: consumerMobile || selectedLead?.phoneNumber || '',
+        consumerEmail: consumerEmail || selectedLead?.email || '',
+        consumerNo,
+        sanctionLoad,
+        proposalId,
+        proposalDate,
+        createdBy: preparedBy,
+        city,
+        statePin,
+        systemCapacity,
+        pvModuleMake,
+        inverterMake,
+        structureType,
+        items,
+        bomItems,
+        subtotal,
+        grandTotal,
+        subsidyAmount,
+        gstRate
+      },
+      selectedLead,
+      preparedBy
+    );
+  }, [
+    consumerName,
     selectedLead,
-    preparedBy
-  );
+    consumerMobile,
+    consumerEmail,
+    consumerNo,
+    sanctionLoad,
+    proposalId,
+    proposalDate,
+    preparedBy,
+    city,
+    statePin,
+    systemCapacity,
+    pvModuleMake,
+    inverterMake,
+    structureType,
+    items,
+    bomItems,
+    subtotal,
+    grandTotal,
+    subsidyAmount,
+    gstRate
+  ]);
 
   useEffect(() => {
     if (!contentRef.current) return;
+    let rafId: number | null = null;
+    let prevHeight = 0;
+
     const updateHeight = () => {
       if (contentRef.current) {
-        setContentHeight(contentRef.current.offsetHeight);
+        const newHeight = contentRef.current.offsetHeight;
+        // Subpixel threshold: avoid re-rendering and layout recalculations unless height changed > 4px
+        if (Math.abs(newHeight - prevHeight) > 4) {
+          prevHeight = newHeight;
+          setContentHeight(newHeight);
+        }
       }
     };
+
     updateHeight();
-    const observer = new ResizeObserver(updateHeight);
+    const observer = new ResizeObserver(() => {
+      if (rafId) cancelAnimationFrame(rafId);
+      rafId = requestAnimationFrame(updateHeight);
+    });
     observer.observe(contentRef.current);
-    return () => observer.disconnect();
+
+    return () => {
+      if (rafId) cancelAnimationFrame(rafId);
+      observer.disconnect();
+    };
   }, [proposalHtml]);
 
   // Save Quotation Record & Render 8-Page PDF Proposal to Backblaze B2 Storage (Non-blocking ultra-fast save)

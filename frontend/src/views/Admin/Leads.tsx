@@ -20,12 +20,19 @@ import { LeadDispatchModal } from '../../components/Common/LeadDispatchModal';
 import { compressImage } from '../../services/imageCompressionService';
 import { uploadImageToFirebase, uploadPdfToFirebase, getFreshB2SignedUrl, getQuickB2Url, getSafeBlobUrl, buildApiUrl } from '../../services/firebase';
 import { acquireCurrentGpsLocation, applyGpsWatermark, type GpsWatermarkData } from '../../services/watermarkService';
-import { DcrDocument } from './DcrDocument';
-import { WcrDocument } from './WcrDocument';
-import { ModelAgreementDocument } from './ModelAgreementDocument';
-import { CfaAgreementDocument } from './CfaAgreementDocument';
-import { AnnexureProformaDocument } from './AnnexureProformaDocument';
-import { QuotationDocument } from './QuotationDocument';
+const DcrDocument = React.lazy(() => import('./DcrDocument').then(m => ({ default: m.DcrDocument })));
+const WcrDocument = React.lazy(() => import('./WcrDocument').then(m => ({ default: m.WcrDocument })));
+const ModelAgreementDocument = React.lazy(() => import('./ModelAgreementDocument').then(m => ({ default: m.ModelAgreementDocument })));
+const CfaAgreementDocument = React.lazy(() => import('./CfaAgreementDocument').then(m => ({ default: m.CfaAgreementDocument })));
+const AnnexureProformaDocument = React.lazy(() => import('./AnnexureProformaDocument').then(m => ({ default: m.AnnexureProformaDocument })));
+const QuotationDocument = React.lazy(() => import('./QuotationDocument').then(m => ({ default: m.QuotationDocument })));
+
+const LazyDocLoader: React.FC = () => (
+  <div className="p-8 flex flex-col items-center justify-center space-y-2 text-slate-500 min-h-[220px]">
+    <Loader2 className="w-6 h-6 animate-spin text-emerald-600" />
+    <span className="text-xs font-bold">Loading document generator...</span>
+  </div>
+);
 import { getCachedPdfBlob, ensurePdfBlobForQuotation } from '../../services/pdfCacheService';
 import { FollowUpReminders } from '../../components/Common/FollowUpReminders';
 import {
@@ -1015,9 +1022,13 @@ export const Leads: React.FC = () => {
   }, [currentUser?.id, currentRole]);
 
   const isLoadingDataRef = useRef(false);
-  const pendingReloadRef = useRef(false);
   const lastLoadDataTimeRef = useRef(0);
   const isMountedRef = useRef(true);
+  const selectedLeadRef = useRef<Lead | null>(null);
+
+  useEffect(() => {
+    selectedLeadRef.current = selectedLead;
+  }, [selectedLead]);
 
   useEffect(() => {
     isMountedRef.current = true;
@@ -1034,7 +1045,6 @@ export const Leads: React.FC = () => {
       return;
     }
     if (isLoadingDataRef.current) {
-      pendingReloadRef.current = true;
       return;
     }
     isLoadingDataRef.current = true;
@@ -1114,12 +1124,6 @@ export const Leads: React.FC = () => {
       console.warn("Leads loadData error note:", e);
     } finally {
       isLoadingDataRef.current = false;
-      if (pendingReloadRef.current && isMountedRef.current) {
-        pendingReloadRef.current = false;
-        setTimeout(() => {
-          if (isMountedRef.current) loadData();
-        }, 5000);
-      }
     }
   };
 
@@ -1166,6 +1170,8 @@ export const Leads: React.FC = () => {
 
     const handleRealtimeUpdate = (e?: any) => {
       if (!isMountedRef.current) return;
+      // Skip background lead refetching if user is currently inspecting a lead detail to prevent CPU spikes & memory churn
+      if (selectedLeadRef.current) return;
       const col = e?.detail?.collectionName;
       // Only react if event is relevant to leads pipeline
       if (col && !['leads', 'quotations', 'challans', 'orderConfirmations', 'profiles', 'installationPhotos', 'releaseDocuments'].includes(col)) {
@@ -1181,7 +1187,7 @@ export const Leads: React.FC = () => {
 
       if (realtimeDebounceTimer) clearTimeout(realtimeDebounceTimer);
       realtimeDebounceTimer = setTimeout(() => {
-        if (isMountedRef.current) {
+        if (isMountedRef.current && !selectedLeadRef.current) {
           loadData();
         }
       }, 4000);
@@ -1221,15 +1227,48 @@ export const Leads: React.FC = () => {
     return [];
   };
 
+  // Clear contextual data & release memory when exiting details panel
+  const handleCloseLeadDetail = () => {
+    setSelectedLead(null);
+    selectedLeadRef.current = null;
+    sessionStorage.removeItem('leads_selectedLeadId');
+    sessionStorage.removeItem('leads_activeTab');
+    // Immediately release heavy collections to prevent browser memory exhaustion
+    setKycDocs([]);
+    setInstallPhotos([]);
+    setReleaseDocs([]);
+    setBookingItems([]);
+    setExistingOc(null);
+    setRegChecklist(null);
+    setEditingDocData(null);
+    if (advanceCashImageDataUrl && advanceCashImageDataUrl.startsWith('blob:')) {
+      URL.revokeObjectURL(advanceCashImageDataUrl);
+    }
+    if (subsequentCashImageDataUrl && subsequentCashImageDataUrl.startsWith('blob:')) {
+      URL.revokeObjectURL(subsequentCashImageDataUrl);
+    }
+    setAdvanceCashImageDataUrl(null);
+    setAdvanceCashImageBlob(null);
+    setSubsequentCashImageDataUrl(null);
+    setSubsequentCashImageBlob(null);
+  };
+
   // Load contextual data for details panel
   const handleSelectLead = async (lead: Lead, preserveTab?: boolean) => {
     if (!lead || !lead.id) return;
     const shouldPreserveTab = preserveTab !== undefined ? preserveTab : (selectedLead?.id === lead.id);
+    selectedLeadRef.current = lead;
     setSelectedLead(lead);
     setInstallRemarkText(lead.installationRemark || '');
     setIsLoanCase(Boolean(lead.isLoan));
     setLoanBankName(lead.loanBankName || '');
     setLoanSaveSuccess(false);
+    if (advanceCashImageDataUrl && advanceCashImageDataUrl.startsWith('blob:')) {
+      URL.revokeObjectURL(advanceCashImageDataUrl);
+    }
+    if (subsequentCashImageDataUrl && subsequentCashImageDataUrl.startsWith('blob:')) {
+      URL.revokeObjectURL(subsequentCashImageDataUrl);
+    }
     setAdvanceCashImageBlob(null);
     setAdvanceCashImageDataUrl(null);
     setAdvanceCashGps(null);
@@ -1584,7 +1623,7 @@ export const Leads: React.FC = () => {
         // ⚡ Optimistic UI update: remove instantly from UI (0ms lag!)
         setLeads(prev => prev.filter(l => l.id !== id));
         if (selectedLead?.id === id) {
-          setSelectedLead(null);
+          handleCloseLeadDetail();
         }
         try {
           await leadService.deleteLead(id, true);
@@ -2605,7 +2644,7 @@ export const Leads: React.FC = () => {
           {/* Header Action Row */}
           <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center border-b border-slate-100 pb-4 gap-4 print:hidden">
             <button
-              onClick={() => { setSelectedLead(null); sessionStorage.removeItem('leads_selectedLeadId'); sessionStorage.removeItem('leads_activeTab'); }}
+              onClick={handleCloseLeadDetail}
               className="text-xs font-bold text-slate-500 hover:text-slate-900 flex items-center gap-1 cursor-pointer"
             >
               <ChevronLeft className="w-4 h-4" />
@@ -2842,15 +2881,17 @@ export const Leads: React.FC = () => {
 
                 {/* 9-Page Full Turnkey Solar Quotation Document Generator */}
                 <div className="border border-slate-200 rounded-2xl overflow-hidden shadow-md bg-slate-900/5">
-                  <QuotationDocument
-                    defaultLeadId={selectedLead?.id}
-                    isEmbedded={true}
-                    onNavigateToOrderKyc={() => switchTab('order')}
-                    onQuotationSaved={() => {
-                      loadData();
-                      if (selectedLead) handleSelectLead(selectedLead);
-                    }}
-                  />
+                  <React.Suspense fallback={<LazyDocLoader />}>
+                    <QuotationDocument
+                      defaultLeadId={selectedLead?.id}
+                      isEmbedded={true}
+                      onNavigateToOrderKyc={() => switchTab('order')}
+                      onQuotationSaved={() => {
+                        loadData();
+                        if (selectedLead) handleSelectLead(selectedLead);
+                      }}
+                    />
+                  </React.Suspense>
                 </div>
 
                 {/* Generated Quotations History */}
@@ -4230,19 +4271,21 @@ export const Leads: React.FC = () => {
 
                 {/* Render Selected Document inside a styled viewport container */}
                 <div className="bg-white border border-slate-200 rounded-xl overflow-hidden shadow-xs">
-                  {currentRole === 'field_employee' ? (
-                    <WcrDocument defaultLeadId={selectedLead?.id} isEmbedded={true} initialData={editingDocData} onSaveSuccess={() => handleSelectLead(selectedLead)} />
-                  ) : docSubTab === 'dcr' ? (
-                    <DcrDocument defaultLeadId={selectedLead?.id} isEmbedded={true} initialData={editingDocData} onSaveSuccess={() => handleSelectLead(selectedLead)} />
-                  ) : docSubTab === 'wcr' ? (
-                    <WcrDocument defaultLeadId={selectedLead?.id} isEmbedded={true} initialData={editingDocData} onSaveSuccess={() => handleSelectLead(selectedLead)} />
-                  ) : docSubTab === 'model_agreement' ? (
-                    <ModelAgreementDocument defaultLeadId={selectedLead?.id} isEmbedded={true} initialData={editingDocData} onSaveSuccess={() => handleSelectLead(selectedLead)} />
-                  ) : docSubTab === 'cfa_agreement' ? (
-                    <CfaAgreementDocument defaultLeadId={selectedLead?.id} isEmbedded={true} initialData={editingDocData} onSaveSuccess={() => handleSelectLead(selectedLead)} />
-                  ) : (
-                    <AnnexureProformaDocument defaultLeadId={selectedLead?.id} isEmbedded={true} initialData={editingDocData} onSaveSuccess={() => handleSelectLead(selectedLead)} />
-                  )}
+                  <React.Suspense fallback={<LazyDocLoader />}>
+                    {currentRole === 'field_employee' ? (
+                      <WcrDocument defaultLeadId={selectedLead?.id} isEmbedded={true} initialData={editingDocData} onSaveSuccess={() => handleSelectLead(selectedLead)} />
+                    ) : docSubTab === 'dcr' ? (
+                      <DcrDocument defaultLeadId={selectedLead?.id} isEmbedded={true} initialData={editingDocData} onSaveSuccess={() => handleSelectLead(selectedLead)} />
+                    ) : docSubTab === 'wcr' ? (
+                      <WcrDocument defaultLeadId={selectedLead?.id} isEmbedded={true} initialData={editingDocData} onSaveSuccess={() => handleSelectLead(selectedLead)} />
+                    ) : docSubTab === 'model_agreement' ? (
+                      <ModelAgreementDocument defaultLeadId={selectedLead?.id} isEmbedded={true} initialData={editingDocData} onSaveSuccess={() => handleSelectLead(selectedLead)} />
+                    ) : docSubTab === 'cfa_agreement' ? (
+                      <CfaAgreementDocument defaultLeadId={selectedLead?.id} isEmbedded={true} initialData={editingDocData} onSaveSuccess={() => handleSelectLead(selectedLead)} />
+                    ) : (
+                      <AnnexureProformaDocument defaultLeadId={selectedLead?.id} isEmbedded={true} initialData={editingDocData} onSaveSuccess={() => handleSelectLead(selectedLead)} />
+                    )}
+                  </React.Suspense>
                 </div>
               </div>
             )}
@@ -7004,13 +7047,15 @@ export const Leads: React.FC = () => {
       {selectedQuotationForPreview && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/70 backdrop-blur-xs p-2 sm:p-4 animate-fade-in">
           <div className="bg-white rounded-2xl w-full max-w-7xl h-[95vh] flex flex-col shadow-2xl overflow-hidden border border-slate-200">
-            <QuotationDocument
-              readOnlyQuotation={selectedQuotationForPreview}
-              viewOnly={isQuotationViewOnly}
-              isEmbedded={true}
-              onClosePreview={() => setSelectedQuotationForPreview(null)}
-              onSwitchToEdit={() => setIsQuotationViewOnly(false)}
-            />
+            <React.Suspense fallback={<LazyDocLoader />}>
+              <QuotationDocument
+                readOnlyQuotation={selectedQuotationForPreview}
+                viewOnly={isQuotationViewOnly}
+                isEmbedded={true}
+                onClosePreview={() => setSelectedQuotationForPreview(null)}
+                onSwitchToEdit={() => setIsQuotationViewOnly(false)}
+              />
+            </React.Suspense>
           </div>
         </div>
       )}

@@ -308,3 +308,46 @@ pm2 reload ges-backend-api
 | **Nginx Syntax Safety Test** | `sudo nginx -t` |
 | **Nginx Zero-Downtime Reload**| `sudo systemctl reload nginx` |
 | **Health Check (Public HTTPS)**| `curl https://solar.187.126.120.54.sslip.io/api/health` |
+
+---
+
+## 9. Docker Deployment & 15-Project Multi-Tenancy Architecture
+
+Aapke Hostinger KVM 8 VPS (8 vCPU, 32 GB RAM) par **15 same-level projects** ek saath chalane ke liye Docker containerization configure kiya gaya hai:
+
+### 2-Year Resource Caps (Capped for 15 Projects):
+* **RAM Hard Cap:** `768 MB` (Soft Reservation: `256 MB`). 15 projects = ~11.5 GB total RAM, leaving ~20.5 GB free.
+* **Node Heap Limit:** `--max-old-space-size=512` (512 MB par GC trigger hoti hai, container kabhi crash nahi hoga).
+* **CPU Burst Cap:** `1.0 Core` (Response in 5-10ms, then idle at 0%).
+* **Disk Protection:** Docker log rotation `10m` x `3` files (Max 30 MB disk logs).
+
+### Step-by-Step 1-Click Migration (PM2 to Docker):
+VPS terminal par `/var/www/green-energy-solution-backend` me run karein:
+
+```bash
+cd /var/www/green-energy-solution-backend
+
+# 1. Latest Docker files download karein
+curl -fsSL https://raw.githubusercontent.com/adiiiiiitya92-prog/green-energy-solution2.0/main/backend/Dockerfile -o Dockerfile
+curl -fsSL https://raw.githubusercontent.com/adiiiiiitya92-prog/green-energy-solution2.0/main/backend/.dockerignore -o .dockerignore
+curl -fsSL https://raw.githubusercontent.com/adiiiiiitya92-prog/green-energy-solution2.0/main/backend/docker-compose.yml -o docker-compose.yml
+
+# 2. Docker container build karein (PM2 chalta rahega jab tak build na ho jaye)
+docker compose build
+
+# 3. Seamless 1-Second Switch (PM2 stop -> Docker up)
+pm2 stop ges-backend-api
+docker compose up -d
+
+# 4. Instant Health Check
+curl http://127.0.0.1:5050/api/health
+```
+
+### Docker Useful Commands:
+| Kaam | Command |
+| :--- | :--- |
+| **Live RAM & CPU Monitor** | `docker stats ges-backend-api` |
+| **Live Logs Check** | `docker logs -f --tail 50 ges-backend-api` |
+| **Container Restart** | `docker compose restart` |
+| **Rollback to PM2 (If needed)** | `docker compose down && pm2 restart ges-backend-api` |
+

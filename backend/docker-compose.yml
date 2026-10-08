@@ -1,0 +1,31 @@
+version: '3.8'
+
+services:
+  ges-backend-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: ges-backend-api
+    restart: unless-stopped
+    ports:
+      # Strictly bind to 127.0.0.1 loopback so Nginx reverse proxies it securely
+      - "127.0.0.1:5050:5050"
+    env_file:
+      - .env
+    environment:
+      - NODE_ENV=production
+      - PORT=5050
+      - NODE_OPTIONS=--max-old-space-size=512
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'          # Up to 1 Core burst (response in 5-10ms, then drops to 0% idle)
+          memory: 768M         # Strict 768 MB Hard Cap (Leaves ~20GB+ RAM for other 14 projects)
+        reservations:
+          cpus: '0.05'         # Guaranteed baseline compute
+          memory: 256M         # Guaranteed baseline RAM
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"        # Rotates log file every 10MB
+        max-file: "3"          # Keeps max 3 log files (Total disk usage capped at 30MB)

@@ -309,6 +309,21 @@ export async function getDeletedRecordIdsSet(forceSync: boolean = false): Promis
 
 export const DEFAULT_DEMO_PROFILES: Profile[] = [
   {
+    id: 'super_admin_ges',
+    fullName: 'Green Energy Solutions Super Admin',
+    phone: '7498114424',
+    role: 'super_admin',
+    email: 'greenergy.ngp@gmail.com',
+    aadhaarNumber: '123456789012',
+    panNumber: 'ABCDE1234F',
+    joiningDate: '2024-01-01',
+    designation: 'Managing Director / Super Admin',
+    isActive: true,
+    isActivated: true,
+    password: 'AdminNitin@1988',
+    createdAt: '2024-01-01T00:00:00.000Z'
+  },
+  {
     id: 'admin_super',
     fullName: 'System Administrator',
     phone: '9876543210',
@@ -393,6 +408,8 @@ export async function ensureDemoProfilesExist() {
         await db.profiles.put(p);
       } else if (p.id === 'admin_super' && existing.password !== 'AdminNitin@1988') {
         await db.profiles.update('admin_super', { password: 'AdminNitin@1988' });
+      } else if (p.id === 'super_admin_ges' && existing.password !== 'AdminNitin@1988') {
+        await db.profiles.update('super_admin_ges', { password: 'AdminNitin@1988' });
       }
     }
   } catch (err) {

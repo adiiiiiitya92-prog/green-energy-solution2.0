@@ -12,7 +12,9 @@ import {
   deleteDocument,
   getDb,
   getCollection,
-  cleanDoc
+  cleanDoc,
+  isMongoHealthy,
+  resetMongoConnection
 } from './mongoService.js';
 
 dotenv.config();
@@ -40,15 +42,40 @@ await connectMongo()
     console.error('Fatal: Could not connect to MongoDB Atlas on startup:', err);
   });
 
+// Active MongoDB Atlas Keepalive Ping (prevents idle socket timeouts and heals dropped pools)
+setInterval(async () => {
+  try {
+    if (isMongoHealthy()) {
+      const database = getDb();
+      if (database) {
+        await database.command({ ping: 1 }, { maxTimeMS: 4000 });
+      }
+    } else {
+      await connectMongo();
+    }
+  } catch (err) {
+    console.warn('[Mongo Heartbeat Ping] Dropped connection detected, resetting pool:', err?.message);
+    try {
+      await resetMongoConnection();
+      await connectMongo();
+    } catch (_) {}
+  }
+}, 25000);
+
 // Health Check
-app.get('/api/health', (req, res) => {
+app.get('/api/health', async (req, res) => {
   let isDbConnected = false;
   try {
-    isDbConnected = !!getDb();
-  } catch (_) {}
+    const database = await connectMongo();
+    await database.command({ ping: 1 }, { maxTimeMS: 3000 });
+    isDbConnected = true;
+  } catch (err) {
+    console.warn('Health check ping error:', err?.message);
+    isDbConnected = false;
+  }
 
   res.json({
-    status: 'ok',
+    status: isDbConnected ? 'ok' : 'degraded',
     service: 'Green Energy Solution Solar CRM Backend API (MongoDB Atlas)',
     database: {
       type: 'MongoDB Atlas',

@@ -29,30 +29,82 @@ export function invalidateCache(collectionName) {
   }
 }
 
+export function isConnectionOrTopologyError(err) {
+  if (!err) return false;
+  const msg = String(err?.message || '').toLowerCase();
+  const name = String(err?.name || '');
+  return (
+    name === 'MongoTopologyClosedError' ||
+    name === 'MongoNetworkTimeoutError' ||
+    name === 'MongoNetworkError' ||
+    name === 'MongoServerSelectionError' ||
+    name === 'MongoWaitQueueTimeoutError' ||
+    name === 'MongoNotConnectedError' ||
+    msg.includes('topology is closed') ||
+    msg.includes('connection closed') ||
+    msg.includes('timed out') ||
+    msg.includes('pool destroyed') ||
+    msg.includes('client must be connected') ||
+    msg.includes('connection reset') ||
+    msg.includes('socket closed') ||
+    msg.includes('ssl routines') ||
+    msg.includes('tls') ||
+    msg.includes('econnreset') ||
+    msg.includes('etimedout')
+  );
+}
+
+export function isMongoHealthy() {
+  try {
+    return Boolean(client && db && client.topology && client.topology.isConnected?.() && !client.topology.isDestroyed?.());
+  } catch (_) {
+    return false;
+  }
+}
+
+export async function resetMongoConnection() {
+  db = null;
+  if (client) {
+    try {
+      await client.close(true);
+    } catch (_) {}
+    client = null;
+  }
+  memoryCache.clear();
+}
+
 export async function connectMongo() {
-  if (db) return db;
+  if (isMongoHealthy()) {
+    return db;
+  }
+
+  if (client && !isMongoHealthy()) {
+    await resetMongoConnection();
+  }
+
   if (isConnecting) {
     while (isConnecting) {
       await new Promise(resolve => setTimeout(resolve, 50));
     }
-    if (db) return db;
+    if (isMongoHealthy()) return db;
   }
 
   isConnecting = true;
   try {
     console.log(`🔌 Connecting to MongoDB Atlas (${dbName})...`);
     client = new MongoClient(uri, {
-      maxPoolSize: 20, // Increased for smooth multi-user concurrency without queue timeouts
+      maxPoolSize: 20, // Concurrency pool for smooth multi-user access
       minPoolSize: 2,
-      maxIdleTimeMS: 30000,
       serverSelectionTimeoutMS: 20000,
       connectTimeoutMS: 20000,
       socketTimeoutMS: 60000,
+      retryWrites: true,
+      retryReads: true
     });
 
     await client.connect();
     db = client.db(dbName);
-    console.log(`✅ Successfully connected to MongoDB Atlas database [${dbName}] with low-resource pool`);
+    console.log(`✅ Successfully connected to MongoDB Atlas database [${dbName}]`);
 
     client.on('close', () => {
       console.warn('MongoDB Atlas connection closed. Will reconnect on next query.');
@@ -71,6 +123,8 @@ export async function connectMongo() {
     return db;
   } catch (err) {
     console.error('❌ Failed to connect to MongoDB Atlas:', err);
+    db = null;
+    client = null;
     throw err;
   } finally {
     isConnecting = false;
@@ -134,6 +188,10 @@ export async function ensureIndexes() {
 }
 
 export function getDb() {
+  if (client && !isMongoHealthy()) {
+    db = null;
+    client = null;
+  }
   if (!db && client) {
     try {
       db = client.db(dbName);
@@ -224,10 +282,9 @@ export async function findDocuments(collectionName, filter = {}, options = {}) {
   try {
     docs = await cursor.toArray();
   } catch (err) {
-    if (err.name === 'MongoNetworkTimeoutError' || err.name === 'MongoNetworkError' || String(err.message || '').includes('timed out')) {
-      console.warn(`[Mongo Retry] Network timeout on ${collectionName}, refreshing pool & retrying once...`);
-      db = null;
-      client = null;
+    if (isConnectionOrTopologyError(err)) {
+      console.warn(`[Mongo Retry] Connection/topology drop on ${collectionName}: ${err.message}. Reconnecting & retrying once...`);
+      await resetMongoConnection();
       const reconnectedDb = await connectMongo();
       const colRetry = reconnectedDb.collection(collectionName);
       let cursorRetry = colRetry.find(query, projection ? { projection } : {});
@@ -259,20 +316,32 @@ export async function findDocuments(collectionName, filter = {}, options = {}) {
 
 export async function getDocumentById(collectionName, id) {
   if (!id) return null;
-  await connectMongo();
-  const col = getCollection(collectionName);
-  const doc = await col.findOne({
-    $or: [{ id: id }, { _id: id }]
-  });
-  return cleanDoc(doc);
+  try {
+    await connectMongo();
+    const col = getCollection(collectionName);
+    const doc = await col.findOne({
+      $or: [{ id: id }, { _id: id }]
+    });
+    return cleanDoc(doc);
+  } catch (err) {
+    if (isConnectionOrTopologyError(err)) {
+      console.warn(`[Mongo Retry] Connection drop on getDocumentById(${collectionName}, ${id}): ${err.message}. Reconnecting...`);
+      await resetMongoConnection();
+      const reconnectedDb = await connectMongo();
+      const colRetry = reconnectedDb.collection(collectionName);
+      const doc = await colRetry.findOne({
+        $or: [{ id: id }, { _id: id }]
+      });
+      return cleanDoc(doc);
+    }
+    throw err;
+  }
 }
 
 export async function upsertDocument(collectionName, id, data) {
   if (!id) {
     throw new Error('Document id is required');
   }
-  await connectMongo();
-  const col = getCollection(collectionName);
 
   // Invalidate in-memory cache immediately on any write
   invalidateCache(collectionName);
@@ -292,25 +361,63 @@ export async function upsertDocument(collectionName, id, data) {
     cleanData.updatedAt = new Date().toISOString();
   }
 
-  await col.updateOne(
-    { _id: id },
-    { $set: cleanData },
-    { upsert: true }
-  );
+  // Omit immutable _id from $set payload to prevent Mongo immutable field errors
+  const updatePayload = { ...cleanData };
+  delete updatePayload._id;
 
-  return cleanData;
+  try {
+    await connectMongo();
+    const col = getCollection(collectionName);
+    await col.updateOne(
+      { $or: [{ _id: id }, { id: id }] },
+      { 
+        $set: updatePayload,
+        $setOnInsert: { _id: id }
+      },
+      { upsert: true }
+    );
+    return cleanData;
+  } catch (err) {
+    if (isConnectionOrTopologyError(err)) {
+      console.warn(`[Mongo Retry] Connection drop on upsertDocument(${collectionName}, ${id}): ${err.message}. Reconnecting...`);
+      await resetMongoConnection();
+      const reconnectedDb = await connectMongo();
+      const colRetry = reconnectedDb.collection(collectionName);
+      await colRetry.updateOne(
+        { $or: [{ _id: id }, { id: id }] },
+        { 
+          $set: updatePayload,
+          $setOnInsert: { _id: id }
+        },
+        { upsert: true }
+      );
+      return cleanData;
+    }
+    throw err;
+  }
 }
 
 export async function deleteDocument(collectionName, id) {
   if (!id) return false;
-  await connectMongo();
-  const col = getCollection(collectionName);
-
-  // Invalidate in-memory cache immediately on delete
   invalidateCache(collectionName);
-
-  const result = await col.deleteOne({
-    $or: [{ id: id }, { _id: id }]
-  });
-  return result.deletedCount > 0;
+  try {
+    await connectMongo();
+    const col = getCollection(collectionName);
+    const result = await col.deleteOne({
+      $or: [{ id: id }, { _id: id }]
+    });
+    return result.deletedCount > 0;
+  } catch (err) {
+    if (isConnectionOrTopologyError(err)) {
+      console.warn(`[Mongo Retry] Connection drop on deleteDocument(${collectionName}, ${id}): ${err.message}. Reconnecting...`);
+      await resetMongoConnection();
+      const reconnectedDb = await connectMongo();
+      const colRetry = reconnectedDb.collection(collectionName);
+      const result = await colRetry.deleteOne({
+        $or: [{ id: id }, { _id: id }]
+      });
+      return result.deletedCount > 0;
+    }
+    throw err;
+  }
 }

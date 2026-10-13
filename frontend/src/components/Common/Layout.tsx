@@ -137,36 +137,66 @@ export const Layout: React.FC<LayoutProps> = ({ children }) => {
     {
       name: 'Product Catalog',
       path: '/products',
-      roles: ['super_admin', 'inventory_manager'],
+      roles: ['super_admin', 'manager', 'inventory_manager'],
       icon: FileText
     },
     {
       name: 'Delivery Challans',
       path: '/challans',
-      roles: ['super_admin', 'inventory_manager'],
+      roles: ['super_admin', 'manager', 'inventory_manager'],
+      icon: Truck
+    },
+    {
+      name: 'Product Challans',
+      path: '/product-challans',
+      roles: ['super_admin', 'manager', 'inventory_manager'],
       icon: Truck
     },
     {
       name: 'B2B Businesses',
       path: '/b2b-businesses',
-      roles: ['super_admin', 'inventory_manager'],
+      roles: ['super_admin', 'manager', 'inventory_manager'],
       icon: Building2
+    },
+    {
+      name: 'Installation Panel',
+      path: '/installation',
+      roles: ['installation_supervisor'],
+      icon: Package
+    },
+    {
+      name: 'Installation Payments',
+      path: '/installation-payments',
+      roles: ['super_admin', 'manager'],
+      icon: Receipt
+    },
+    {
+      name: 'Receipts',
+      path: '/receipts',
+      roles: ['super_admin', 'manager', 'installation_supervisor'],
+      icon: Receipt
+    },
+    {
+      name: 'Installation Report',
+      path: '/installation-report',
+      roles: ['super_admin'],
+      icon: FileText
     },
     {
       name: 'Field Visits',
       path: '/visits',
-      roles: ['super_admin', 'field_employee', 'dealer'],
+      roles: ['super_admin', 'manager', 'field_employee', 'dealer'],
       icon: MapPin
     },
     {
       name: 'Shadow Analysis',
       path: '/shadow-analysis',
-      roles: ['super_admin'],
+      roles: ['super_admin', 'manager'],
       icon: Sun
     },
     {
       name: 'HRMS',
-      roles: ['super_admin'],
+      roles: ['super_admin', 'manager'],
       icon: Users,
       subItems: [
         {
@@ -185,7 +215,7 @@ export const Layout: React.FC<LayoutProps> = ({ children }) => {
     {
       name: 'Expenses',
       path: '/expenses',
-      roles: ['super_admin'],
+      roles: ['super_admin', 'manager'],
       icon: Receipt,
       badge: pendingExpenseCount
     },
@@ -204,7 +234,7 @@ export const Layout: React.FC<LayoutProps> = ({ children }) => {
     {
       name: 'Complaint Box',
       path: '/complaints',
-      roles: ['super_admin', 'admin', 'field_employee', 'inventory_manager', 'dealer'],
+      roles: ['super_admin', 'manager', 'admin', 'field_employee', 'inventory_manager', 'dealer', 'installation_supervisor'],
       icon: ShieldAlert
     },
     {
@@ -217,7 +247,7 @@ export const Layout: React.FC<LayoutProps> = ({ children }) => {
     {
       name: 'System Settings',
       path: '/settings',
-      roles: ['super_admin'],
+      roles: ['super_admin', 'manager'],
       icon: Settings
     }
   ];

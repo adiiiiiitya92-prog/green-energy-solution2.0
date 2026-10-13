@@ -1,8 +1,18 @@
+export type UserRole =
+  | 'super_admin'
+  | 'admin'
+  | 'field_employee'
+  | 'inventory_manager'
+  | 'dealer'
+  | 'sales_person'
+  | 'manager'
+  | 'installation_supervisor';
+
 export interface Profile {
   id: string;
   fullName: string;
   phone: string;
-  role: 'super_admin' | 'admin' | 'field_employee' | 'inventory_manager' | 'dealer' | 'sales_person';
+  role: UserRole;
   email?: string;
   aadhaarNumber?: string;
   panNumber?: string;
@@ -232,7 +242,7 @@ export interface Product {
   name: string;
   brand?: string;
   unit?: string; // Unit of Measurement (e.g. Nos, Watt, kW, Meters, Sets, Kg)
-  category: 'solar_panel' | 'inverter' | 'battery' | 'structure' | 'other' | 'bom_item';
+  category: 'solar_panel' | 'inverter' | 'battery' | 'structure' | 'other' | 'bom_item' | 'solar_water_heater';
   bomCategory?: string; // Sub-category for BOM items (e.g. Cables & Wiring, Protection Devices, Earthing & LA, Conduit, Accessories)
   rate: number;
   description?: string;
@@ -701,6 +711,124 @@ export type ExpenseCategory =
   | 'printing_stationery'
   | 'emergency_repair'
   | 'other';
+
+// ── Change 2: Product Challan (Solar Water Heater etc.) ──
+// NOTE: stored in NEW collection `productChallans` to avoid colliding with the
+// existing delivery-challan `challans` collection / stock-deduction logic.
+export interface ProductChallanItem {
+  productId: string;
+  productName: string;
+  brand?: string;
+  unit?: string;
+  qty: number;
+  rate?: number;
+}
+
+export interface ProductChallan {
+  id: string;
+  challanNo: string; // sequential e.g. SWH-0001 (atomic counter)
+  date: string; // YYYY-MM-DD
+  leadId?: string;
+  customerSnapshot: {
+    name: string;
+    phone?: string;
+    address?: string;
+  };
+  items: ProductChallanItem[];
+  vehicleNo?: string;
+  notes?: string;
+  createdBy: string;
+  createdByName?: string;
+  status: 'active' | 'cancelled';
+  cancelledReason?: string;
+  createdAt: string;
+  updatedAt?: string;
+}
+
+// ── Change 4: Installation Supervisor workflow ──
+export interface RemainingMaterialEntry {
+  id: string;
+  imageUrls: string[]; // compressed, uploaded via existing storage service
+  description: string;
+  createdAt: string;
+  createdBy: string;
+}
+
+export interface InstallationRecord {
+  id: string;
+  leadId: string;
+  leadName?: string;
+  supervisorId: string;
+  supervisorName?: string;
+  remainingMaterial: RemainingMaterialEntry[];
+  completedAt?: string; // set when supervisor marks installation complete
+  status: 'in_progress' | 'completed';
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type PaymentRequestStatus = 'pending' | 'approved' | 'rejected';
+export type PaymentMethod = 'cash' | 'upi' | 'bank_transfer' | 'cheque' | 'other';
+
+export interface PaymentRequest {
+  id: string;
+  requestNumber: string; // sequential e.g. IPR-0001
+  installationId?: string;
+  leadId: string;
+  leadName?: string;
+  supervisorId: string;
+  supervisorName?: string;
+  requestedAmount: number;
+  note?: string;
+
+  status: PaymentRequestStatus;
+
+  // On approval
+  approvedAmount?: number;
+  method?: PaymentMethod;
+  transactionId?: string;
+  description?: string;
+  receiptId?: string;
+  receiptNo?: string;
+
+  // On rejection
+  rejectReason?: string;
+
+  // Reapply linkage
+  reappliedFrom?: string; // previous (rejected) request id
+  reapplicationCount?: number;
+
+  createdAt: string;
+  decidedAt?: string;
+  decidedBy?: string;
+  decidedByName?: string;
+}
+
+export interface Receipt {
+  id: string;
+  receiptNo: string; // sequential e.g. IRC-0001
+  paymentRequestId: string;
+  supervisorId: string;
+  supervisorName?: string;
+  leadId: string;
+  leadName?: string;
+  amount: number;
+  method: PaymentMethod;
+  transactionId?: string;
+  description?: string;
+  approvedBy: string;
+  approvedByName?: string;
+  createdAt: string;
+}
+
+export interface SupervisorSummary {
+  id: string; // = supervisorId
+  supervisorId: string;
+  supervisorName?: string;
+  installationsCount: number;
+  totalPaid: number; // sum of approved amounts
+  updatedAt: string;
+}
 
 export type ExpensePaymentMode = 'cash' | 'upi_online' | 'bank_transfer' | 'credit_debit_card';
 export type ExpenseStatus = 'pending' | 'approved' | 'rejected';

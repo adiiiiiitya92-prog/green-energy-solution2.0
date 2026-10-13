@@ -118,7 +118,21 @@ export async function ensureIndexes() {
       database.collection('releaseDocuments').createIndex({ leadId: 1 }),
       database.collection('deletionRequests').createIndex({ status: 1 }),
       database.collection('deletedRecords').createIndex({ collectionName: 1 }),
-      database.collection('deletedRecords').createIndex({ deletedAt: -1 })
+      database.collection('deletedRecords').createIndex({ deletedAt: -1 }),
+      // Installation Supervisor / Product Challan feature indexes
+      database.collection('productChallans').createIndex({ createdAt: -1 }),
+      database.collection('productChallans').createIndex({ leadId: 1 }),
+      database.collection('productChallans').createIndex({ createdBy: 1 }),
+      database.collection('productChallans').createIndex({ status: 1 }),
+      database.collection('installations').createIndex({ leadId: 1 }),
+      database.collection('installations').createIndex({ supervisorId: 1 }),
+      database.collection('installations').createIndex({ status: 1 }),
+      database.collection('paymentRequests').createIndex({ supervisorId: 1 }),
+      database.collection('paymentRequests').createIndex({ status: 1 }),
+      database.collection('paymentRequests').createIndex({ createdAt: -1 }),
+      database.collection('receipts').createIndex({ supervisorId: 1 }),
+      database.collection('receipts').createIndex({ paymentRequestId: 1 }),
+      database.collection('receipts').createIndex({ createdAt: -1 })
     ]);
     console.log('⚡ All MongoDB Atlas performance indexes are verified and active.');
   } catch (err) {
@@ -287,4 +301,67 @@ export async function deleteDocument(collectionName, id) {
     $or: [{ id: id }, { _id: id }]
   });
   return result.deletedCount > 0;
+}
+
+// ============================================================
+// ATOMIC HELPERS (for Installation Supervisor / Challan features)
+// ============================================================
+
+/**
+ * Atomic sequential counter. Returns the next integer for `key`.
+ * Concurrency-safe via a single findOneAndUpdate($inc) — no duplicate numbers.
+ */
+export async function getNextSequence(key) {
+  if (!key) throw new Error('Counter key is required');
+  await connectMongo();
+  const col = getCollection('counters');
+  invalidateCache('counters');
+  const res = await col.findOneAndUpdate(
+    { _id: key },
+    { $inc: { seq: 1 }, $set: { id: key, updatedAt: new Date().toISOString() } },
+    { upsert: true, returnDocument: 'after' }
+  );
+  const doc = res && res.value !== undefined ? res.value : res; // driver v5 vs v6+ safety
+  return (doc && doc.seq) || 1;
+}
+
+/**
+ * Guarded status transition. Only updates if the document's current status === expectedStatus.
+ * Returns the updated doc, or null if no match (already decided / not found). Prevents
+ * double approve/reject of the same request.
+ */
+export async function conditionalStatusUpdate(collectionName, id, expectedStatus, setFields = {}) {
+  if (!id) throw new Error('id is required');
+  await connectMongo();
+  const col = getCollection(collectionName);
+  invalidateCache(collectionName);
+  const res = await col.findOneAndUpdate(
+    { $or: [{ id }, { _id: id }], status: expectedStatus },
+    { $set: { ...setFields, updatedAt: new Date().toISOString() } },
+    { returnDocument: 'after' }
+  );
+  const doc = res && res.value !== undefined ? res.value : res;
+  return cleanDoc(doc);
+}
+
+/**
+ * Atomic increment of numeric counters on a summary doc (upsert).
+ * incFields e.g. { installationsCount: 1, totalPaid: 5000 }.
+ */
+export async function incrementFields(collectionName, id, incFields = {}, setFields = {}) {
+  if (!id) throw new Error('id is required');
+  await connectMongo();
+  const col = getCollection(collectionName);
+  invalidateCache(collectionName);
+  const res = await col.findOneAndUpdate(
+    { _id: id },
+    {
+      $inc: incFields,
+      $set: { ...setFields, updatedAt: new Date().toISOString() },
+      $setOnInsert: { id, createdAt: new Date().toISOString() }
+    },
+    { upsert: true, returnDocument: 'after' }
+  );
+  const doc = res && res.value !== undefined ? res.value : res;
+  return cleanDoc(doc);
 }

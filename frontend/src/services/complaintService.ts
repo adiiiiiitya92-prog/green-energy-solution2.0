@@ -88,6 +88,19 @@ export const complaintService = {
   },
 
   /**
+   * Change 3: Pending complaints = any status that is NOT 'Resolved' / 'Closed'.
+   * Reads the locally-synced Dexie mirror (0 extra network reads) and returns a
+   * capped list (newest-first) plus the total pending count for the dashboard widget.
+   */
+  async getPendingComplaints(limit: number = 10): Promise<{ items: Complaint[]; count: number }> {
+    const all = await db.complaints.toArray().catch(() => [] as Complaint[]);
+    const pending = all
+      .filter(c => c.status !== 'Resolved' && c.status !== 'Closed')
+      .sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
+    return { items: pending.slice(0, limit), count: pending.length };
+  },
+
+  /**
    * Check duplicate customer by mobile, email, or name.
    */
   async checkDuplicateCustomer(mobileNumber: string, email?: string, name?: string): Promise<Lead | undefined> {

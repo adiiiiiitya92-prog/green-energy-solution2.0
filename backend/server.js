@@ -12,7 +12,10 @@ import {
   deleteDocument,
   getDb,
   getCollection,
-  cleanDoc
+  cleanDoc,
+  getNextSequence,
+  conditionalStatusUpdate,
+  incrementFields
 } from './mongoService.js';
 
 dotenv.config();
@@ -258,6 +261,53 @@ app.delete(['/api/firestore/:collection/:id', '/api/db/:collection/:id'], async 
     res.json({ success, id });
   } catch (err) {
     handleApiError(res, `Failed to delete document ${req.params.collection}/${req.params.id}`, err);
+  }
+});
+
+// ============================================================
+// ATOMIC ENDPOINTS (Challan / Installation Supervisor features)
+// ============================================================
+
+// Atomic sequential numbering (challans, payment requests, receipts)
+app.post('/api/counters/:key/next', async (req, res) => {
+  try {
+    const { key } = req.params;
+    if (!/^[A-Za-z0-9_-]+$/.test(key)) { res.status(400).json({ error: 'Invalid counter key' }); return; }
+    const seq = await getNextSequence(key);
+    res.json({ key, seq });
+  } catch (err) {
+    handleApiError(res, `Failed to advance counter ${req.params.key}`, err);
+  }
+});
+
+// Guarded status transition — prevents double approve/reject of the same request
+app.post('/api/firestore/:collection/:id/decide', async (req, res) => {
+  try {
+    const { collection, id } = req.params;
+    validateCollection(collection);
+    const expectedStatus = req.body.expectedStatus || 'pending';
+    const setFields = req.body.set || {};
+    const updated = await conditionalStatusUpdate(collection, id, expectedStatus, setFields);
+    if (!updated) { res.json({ success: false, reason: 'already_decided' }); return; }
+    broadcastRealtimeChange(collection, id, 'upsert', updated);
+    res.json({ success: true, doc: updated });
+  } catch (err) {
+    handleApiError(res, `Failed to decide ${req.params.collection}/${req.params.id}`, err);
+  }
+});
+
+// Atomic increment of summary counters (installationsCount / totalPaid)
+app.post('/api/firestore/:collection/:id/increment', async (req, res) => {
+  try {
+    const { collection, id } = req.params;
+    validateCollection(collection);
+    const inc = req.body.inc || {};
+    const set = req.body.set || {};
+    const updated = await incrementFields(collection, id, inc, set);
+    broadcastRealtimeChange(collection, id, 'upsert', updated);
+    res.json({ success: true, doc: updated });
+  } catch (err) {
+    handleApiError(res, `Failed to increment ${req.params.collection}/${req.params.id}`, err);
   }
 });
 

@@ -19,13 +19,23 @@ import type {
   Complaint,
   ComplaintConfigCategory,
   LeaveRequest,
-  ExpenseClaim
+  ExpenseClaim,
+  ProductChallan,
+  InstallationRecord,
+  PaymentRequest,
+  Receipt,
+  SupervisorSummary
 } from '../types';
 
 export interface DeletedRecord {
   id: string;
   collectionName: string;
   deletedAt: string;
+}
+
+export interface CounterDoc {
+  id: string; // counter key e.g. 'productChallan', 'paymentRequest', 'receipt'
+  seq: number;
 }
 
 export class SolarCRMDatabase extends Dexie {
@@ -50,6 +60,12 @@ export class SolarCRMDatabase extends Dexie {
   complaintConfigCategories!: Table<ComplaintConfigCategory>;
   leaveRequests!: Table<LeaveRequest>;
   expenses!: Table<ExpenseClaim>;
+  productChallans!: Table<ProductChallan>;
+  installations!: Table<InstallationRecord>;
+  paymentRequests!: Table<PaymentRequest>;
+  receipts!: Table<Receipt>;
+  supervisorSummaries!: Table<SupervisorSummary>;
+  counters!: Table<CounterDoc>;
 
   constructor() {
     super('GreenEnergyCRMDatabase');
@@ -200,6 +216,36 @@ export class SolarCRMDatabase extends Dexie {
       complaintConfigCategories: 'id, name',
       leaveRequests: 'id, leaveNumber, employeeId, status, startDate, endDate, createdAt',
       expenses: 'id, expenseNumber, employeeId, status, category, expenseDate, createdAt'
+    });
+    this.version(11).stores({
+      profiles: 'id, role, isActive',
+      leads: 'id, assignedEmployeeId, status, createdAt',
+      quotations: 'id, leadId, quotationNumber, createdAt',
+      orderConfirmations: 'id, leadId, quotationId',
+      clientDocuments: 'id, leadId, docType',
+      clientRegistrations: 'leadId',
+      installationPhotos: 'id, leadId, photoType',
+      releaseDocuments: 'id, leadId',
+      fieldVisitReports: 'id, employeeId, leadId, visitedAt',
+      products: 'id, name, category',
+      challans: 'id, leadId, assignedEmployeeId, challanNumber, createdAt',
+      shadowAnalyses: 'id, leadId, projectName, createdAt',
+      deletedRecords: 'id, collectionName, deletedAt',
+      deletionRequests: 'id, status, entityType, requestedByUserId, requestedAt',
+      b2bBusinesses: 'id, businessName, mobileNumber, gstNumber, contactPerson, createdAt',
+      stockTransactions: 'id, challanId, challanNumber, productId, timestamp',
+      packages: 'id, name, code, status, createdAt',
+      complaints: 'id, complaintNumber, status, priority, customerType, leadId, assignedToId, assignedDepartment, isOverdue, createdAt',
+      complaintConfigCategories: 'id, name',
+      leaveRequests: 'id, leaveNumber, employeeId, status, startDate, endDate, createdAt',
+      expenses: 'id, expenseNumber, employeeId, status, category, expenseDate, createdAt',
+      // Change 2 & 4: additive new collections
+      productChallans: 'id, challanNo, leadId, createdBy, status, createdAt',
+      installations: 'id, leadId, supervisorId, status, completedAt, createdAt',
+      paymentRequests: 'id, requestNumber, leadId, supervisorId, status, createdAt',
+      receipts: 'id, receiptNo, paymentRequestId, supervisorId, leadId, createdAt',
+      supervisorSummaries: 'id, supervisorId',
+      counters: 'id'
     });
   }
 }

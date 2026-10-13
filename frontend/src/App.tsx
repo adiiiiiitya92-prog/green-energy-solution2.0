@@ -124,6 +124,12 @@ const LeaveApplication = lazyWithRetry(() => import('./views/Leave/LeaveApplicat
 const LeaveRequests = lazyWithRetry(() => import('./views/SuperAdmin/LeaveRequests').then(m => ({ default: m.LeaveRequests })));
 const ExpenseTracker = lazyWithRetry(() => import('./views/Admin/ExpenseTracker').then(m => ({ default: m.ExpenseTracker })));
 const Expenses = lazyWithRetry(() => import('./views/SuperAdmin/Expenses').then(m => ({ default: m.Expenses })));
+// Change 2 & 4: new lazy-loaded modules
+const ProductChallans = lazyWithRetry(() => import('./views/Admin/ProductChallans').then(m => ({ default: m.ProductChallans })));
+const InstallationSupervisorPanel = lazyWithRetry(() => import('./views/InstallationSupervisor/InstallationPanel').then(m => ({ default: m.InstallationSupervisorPanel })));
+const InstallationPayments = lazyWithRetry(() => import('./views/SuperAdmin/InstallationPayments').then(m => ({ default: m.InstallationPayments })));
+const Receipts = lazyWithRetry(() => import('./views/SuperAdmin/Receipts').then(m => ({ default: m.Receipts })));
+const InstallationReport = lazyWithRetry(() => import('./views/SuperAdmin/InstallationReport').then(m => ({ default: m.InstallationReport })));
 
 const PageLoader: React.FC = () => (
   <div className="min-h-[50vh] flex flex-col justify-center items-center py-16 text-slate-400">
@@ -209,6 +215,8 @@ export const App: React.FC = () => {
   const isEmployee = currentRole === 'field_employee';
   const isInventoryManager = currentRole === 'inventory_manager';
   const isDealer = currentRole === 'dealer';
+  const isManager = currentRole === 'manager';
+  const isInstallationSupervisor = currentRole === 'installation_supervisor';
 
   return (
     <BrowserRouter>
@@ -236,20 +244,37 @@ export const App: React.FC = () => {
                   <Route path="/products" element={<Products />} />
                   <Route path="/challans" element={<Challans />} />
                   <Route path="/b2b-businesses" element={<B2BBusinesses />} />
+                  <Route path="/product-challans" element={<ProductChallans />} />
                   <Route path="*" element={<Navigate to="/inventory-panel" replace />} />
                 </>
-              ) : !isEmployee ? (
-                /* Admin / Super Admin Routes */
+              ) : isInstallationSupervisor ? (
+                /* Installation Supervisor Dedicated Panel */
                 <>
-                  <Route path="/dashboard" element={<Dashboard />} />
+                  <Route path="/installation" element={<InstallationSupervisorPanel />} />
+                  <Route path="/receipts" element={<Receipts />} />
+                  <Route path="/complaints" element={<Complaints />} />
+                  <Route path="/leave-application" element={<LeaveApplication />} />
+                  <Route path="/expense-tracker" element={<ExpenseTracker />} />
+                  <Route path="*" element={<Navigate to="/installation" replace />} />
+                </>
+              ) : !isEmployee ? (
+                /* Admin / Super Admin / Manager Routes */
+                <>
+                  {/* Change 1: Manager is blocked from Dashboard, Lead Pipeline & Reports */}
+                  <Route path="/dashboard" element={isManager ? <Navigate to="/complaints" replace /> : <Dashboard />} />
+                  <Route path="/leads" element={isManager ? <Navigate to="/complaints" replace /> : <Leads />} />
+                  <Route path="/installation-report" element={currentRole === 'super_admin' ? <InstallationReport /> : <Navigate to={isManager ? '/complaints' : '/dashboard'} replace />} />
+                  {/* Change 2 & 4 shared routes — Super Admin + Manager only (block plain admin) */}
+                  <Route path="/product-challans" element={currentRole === 'admin' ? <Navigate to="/dashboard" replace /> : <ProductChallans />} />
+                  <Route path="/installation-payments" element={currentRole === 'admin' ? <Navigate to="/dashboard" replace /> : <InstallationPayments />} />
+                  <Route path="/receipts" element={currentRole === 'admin' ? <Navigate to="/dashboard" replace /> : <Receipts />} />
                   <Route path="/inventory-panel" element={<InventoryPanel />} />
                   <Route path="/leave-application" element={<LeaveApplication />} />
                   <Route path="/leave-requests" element={<LeaveRequests />} />
                   <Route path="/hrms/leave-requests" element={<LeaveRequests />} />
                   <Route path="/expense-tracker" element={<ExpenseTracker />} />
-                  <Route path="/expenses" element={currentRole === 'super_admin' ? <Expenses /> : <ExpenseTracker />} />
+                  <Route path="/expenses" element={(currentRole === 'super_admin' || currentRole === 'manager') ? <Expenses /> : <ExpenseTracker />} />
                   <Route path="/complaints" element={<Complaints />} />
-                  <Route path="/leads" element={<Leads />} />
                   <Route path="/visits" element={<Visits />} />
                   <Route path="/shadow-analysis" element={<ShadowAnalysisContainer />} />
                   <Route path="/products" element={<Products />} />
@@ -262,13 +287,13 @@ export const App: React.FC = () => {
                   <Route path="/cfa-agreement" element={<CfaAgreementDocument />} />
                   <Route path="/quotation-document" element={<QuotationDocument />} />
                   
-                  {currentRole === 'super_admin' ? (
+                  {(currentRole === 'super_admin' || currentRole === 'manager') ? (
                     <Route path="/settings" element={<Settings />} />
                   ) : (
                     <Route path="/settings" element={<Navigate to="/dashboard" replace />} />
                   )}
-                  
-                  <Route path="*" element={<Navigate to="/dashboard" replace />} />
+
+                  <Route path="*" element={<Navigate to={isManager ? '/complaints' : '/dashboard'} replace />} />
                 </>
               ) : (
                 // Field Employee routes

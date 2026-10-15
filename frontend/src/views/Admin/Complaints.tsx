@@ -54,7 +54,15 @@ export const Complaints: React.FC = () => {
 
   // Filter States
   const [searchQuery, setSearchQuery] = useState('');
-  const [statusFilter, setStatusFilter] = useState<string>('all');
+  const [statusFilter, setStatusFilter] = useState<string>(() => {
+    // Change 3: honor "?filter=pending" from Dashboard "View All" (maps to not-resolved/closed)
+    try {
+      if (typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('filter') === 'pending') {
+        return 'active';
+      }
+    } catch (_) {}
+    return 'all';
+  });
   const [priorityFilter, setPriorityFilter] = useState<string>('all');
   const [categoryFilter, setCategoryFilter] = useState<string>('all');
   const [customerTypeFilter, setCustomerTypeFilter] = useState<string>('all');

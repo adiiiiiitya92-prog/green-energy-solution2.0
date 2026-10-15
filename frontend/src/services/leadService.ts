@@ -304,6 +304,9 @@ export const leadService = {
     const visits = await db.fieldVisitReports.where({ leadId: id }).toArray();
     const challans = await db.challans.where({ leadId: id }).toArray();
     const shadows = await db.shadowAnalyses.where({ leadId: id }).toArray();
+    const payReqs = await db.paymentRequests.where({ leadId: id }).toArray().catch(() => []);
+    const insts = await db.installations.where({ leadId: id }).toArray().catch(() => []);
+    const rcpts = await db.receipts.where({ leadId: id }).toArray().catch(() => []);
 
     // 2. Clear local IndexedDB records
     await db.transaction('rw', [
@@ -317,6 +320,9 @@ export const leadService = {
       db.fieldVisitReports,
       db.challans,
       db.shadowAnalyses,
+      db.paymentRequests,
+      db.installations,
+      db.receipts,
       db.deletedRecords
     ], async () => {
       await db.leads.delete(id);
@@ -329,6 +335,9 @@ export const leadService = {
       await db.fieldVisitReports.where({ leadId: id }).delete();
       await db.challans.where({ leadId: id }).delete();
       await db.shadowAnalyses.where({ leadId: id }).delete();
+      await db.paymentRequests.where({ leadId: id }).delete();
+      await db.installations.where({ leadId: id }).delete();
+      await db.receipts.where({ leadId: id }).delete();
     });
 
     // 3. Log tombstones so background sync never reinstates deleted data
@@ -342,6 +351,9 @@ export const leadService = {
     for (const v of visits) await markRecordAsDeleted(v.id, 'fieldVisitReports');
     for (const ch of challans) await markRecordAsDeleted(ch.id, 'challans');
     for (const sa of shadows) await markRecordAsDeleted(sa.id, 'shadowAnalyses');
+    for (const pr of payReqs) await markRecordAsDeleted(pr.id, 'paymentRequests');
+    for (const inst of insts) await markRecordAsDeleted(inst.id, 'installations');
+    for (const rc of rcpts) await markRecordAsDeleted(rc.id, 'receipts');
 
     // 4. Remote wipe from Cloud Firestore & Backend REST API
     deleteRecordFromFirestore('leads', id); // Sends single broadcast for this lead
@@ -354,6 +366,9 @@ export const leadService = {
     for (const v of visits) deleteRecordFromFirestore('fieldVisitReports', v.id, true);
     for (const ch of challans) deleteRecordFromFirestore('challans', ch.id, true);
     for (const sa of shadows) deleteRecordFromFirestore('shadowAnalyses', sa.id, true);
+    for (const pr of payReqs) deleteRecordFromFirestore('paymentRequests', pr.id, true);
+    for (const inst of insts) deleteRecordFromFirestore('installations', inst.id, true);
+    for (const rc of rcpts) deleteRecordFromFirestore('receipts', rc.id, true);
 
     fetch(`${BACKEND_URL}/api/leads/${id}`, { method: 'DELETE' }).catch(() => {});
     return { success: true };

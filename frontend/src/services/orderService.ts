@@ -365,7 +365,7 @@ export const orderService = {
   },
 
   // Installation Photos
-  async getInstallationPhotosByLeadId(leadId: string): Promise<InstallationPhoto[]> {
+  async getInstallationPhotosByLeadId(leadId: string, forceSync: boolean = false): Promise<InstallationPhoto[]> {
     const deletedIds = await getDeletedRecordIdsSet();
     if (deletedIds.has(leadId)) return [];
 
@@ -375,13 +375,13 @@ export const orderService = {
     }
     let validLocal = localPhotos.filter(p => !deletedIds.has(p.id));
 
-    const hasMissingBlobs = validLocal.some(p => !p.photoBlob && !(p as any).photoUrl && !(p as any).url);
-    if (validLocal.length === 0 || hasMissingBlobs) {
-      const now = Date.now();
-      const lastChecked = emptyLeadPhotosThrottle.get(leadId) || 0;
-      if (validLocal.length === 0 && now - lastChecked < 30000) return [];
-      emptyLeadPhotosThrottle.set(leadId, now);
-
+    if (forceSync || validLocal.length === 0 || hasMissingBlobs) {
+      if (!forceSync && validLocal.length === 0) {
+        const now = Date.now();
+        const lastChecked = emptyLeadPhotosThrottle.get(leadId) || 0;
+        if (now - lastChecked < 30000) return [];
+        emptyLeadPhotosThrottle.set(leadId, now);
+      }
       try {
         const remotePhotos = await fetchCollectionFromFirestore<InstallationPhoto>('installationPhotos', 12000, { leadId, full: true });
         if (Array.isArray(remotePhotos) && remotePhotos.length > 0) {
@@ -439,6 +439,7 @@ export const orderService = {
       saveRecordToFirestore('leads', updatedLead.id, updatedLead);
     }
     saveRecordToFirestore('installationPhotos', id, newPhoto);
+    window.dispatchEvent(new CustomEvent('app-realtime-update'));
     return id;
   },
 
@@ -446,6 +447,7 @@ export const orderService = {
     await db.installationPhotos.delete(id);
     await markRecordAsDeleted(id, 'installationPhotos');
     deleteRecordFromFirestore('installationPhotos', id);
+    window.dispatchEvent(new CustomEvent('app-realtime-update'));
   },
 
   // Release Documents

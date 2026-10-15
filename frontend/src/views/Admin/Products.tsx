@@ -1,4 +1,5 @@
 import React, { useEffect, useState, useMemo } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { isMeterUnit, type Product, type ProductUnit } from '../../types';
 import { db } from '../../services/db';
 import { productService } from '../../services/productService';
@@ -117,6 +118,7 @@ const normalizeProductUnits = (p: Product): ProductUnit[] => {
 };
 
 export const Products: React.FC = () => {
+  const navigate = useNavigate();
   const [products, setProducts] = useState<Product[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [activeTab, setActiveTab] = useState<'commercial' | 'bom' | 'packages' | 'history'>('commercial');
@@ -738,6 +740,7 @@ export const Products: React.FC = () => {
       inverter: 'Inverter',
       battery: 'Battery / Storage',
       structure: 'Mounting Structure',
+      solar_water_heater: 'Solar Water Heater',
       other: 'Other/Accessories'
     };
     return labels[cat] || cat;
@@ -1411,6 +1414,18 @@ export const Products: React.FC = () => {
                           ₹{((p.rate || p.bomRate || 0) * availableCount).toLocaleString('en-IN')}
                         </span>
                       </div>
+
+                      {/* Change 2: Create Challan for Solar Water Heater products */}
+                      {p.category === 'solar_water_heater' && (
+                        <button
+                          onClick={() => navigate(`/product-challans?create=1&productId=${encodeURIComponent(p.id)}`)}
+                          className="w-full mt-1 px-2 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white font-extrabold text-[11px] rounded-lg transition-colors flex items-center justify-center gap-1.5 cursor-pointer"
+                          title="Create a delivery challan for this Solar Water Heater"
+                        >
+                          <Clipboard className="w-3.5 h-3.5" />
+                          <span>Create Challan</span>
+                        </button>
+                      )}
                     </div>
                   </div>
                 );
@@ -1497,6 +1512,7 @@ export const Products: React.FC = () => {
                     <option value="inverter">Inverter</option>
                     <option value="battery">Battery / Storage</option>
                     <option value="structure">Mounting Structure</option>
+                    <option value="solar_water_heater">Solar Water Heater</option>
                     <option value="other">Other/Accessories</option>
                   </select>
                 </div>
@@ -1890,6 +1906,7 @@ export const Products: React.FC = () => {
                     <option value="inverter">Inverter</option>
                     <option value="battery">Battery / Storage</option>
                     <option value="structure">Mounting Structure</option>
+                    <option value="solar_water_heater">Solar Water Heater</option>
                     <option value="bom_item">Bill of Materials (BOM)</option>
                     <option value="other">Other/Accessories</option>
                   </select>

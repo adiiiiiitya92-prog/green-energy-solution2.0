@@ -19,13 +19,23 @@ import type {
   Complaint,
   ComplaintConfigCategory,
   LeaveRequest,
-  ExpenseClaim
+  ExpenseClaim,
+  ProductChallan,
+  InstallationRecord,
+  PaymentRequest,
+  Receipt,
+  SupervisorSummary
 } from '../types';
 
 export interface DeletedRecord {
   id: string;
   collectionName: string;
   deletedAt: string;
+}
+
+export interface CounterDoc {
+  id: string; // counter key e.g. 'productChallan', 'paymentRequest', 'receipt'
+  seq: number;
 }
 
 export class SolarCRMDatabase extends Dexie {
@@ -50,6 +60,12 @@ export class SolarCRMDatabase extends Dexie {
   complaintConfigCategories!: Table<ComplaintConfigCategory>;
   leaveRequests!: Table<LeaveRequest>;
   expenses!: Table<ExpenseClaim>;
+  productChallans!: Table<ProductChallan>;
+  installations!: Table<InstallationRecord>;
+  paymentRequests!: Table<PaymentRequest>;
+  receipts!: Table<Receipt>;
+  supervisorSummaries!: Table<SupervisorSummary>;
+  counters!: Table<CounterDoc>;
 
   constructor() {
     super('GreenEnergyCRMDatabase');
@@ -201,10 +217,51 @@ export class SolarCRMDatabase extends Dexie {
       leaveRequests: 'id, leaveNumber, employeeId, status, startDate, endDate, createdAt',
       expenses: 'id, expenseNumber, employeeId, status, category, expenseDate, createdAt'
     });
+    this.version(11).stores({
+      profiles: 'id, role, isActive',
+      leads: 'id, assignedEmployeeId, status, createdAt',
+      quotations: 'id, leadId, quotationNumber, createdAt',
+      orderConfirmations: 'id, leadId, quotationId',
+      clientDocuments: 'id, leadId, docType',
+      clientRegistrations: 'leadId',
+      installationPhotos: 'id, leadId, photoType',
+      releaseDocuments: 'id, leadId',
+      fieldVisitReports: 'id, employeeId, leadId, visitedAt',
+      products: 'id, name, category',
+      challans: 'id, leadId, assignedEmployeeId, challanNumber, createdAt',
+      shadowAnalyses: 'id, leadId, projectName, createdAt',
+      deletedRecords: 'id, collectionName, deletedAt',
+      deletionRequests: 'id, status, entityType, requestedByUserId, requestedAt',
+      b2bBusinesses: 'id, businessName, mobileNumber, gstNumber, contactPerson, createdAt',
+      stockTransactions: 'id, challanId, challanNumber, productId, timestamp',
+      packages: 'id, name, code, status, createdAt',
+      complaints: 'id, complaintNumber, status, priority, customerType, leadId, assignedToId, assignedDepartment, isOverdue, createdAt',
+      complaintConfigCategories: 'id, name',
+      leaveRequests: 'id, leaveNumber, employeeId, status, startDate, endDate, createdAt',
+      expenses: 'id, expenseNumber, employeeId, status, category, expenseDate, createdAt',
+      // Change 2 & 4: additive new collections
+      productChallans: 'id, challanNo, leadId, createdBy, status, createdAt',
+      installations: 'id, leadId, supervisorId, status, completedAt, createdAt',
+      paymentRequests: 'id, requestNumber, leadId, supervisorId, status, createdAt',
+      receipts: 'id, receiptNo, paymentRequestId, supervisorId, leadId, createdAt',
+      supervisorSummaries: 'id, supervisorId',
+      counters: 'id'
+    });
   }
 }
 
 export const db = new SolarCRMDatabase();
+
+export async function ensureDbOpen(): Promise<boolean> {
+  if (db.isOpen()) return true;
+  try {
+    await db.open();
+    return true;
+  } catch (err) {
+    console.warn('ensureDbOpen failed:', err);
+    return false;
+  }
+}
 
 let lastDeletedSyncTime = 0;
 const DELETED_SYNC_INTERVAL = 60 * 1000; // 60 seconds throttle
@@ -225,6 +282,7 @@ export async function syncDeletedRecordsFromFirestore(force: boolean = false): P
       const { fetchCollectionFromFirestore } = await import('./firebase');
       const remoteDeleted = await fetchCollectionFromFirestore<DeletedRecord>('deletedRecords', 8000);
       if (Array.isArray(remoteDeleted) && remoteDeleted.length > 0) {
+        if (!db.isOpen()) await db.open().catch(() => {});
         await db.deletedRecords.bulkPut(remoteDeleted);
 
         // Group deleted IDs by collection for fast single bulkDelete
@@ -235,6 +293,10 @@ export async function syncDeletedRecordsFromFirestore(force: boolean = false): P
         const productIdsToDelete: string[] = [];
         const leaveIdsToDelete: string[] = [];
         const expenseIdsToDelete: string[] = [];
+        const paymentRequestIdsToDelete: string[] = [];
+        const receiptIdsToDelete: string[] = [];
+        const installationPhotoIdsToDelete: string[] = [];
+        const installationIdsToDelete: string[] = [];
 
         for (const rd of remoteDeleted) {
           if (!rd?.id) continue;
@@ -246,6 +308,10 @@ export async function syncDeletedRecordsFromFirestore(force: boolean = false): P
           else if (col === 'products') productIdsToDelete.push(rd.id);
           else if (col === 'leaveRequests') leaveIdsToDelete.push(rd.id);
           else if (col === 'expenses') expenseIdsToDelete.push(rd.id);
+          else if (col === 'paymentRequests') paymentRequestIdsToDelete.push(rd.id);
+          else if (col === 'receipts') receiptIdsToDelete.push(rd.id);
+          else if (col === 'installationPhotos') installationPhotoIdsToDelete.push(rd.id);
+          else if (col === 'installations') installationIdsToDelete.push(rd.id);
         }
 
         if (leadIdsToDelete.length > 0) await db.leads.bulkDelete(leadIdsToDelete).catch(() => {});
@@ -255,6 +321,10 @@ export async function syncDeletedRecordsFromFirestore(force: boolean = false): P
         if (productIdsToDelete.length > 0) await db.products.bulkDelete(productIdsToDelete).catch(() => {});
         if (leaveIdsToDelete.length > 0) await db.leaveRequests.bulkDelete(leaveIdsToDelete).catch(() => {});
         if (expenseIdsToDelete.length > 0) await db.expenses.bulkDelete(expenseIdsToDelete).catch(() => {});
+        if (paymentRequestIdsToDelete.length > 0) await db.paymentRequests.bulkDelete(paymentRequestIdsToDelete).catch(() => {});
+        if (receiptIdsToDelete.length > 0) await db.receipts.bulkDelete(receiptIdsToDelete).catch(() => {});
+        if (installationPhotoIdsToDelete.length > 0) await db.installationPhotos.bulkDelete(installationPhotoIdsToDelete).catch(() => {});
+        if (installationIdsToDelete.length > 0) await db.installations.bulkDelete(installationIdsToDelete).catch(() => {});
       }
     } catch (err) {
       console.warn("DeletedRecords remote sync note:", err);

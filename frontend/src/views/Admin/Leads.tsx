@@ -7,6 +7,7 @@ import { challanService } from '../../services/challanService';
 import { quotationService, getCleanWhatsAppPhone, getQuotationTotalAmount } from '../../services/quotationService';
 import { shareQuotationViaWhatsapp } from '../../services/quotationShareService';
 import { orderService } from '../../services/orderService';
+import { installationService } from '../../services/installationService';
 import { employeeService } from '../../services/employeeService';
 import { mapService } from '../../services/mapService';
 import { pdfService } from '../../services/pdfService';
@@ -443,6 +444,7 @@ export const Leads: React.FC = () => {
 
   // Installation Quality & Remark States
   const [installPhotos, setInstallPhotos] = useState<InstallationPhoto[]>([]);
+  const [leadInstallationRecord, setLeadInstallationRecord] = useState<any>(null);
   const [isCapturingInstall, setIsCapturingInstall] = useState(false);
   const [installPhotoType, setInstallPhotoType] = useState<InstallationPhoto['photoType']>('earthing');
   const [isLocatingInstall, setIsLocatingInstall] = useState(false);
@@ -1285,12 +1287,13 @@ export const Leads: React.FC = () => {
     }
 
     // Concurrent parallel fetch of all lead contextual records (8x faster details load)
-    const [quotations, initialOc, docs, reg, photos] = await Promise.all([
+    const [quotations, initialOc, docs, reg, photos, instRec] = await Promise.all([
       quotationService.getQuotationsByLeadId(lead.id),
       orderService.getOrderConfirmationByLeadId(lead.id),
       orderService.getClientDocumentsByLeadId(lead.id),
       orderService.getClientRegistrationByLeadId(lead.id),
-      orderService.getInstallationPhotosByLeadId(lead.id)
+      orderService.getInstallationPhotosByLeadId(lead.id, true),
+      installationService.getByLead(lead.id, true).catch(() => null)
     ]);
 
     let oc = initialOc;
@@ -1336,6 +1339,7 @@ export const Leads: React.FC = () => {
     setKycDocs(docs);
     setRegChecklist(reg || null);
     setInstallPhotos(photos);
+    setLeadInstallationRecord(instRec || null);
 
     // Load Release Docs
     const rels = await orderService.getReleaseDocumentsByLeadId(lead.id);
@@ -4093,6 +4097,42 @@ export const Leads: React.FC = () => {
                     <p className="col-span-full text-slate-400 font-medium italic py-6 text-center">No quality assurance photographs captured yet.</p>
                   )}
                 </div>
+
+                {/* Remaining Material Uploaded by Supervisor */}
+                {leadInstallationRecord && (leadInstallationRecord.remainingMaterial || []).length > 0 && (
+                  <div className="mt-6 pt-5 border-t border-slate-200 space-y-3">
+                    <div className="flex items-center justify-between">
+                      <h4 className="text-xs font-black uppercase tracking-wider text-slate-700 flex items-center gap-1.5">
+                        <Package className="w-4 h-4 text-amber-500" />
+                        Remaining Material Uploaded by Supervisor ({leadInstallationRecord.remainingMaterial.length})
+                      </h4>
+                    </div>
+
+                    <div className="space-y-2.5">
+                      {leadInstallationRecord.remainingMaterial.map((rm: any) => (
+                        <div key={rm.id} className="bg-slate-50 border border-slate-200 rounded-xl p-3 space-y-2">
+                          <p className="text-xs text-slate-700 font-semibold">{rm.description || '(No description)'}</p>
+                          <div className="flex flex-wrap gap-2">
+                            {(rm.imageUrls || []).map((u: string, i: number) => {
+                              const safeUrl = getSafeBlobUrl(u);
+                              return (
+                                <button
+                                  key={i}
+                                  type="button"
+                                  onClick={() => setPreviewDoc({ name: `Remaining Material - ${rm.description || 'Photo'}`, url: safeUrl, type: 'image/webp' })}
+                                  className="w-16 h-16 rounded-lg overflow-hidden border border-slate-200 bg-white cursor-pointer hover:scale-105 transition-transform"
+                                >
+                                  <img src={safeUrl} alt="remaining" className="w-full h-full object-cover" />
+                                </button>
+                              );
+                            })}
+                          </div>
+                          <p className="text-[10px] text-slate-400">{new Date(rm.createdAt).toLocaleString('en-IN')}</p>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
             )}
 

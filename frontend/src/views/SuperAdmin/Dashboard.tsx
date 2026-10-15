@@ -8,11 +8,12 @@ import { visitService } from '../../services/visitService';
 import { employeeService } from '../../services/employeeService';
 import { productService } from '../../services/productService';
 import { challanService } from '../../services/challanService';
+import { complaintService } from '../../services/complaintService';
 import { useAuthStore } from '../../store/authStore';
 import { FollowUpReminders } from '../../components/Common/FollowUpReminders';
 import { DeletionApprovalsModal } from '../../components/Common/DeletionApprovalsModal';
-import type { Lead, Quotation, OrderConfirmation, Profile, Product, PaymentInstallment, DeletionRequest } from '../../types';
-import { TrendingUp, DollarSign, Award, ClipboardList, PackageCheck, ShieldAlert, Boxes, Check, X, AlertCircle, ChevronRight, Wallet, ChevronDown, ChevronUp, FileEdit, Phone, Mail, Eye } from 'lucide-react';
+import type { Lead, Quotation, OrderConfirmation, Profile, Product, PaymentInstallment, DeletionRequest, Complaint } from '../../types';
+import { TrendingUp, DollarSign, Award, ClipboardList, PackageCheck, ShieldAlert, Boxes, Check, X, AlertCircle, ChevronRight, Wallet, ChevronDown, ChevronUp, FileEdit, Phone, Mail, Eye, MessageSquareWarning } from 'lucide-react';
 
 export const Dashboard: React.FC = () => {
   const { currentRole, currentUser } = useAuthStore();
@@ -33,6 +34,8 @@ export const Dashboard: React.FC = () => {
   const [products, setProducts] = useState<Product[]>([]);
   const [lowStockProducts, setLowStockProducts] = useState<Product[]>([]);
   const [pendingDeleteRequests, setPendingDeleteRequests] = useState<DeletionRequest[]>([]);
+  const [pendingComplaints, setPendingComplaints] = useState<Complaint[]>([]);
+  const [pendingComplaintsCount, setPendingComplaintsCount] = useState<number>(0);
   const [showApprovalsModal, setShowApprovalsModal] = useState<boolean>(false);
   const [isLowStockMinimized, setIsLowStockMinimized] = useState<boolean>(() => {
     try {
@@ -186,6 +189,16 @@ export const Dashboard: React.FC = () => {
         setLowStockProducts(lowStock);
       }
       if (deleteReqsRes.status === 'fulfilled') setPendingDeleteRequests(deleteReqsRes.value || []);
+
+      // Change 3: Pending complaints widget (Super Admin only; limited local query)
+      if (isSuperAdmin) {
+        try {
+          await complaintService.getComplaints(); // ensure local mirror is populated (throttled sync)
+          const { items, count } = await complaintService.getPendingComplaints(10);
+          setPendingComplaints(items);
+          setPendingComplaintsCount(count);
+        } catch (_) {}
+      }
     } catch (err) {
       console.error("Error loading Dashboard metrics:", err);
     } finally {
@@ -338,6 +351,56 @@ export const Dashboard: React.FC = () => {
         <h1 className="text-2xl font-black tracking-tight text-slate-900 md:text-3xl font-sans">Executive Analytics</h1>
         <p className="text-sm text-slate-500 font-medium">Real-time installation pipeline metrics & revenue insights.</p>
       </div>
+
+      {/* Change 3: Pending Complaints widget (Super Admin) */}
+      {isSuperAdmin && (
+        <div className="bg-white border border-slate-200 rounded-3xl p-5 shadow-xs space-y-4">
+          <div className="flex items-center justify-between gap-3">
+            <div className="flex items-center gap-3">
+              <div className="p-2.5 rounded-2xl bg-amber-50 border border-amber-200 text-amber-600 shrink-0">
+                <MessageSquareWarning className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="text-base font-black text-slate-900 flex items-center gap-2">
+                  Pending Complaints
+                  <span className="bg-amber-500 text-white text-[11px] font-black px-2 py-0.5 rounded-full">{pendingComplaintsCount}</span>
+                </h3>
+                <p className="text-xs text-slate-500 font-semibold">Complaints not yet resolved</p>
+              </div>
+            </div>
+            <Link to="/complaints?filter=pending"
+              className="px-3.5 py-2 bg-slate-800 hover:bg-slate-900 text-white font-bold text-xs rounded-xl flex items-center gap-1.5 shrink-0">
+              View All <ChevronRight className="w-3.5 h-3.5" />
+            </Link>
+          </div>
+
+          {pendingComplaints.length === 0 ? (
+            <div className="text-center py-5 text-xs font-bold text-emerald-600 bg-emerald-50 rounded-2xl border border-emerald-100">
+              🎉 No pending complaints. All caught up!
+            </div>
+          ) : (
+            <div className="divide-y divide-slate-100 border border-slate-100 rounded-2xl overflow-hidden">
+              {pendingComplaints.map(c => {
+                const days = Math.max(0, Math.floor((Date.now() - new Date(c.createdAt).getTime()) / 86400000));
+                return (
+                  <Link key={c.id} to="/complaints?filter=pending"
+                    className="flex items-center justify-between gap-3 px-3.5 py-2.5 hover:bg-slate-50">
+                    <div className="min-w-0">
+                      <div className="font-bold text-slate-800 text-sm truncate">{c.title || c.complaintNumber}</div>
+                      <div className="text-[11px] text-slate-400 font-semibold truncate">
+                        {c.customerName} · {new Date(c.createdAt).toLocaleDateString('en-IN')} · {days}d pending
+                      </div>
+                    </div>
+                    <span className="text-[9px] bg-amber-100 text-amber-700 font-black px-2 py-0.5 rounded uppercase shrink-0 whitespace-nowrap">
+                      {c.status}
+                    </span>
+                  </Link>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Super Admin Pending Delete & Edit Requests Alert Banner */}
       {isSuperAdmin && pendingDeleteRequests.length > 0 && (

@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import type { Profile } from '../../types';
+import type { Profile, UserRole } from '../../types';
 import { employeeService } from '../../services/employeeService';
 import { Plus, Search, UserCheck, UserX, User, Trash2, ShieldOff, ShieldCheck, Pencil, X } from 'lucide-react';
 import { useAuthStore } from '../../store/authStore';
@@ -16,7 +16,7 @@ export const Employees: React.FC = () => {
   const [editingEmployee, setEditingEmployee] = useState<Profile | null>(null);
   const [editFullName, setEditFullName] = useState('');
   const [editPhone, setEditPhone] = useState('');
-  const [editRole, setEditRole] = useState<'super_admin' | 'admin' | 'field_employee' | 'inventory_manager' | 'dealer'>('field_employee');
+  const [editRole, setEditRole] = useState<UserRole>('field_employee');
   const [editEmail, setEditEmail] = useState('');
   const [editAadhaarNumber, setEditAadhaarNumber] = useState('');
   const [editPanNumber, setEditPanNumber] = useState('');
@@ -29,15 +29,15 @@ export const Employees: React.FC = () => {
   const handleImpersonateClick = async (emp: Profile) => {
     if (confirm(`Do you want to log in as "${emp.fullName}" (${(emp.role || 'employee').replace(/_/g, ' ')}) without a password?`)) {
       await impersonateUser(emp);
-      const targetPath = emp.role === 'field_employee' ? '/leads' : '/dashboard';
-      navigate(targetPath);
+      const { defaultRouteForRole } = await import('../../services/permissions');
+      navigate(defaultRouteForRole(emp.role));
     }
   };
 
   // Add Form states
   const [fullName, setFullName] = useState('');
   const [phone, setPhone] = useState('');
-  const [role, setRole] = useState<'admin' | 'field_employee' | 'inventory_manager' | 'dealer'>('field_employee');
+  const [role, setRole] = useState<'admin' | 'field_employee' | 'inventory_manager' | 'dealer' | 'manager' | 'installation_supervisor'>('field_employee');
   const [email, setEmail] = useState('');
   const [aadhaarNumber, setAadhaarNumber] = useState('');
   const [panNumber, setPanNumber] = useState('');
@@ -387,7 +387,11 @@ export const Employees: React.FC = () => {
                     <option value="field_employee">Field Employee</option>
                     <option value="dealer">Dealer Partner / Franchise</option>
                     <option value="inventory_manager">Inventory Manager (Store & Stock Only)</option>
+                    <option value="installation_supervisor">Installation Supervisor</option>
                     <option value="admin">Administrator</option>
+                    {(currentRole === 'super_admin' || originalUser?.role === 'super_admin' || editingEmployee.role === 'manager') && (
+                      <option value="manager">Manager (Full Access except Dashboard/Reports/Leads)</option>
+                    )}
                     {(currentRole === 'super_admin' || originalUser?.role === 'super_admin' || editingEmployee.role === 'super_admin') && (
                       <option value="super_admin">Super Admin (System Managing Director)</option>
                     )}
@@ -573,7 +577,13 @@ export const Employees: React.FC = () => {
                   <option value="field_employee">Field Employee</option>
                   <option value="dealer">Dealer Partner / Franchise</option>
                   <option value="inventory_manager">Inventory Manager (Store & Stock Only)</option>
+                  {(currentRole === 'super_admin' || currentRole === 'manager' || originalUser?.role === 'super_admin' || originalUser?.role === 'manager') && (
+                    <option value="installation_supervisor">Installation Supervisor</option>
+                  )}
                   <option value="admin">Administrator</option>
+                  {(currentRole === 'super_admin' || originalUser?.role === 'super_admin') && (
+                    <option value="manager">Manager (Full Access except Dashboard/Reports/Leads)</option>
+                  )}
                   {(currentRole === 'super_admin' || originalUser?.role === 'super_admin') && (
                     <option value="super_admin">Super Admin (System Managing Director)</option>
                   )}

@@ -34,7 +34,7 @@ export const Timeline: React.FC<TimelineProps> = ({ lead }) => {
         orderService.getOrderConfirmationByLeadId(lead.id).catch(() => null),
         orderService.getClientDocumentsByLeadId(lead.id).catch(() => []),
         orderService.getClientRegistrationByLeadId(lead.id).catch(() => null),
-        orderService.getInstallationPhotosByLeadId(lead.id).catch(() => []),
+        orderService.getInstallationPhotosByLeadId(lead.id, true).catch(() => []),
         orderService.getReleaseDocumentsByLeadId(lead.id).catch(() => []),
         visitService.getVisitReportsByLead(lead.id).catch(() => []),
         challanService.getChallansByLeadId(lead.id).catch(() => []),

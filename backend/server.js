@@ -287,8 +287,24 @@ app.post('/api/firestore/:collection/:id/decide', async (req, res) => {
     validateCollection(collection);
     const expectedStatus = req.body.expectedStatus || 'pending';
     const setFields = req.body.set || {};
-    const updated = await conditionalStatusUpdate(collection, id, expectedStatus, setFields);
-    if (!updated) { res.json({ success: false, reason: 'already_decided' }); return; }
+    let updated = await conditionalStatusUpdate(collection, id, expectedStatus, setFields);
+    if (!updated) {
+      const existing = await getDocumentById(collection, id);
+      if (!existing && req.body.fallbackDoc) {
+        // Document was created offline / not synced yet: persist and apply transition
+        const initial = { ...req.body.fallbackDoc, ...setFields, id, _id: id, updatedAt: new Date().toISOString() };
+        await upsertDocument(collection, id, initial);
+        broadcastRealtimeChange(collection, id, 'upsert', initial);
+        res.json({ success: true, doc: initial });
+        return;
+      }
+      if (!existing) {
+        res.json({ success: false, reason: 'not_found' });
+        return;
+      }
+      res.json({ success: false, reason: 'already_decided', currentStatus: existing.status });
+      return;
+    }
     broadcastRealtimeChange(collection, id, 'upsert', updated);
     res.json({ success: true, doc: updated });
   } catch (err) {

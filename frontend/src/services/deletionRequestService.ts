@@ -97,13 +97,22 @@ function sanitizeForSnapshot(obj: any): any {
 
 export const deletionRequestService = {
   async getDeletionRequests(): Promise<DeletionRequest[]> {
+    let remoteReqs: DeletionRequest[] = [];
     try {
-      const remoteReqs = await fetchCollectionFromFirestore<DeletionRequest>('deletionRequests', 8000);
+      remoteReqs = await fetchCollectionFromFirestore<DeletionRequest>('deletionRequests', 8000);
       if (Array.isArray(remoteReqs) && remoteReqs.length > 0) {
-        await db.deletionRequests.bulkPut(remoteReqs);
+        if (!db.isOpen()) await db.open().catch(() => {});
+        await db.deletionRequests.bulkPut(remoteReqs).catch(() => {});
       }
     } catch (_) {}
-    return db.deletionRequests.orderBy('requestedAt').reverse().toArray();
+
+    try {
+      if (!db.isOpen()) await db.open().catch(() => {});
+      return await db.deletionRequests.orderBy('requestedAt').reverse().toArray();
+    } catch (err) {
+      console.warn("IndexedDB read fallback for deletionRequests:", err);
+      return (remoteReqs || []).sort((a, b) => (b.requestedAt || '').localeCompare(a.requestedAt || ''));
+    }
   },
 
   async getPendingRequests(): Promise<DeletionRequest[]> {

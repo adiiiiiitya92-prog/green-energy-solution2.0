@@ -27,7 +27,8 @@ import {
   CalendarCheck,
   Receipt,
   Bot,
-  Sparkles
+  Sparkles,
+  Wrench
 } from 'lucide-react';
 
 interface LayoutProps {
@@ -43,30 +44,59 @@ export const Layout: React.FC<LayoutProps> = ({ children }) => {
   const [pendingDeleteCount, setPendingDeleteCount] = useState(0);
   const [pendingLeaveCount, setPendingLeaveCount] = useState(0);
   const [pendingExpenseCount, setPendingExpenseCount] = useState(0);
-  const [hrmsDropdownOpen, setHrmsDropdownOpen] = useState(
-    location.pathname.startsWith('/employees') || location.pathname.startsWith('/leave-requests')
-  );
+  const [pendingPaymentCount, setPendingPaymentCount] = useState(0);
+  const [openDropdowns, setOpenDropdowns] = useState<Record<string, boolean>>(() => {
+    const current = window.location.pathname;
+    return {
+      HRMS: current.startsWith('/employees') || current.startsWith('/leave-requests'),
+      Installation:
+        current.startsWith('/installation-payments') ||
+        current.startsWith('/receipts') ||
+        current.startsWith('/installation-report')
+    };
+  });
   const [showDeleteModal, setShowDeleteModal] = useState(false);
 
+  const toggleDropdown = (name: string, forceOpen?: boolean) => {
+    setOpenDropdowns(prev => ({
+      ...prev,
+      [name]: forceOpen !== undefined ? forceOpen : !prev[name]
+    }));
+  };
+
   useEffect(() => {
-    if (location.pathname.startsWith('/employees') || location.pathname.startsWith('/leave-requests')) {
-      setHrmsDropdownOpen(true);
-    }
+    const current = location.pathname;
+    setOpenDropdowns(prev => {
+      let updated = { ...prev };
+      if (current.startsWith('/employees') || current.startsWith('/leave-requests')) {
+        updated['HRMS'] = true;
+      }
+      if (
+        current.startsWith('/installation-payments') ||
+        current.startsWith('/receipts') ||
+        current.startsWith('/installation-report')
+      ) {
+        updated['Installation'] = true;
+      }
+      return updated;
+    });
   }, [location.pathname]);
 
   const loadPendingCount = async () => {
-    if (currentRole === 'super_admin') {
+    if (currentRole === 'super_admin' || currentRole === 'manager') {
       try {
         const { db, getDeletedRecordIdsSet } = await import('../../services/db');
         const deletedIds = await getDeletedRecordIdsSet().catch(() => new Set<string>());
-        const [pendingDeletions, pendingLeaves, pendingExpenses] = await Promise.all([
+        const [pendingDeletions, pendingLeaves, pendingExpenses, pendingPayments] = await Promise.all([
           db.deletionRequests ? db.deletionRequests.filter(r => r.status === 'pending' && !deletedIds.has(r.id)).count().catch(() => 0) : 0,
           db.leaveRequests ? db.leaveRequests.filter(r => r.status === 'pending' && !deletedIds.has(r.id)).count().catch(() => 0) : 0,
-          db.expenses ? db.expenses.filter(r => r.status === 'pending' && !deletedIds.has(r.id)).count().catch(() => 0) : 0
+          db.expenses ? db.expenses.filter(r => r.status === 'pending' && !deletedIds.has(r.id)).count().catch(() => 0) : 0,
+          db.paymentRequests ? db.paymentRequests.filter(r => r.status === 'pending' && !deletedIds.has(r.id)).count().catch(() => 0) : 0
         ]);
         setPendingDeleteCount(pendingDeletions);
         setPendingLeaveCount(pendingLeaves);
         setPendingExpenseCount(pendingExpenses);
+        setPendingPaymentCount(pendingPayments);
       } catch (_) {}
     }
   };
@@ -101,6 +131,7 @@ export const Layout: React.FC<LayoutProps> = ({ children }) => {
     path: string;
     icon?: any;
     badge?: number;
+    roles?: string[];
   }
 
   interface SidebarItemConfig {
@@ -165,22 +196,36 @@ export const Layout: React.FC<LayoutProps> = ({ children }) => {
       icon: Package
     },
     {
-      name: 'Installation Payments',
-      path: '/installation-payments',
+      name: 'Installation',
       roles: ['super_admin', 'manager'],
-      icon: Receipt
+      icon: Wrench,
+      subItems: [
+        {
+          name: 'Installation Payments',
+          path: '/installation-payments',
+          roles: ['super_admin', 'manager'],
+          icon: Receipt,
+          badge: pendingPaymentCount
+        },
+        {
+          name: 'Receipts',
+          path: '/receipts',
+          roles: ['super_admin', 'manager'],
+          icon: Receipt
+        },
+        {
+          name: 'Installation Report',
+          path: '/installation-report',
+          roles: ['super_admin'],
+          icon: FileText
+        }
+      ]
     },
     {
       name: 'Receipts',
       path: '/receipts',
-      roles: ['super_admin', 'manager', 'installation_supervisor'],
+      roles: ['installation_supervisor'],
       icon: Receipt
-    },
-    {
-      name: 'Installation Report',
-      path: '/installation-report',
-      roles: ['super_admin'],
-      icon: FileText
     },
     {
       name: 'Field Visits',
@@ -400,10 +445,14 @@ export const Layout: React.FC<LayoutProps> = ({ children }) => {
                   .map((item) => {
                     const Icon = item.icon;
 
-                    // If item has subItems (e.g. HRMS dropdown for Super Admin)
+                    // If item has subItems (e.g. HRMS dropdown or Installation dropdown)
                     if (item.subItems && item.subItems.length > 0) {
-                      const isAnySubActive = item.subItems.some(sub => location.pathname.startsWith(sub.path));
-                      const totalSubBadge = item.subItems.reduce((acc, sub) => acc + (sub.badge || 0), 0);
+                      const visibleSubItems = item.subItems.filter(sub => !sub.roles || sub.roles.includes(currentRole));
+                      if (visibleSubItems.length === 0) return null;
+
+                      const isAnySubActive = visibleSubItems.some(sub => location.pathname.startsWith(sub.path));
+                      const totalSubBadge = visibleSubItems.reduce((acc, sub) => acc + (sub.badge || 0), 0);
+                      const isDropdownOpen = !!openDropdowns[item.name];
 
                       if (isNavCollapsed) {
                         return (
@@ -412,14 +461,14 @@ export const Layout: React.FC<LayoutProps> = ({ children }) => {
                               type="button"
                               onClick={() => {
                                 setIsNavCollapsed(false);
-                                setHrmsDropdownOpen(true);
+                                toggleDropdown(item.name, true);
                               }}
                               className={`w-full flex items-center justify-center p-2.5 rounded-lg text-xs font-bold transition-all cursor-pointer relative ${
                                 isAnySubActive
                                   ? 'bg-emerald-50 text-emerald-700 border-l-4 border-emerald-600'
                                   : 'text-slate-500 hover:bg-slate-50 hover:text-slate-900'
                               }`}
-                              title={`${item.name} (${item.subItems.map(s => s.name).join(', ')})`}
+                              title={`${item.name} (${visibleSubItems.map(s => s.name).join(', ')})`}
                             >
                               <Icon className={`w-4 h-4 shrink-0 ${isAnySubActive ? 'text-emerald-600' : ''}`} />
                               {totalSubBadge > 0 && (
@@ -434,7 +483,7 @@ export const Layout: React.FC<LayoutProps> = ({ children }) => {
                         <div key={item.name} className="space-y-1">
                           <button
                             type="button"
-                            onClick={() => setHrmsDropdownOpen(!hrmsDropdownOpen)}
+                            onClick={() => toggleDropdown(item.name)}
                             className={`w-full flex items-center justify-between px-3 py-2.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
                               isAnySubActive
                                 ? 'bg-emerald-50/80 text-emerald-900 font-extrabold'
@@ -451,14 +500,14 @@ export const Layout: React.FC<LayoutProps> = ({ children }) => {
                                   {totalSubBadge}
                                 </span>
                               )}
-                              <ChevronDown className={`w-3.5 h-3.5 transition-transform duration-200 ${hrmsDropdownOpen ? 'rotate-180 text-emerald-700' : 'text-slate-400'}`} />
+                              <ChevronDown className={`w-3.5 h-3.5 transition-transform duration-200 ${isDropdownOpen ? 'rotate-180 text-emerald-700' : 'text-slate-400'}`} />
                             </div>
                           </button>
 
                           {/* Sub-items dropdown */}
-                          {hrmsDropdownOpen && (
+                          {isDropdownOpen && (
                             <div className="pl-4 pr-1 space-y-1">
-                              {item.subItems.map(sub => {
+                              {visibleSubItems.map(sub => {
                                 const SubIcon = sub.icon || ChevronRight;
                                 const isSubActive = location.pathname.startsWith(sub.path);
                                 return (
@@ -621,14 +670,18 @@ export const Layout: React.FC<LayoutProps> = ({ children }) => {
                     const Icon = item.icon;
 
                     if (item.subItems && item.subItems.length > 0) {
-                      const isAnySubActive = item.subItems.some(sub => location.pathname.startsWith(sub.path));
-                      const totalSubBadge = item.subItems.reduce((acc, sub) => acc + (sub.badge || 0), 0);
+                      const visibleSubItems = item.subItems.filter(sub => !sub.roles || sub.roles.includes(currentRole));
+                      if (visibleSubItems.length === 0) return null;
+
+                      const isAnySubActive = visibleSubItems.some(sub => location.pathname.startsWith(sub.path));
+                      const totalSubBadge = visibleSubItems.reduce((acc, sub) => acc + (sub.badge || 0), 0);
+                      const isDropdownOpen = !!openDropdowns[item.name];
 
                       return (
                         <div key={item.name} className="space-y-1">
                           <button
                             type="button"
-                            onClick={() => setHrmsDropdownOpen(!hrmsDropdownOpen)}
+                            onClick={() => toggleDropdown(item.name)}
                             className={`w-full flex items-center justify-between px-3 py-2.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
                               isAnySubActive
                                 ? 'bg-emerald-50 text-emerald-900 font-extrabold'
@@ -645,13 +698,13 @@ export const Layout: React.FC<LayoutProps> = ({ children }) => {
                                   {totalSubBadge}
                                 </span>
                               )}
-                              <ChevronDown className={`w-3.5 h-3.5 transition-transform duration-200 ${hrmsDropdownOpen ? 'rotate-180 text-emerald-700' : 'text-slate-400'}`} />
+                              <ChevronDown className={`w-3.5 h-3.5 transition-transform duration-200 ${isDropdownOpen ? 'rotate-180 text-emerald-700' : 'text-slate-400'}`} />
                             </div>
                           </button>
 
-                          {hrmsDropdownOpen && (
+                          {isDropdownOpen && (
                             <div className="pl-4 pr-1 space-y-1">
-                              {item.subItems.map(sub => {
+                              {visibleSubItems.map(sub => {
                                 const SubIcon = sub.icon || ChevronRight;
                                 const isSubActive = location.pathname.startsWith(sub.path);
                                 return (

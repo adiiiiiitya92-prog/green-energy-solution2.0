@@ -252,6 +252,17 @@ export class SolarCRMDatabase extends Dexie {
 
 export const db = new SolarCRMDatabase();
 
+export async function ensureDbOpen(): Promise<boolean> {
+  if (db.isOpen()) return true;
+  try {
+    await db.open();
+    return true;
+  } catch (err) {
+    console.warn('ensureDbOpen failed:', err);
+    return false;
+  }
+}
+
 let lastDeletedSyncTime = 0;
 const DELETED_SYNC_INTERVAL = 60 * 1000; // 60 seconds throttle
 let cachedDeletedIdsSet: Set<string> | null = null;
@@ -271,6 +282,7 @@ export async function syncDeletedRecordsFromFirestore(force: boolean = false): P
       const { fetchCollectionFromFirestore } = await import('./firebase');
       const remoteDeleted = await fetchCollectionFromFirestore<DeletedRecord>('deletedRecords', 8000);
       if (Array.isArray(remoteDeleted) && remoteDeleted.length > 0) {
+        if (!db.isOpen()) await db.open().catch(() => {});
         await db.deletedRecords.bulkPut(remoteDeleted);
 
         // Group deleted IDs by collection for fast single bulkDelete
@@ -281,6 +293,10 @@ export async function syncDeletedRecordsFromFirestore(force: boolean = false): P
         const productIdsToDelete: string[] = [];
         const leaveIdsToDelete: string[] = [];
         const expenseIdsToDelete: string[] = [];
+        const paymentRequestIdsToDelete: string[] = [];
+        const receiptIdsToDelete: string[] = [];
+        const installationPhotoIdsToDelete: string[] = [];
+        const installationIdsToDelete: string[] = [];
 
         for (const rd of remoteDeleted) {
           if (!rd?.id) continue;
@@ -292,6 +308,10 @@ export async function syncDeletedRecordsFromFirestore(force: boolean = false): P
           else if (col === 'products') productIdsToDelete.push(rd.id);
           else if (col === 'leaveRequests') leaveIdsToDelete.push(rd.id);
           else if (col === 'expenses') expenseIdsToDelete.push(rd.id);
+          else if (col === 'paymentRequests') paymentRequestIdsToDelete.push(rd.id);
+          else if (col === 'receipts') receiptIdsToDelete.push(rd.id);
+          else if (col === 'installationPhotos') installationPhotoIdsToDelete.push(rd.id);
+          else if (col === 'installations') installationIdsToDelete.push(rd.id);
         }
 
         if (leadIdsToDelete.length > 0) await db.leads.bulkDelete(leadIdsToDelete).catch(() => {});
@@ -301,6 +321,10 @@ export async function syncDeletedRecordsFromFirestore(force: boolean = false): P
         if (productIdsToDelete.length > 0) await db.products.bulkDelete(productIdsToDelete).catch(() => {});
         if (leaveIdsToDelete.length > 0) await db.leaveRequests.bulkDelete(leaveIdsToDelete).catch(() => {});
         if (expenseIdsToDelete.length > 0) await db.expenses.bulkDelete(expenseIdsToDelete).catch(() => {});
+        if (paymentRequestIdsToDelete.length > 0) await db.paymentRequests.bulkDelete(paymentRequestIdsToDelete).catch(() => {});
+        if (receiptIdsToDelete.length > 0) await db.receipts.bulkDelete(receiptIdsToDelete).catch(() => {});
+        if (installationPhotoIdsToDelete.length > 0) await db.installationPhotos.bulkDelete(installationPhotoIdsToDelete).catch(() => {});
+        if (installationIdsToDelete.length > 0) await db.installations.bulkDelete(installationIdsToDelete).catch(() => {});
       }
     } catch (err) {
       console.warn("DeletedRecords remote sync note:", err);

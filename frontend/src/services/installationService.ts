@@ -31,19 +31,25 @@ async function syncSummaries() {
 }
 
 export const installationService = {
-  async getByLead(leadId: string): Promise<InstallationRecord | undefined> {
+  async getByLead(leadId: string, forceSync = false): Promise<InstallationRecord | undefined> {
+    if (forceSync || Date.now() - lastInstallSync > 30000) {
+      await syncInstallations();
+    }
     let rec = await db.installations.where({ leadId }).first();
-    if (!rec && Date.now() - lastInstallSync > SYNC_INTERVAL) {
+    if (!rec) {
       await syncInstallations();
       rec = await db.installations.where({ leadId }).first();
     }
     return rec;
   },
 
-  async getBySupervisor(supervisorId: string): Promise<InstallationRecord[]> {
+  async getBySupervisor(supervisorId: string, forceSync = false): Promise<InstallationRecord[]> {
     const deleted = await getDeletedRecordIdsSet();
+    if (forceSync || Date.now() - lastInstallSync > 30000) {
+      await syncInstallations();
+    }
     let list = await db.installations.where({ supervisorId }).toArray();
-    if (list.length === 0 && Date.now() - lastInstallSync > SYNC_INTERVAL) {
+    if (list.length === 0) {
       await syncInstallations();
       list = await db.installations.where({ supervisorId }).toArray();
     }
@@ -51,7 +57,7 @@ export const installationService = {
   },
 
   async getOrCreateForLead(leadId: string, leadName: string, supervisorId: string, supervisorName?: string): Promise<InstallationRecord> {
-    const existing = await this.getByLead(leadId);
+    const existing = await this.getByLead(leadId, true);
     if (existing) return existing;
     const now = new Date().toISOString();
     const rec: InstallationRecord = {
@@ -121,6 +127,22 @@ export const installationService = {
         });
       });
     });
+
+    try {
+      const prodChallans = (await db.productChallans.where({ leadId }).toArray()).filter(pc => !deleted.has(pc.id) && pc.status !== 'cancelled');
+      prodChallans.forEach(pc => {
+        (pc.items || []).forEach(it => {
+          rows.push({
+            productName: it.productName,
+            qty: it.qty,
+            unit: it.unit,
+            date: pc.date || pc.createdAt,
+            source: pc.challanNo
+          });
+        });
+      });
+    } catch (_) {}
+
     return rows.sort((a, b) => (b.date || '').localeCompare(a.date || ''));
   }
 };

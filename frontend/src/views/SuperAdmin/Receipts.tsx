@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Receipt as ReceiptIcon, Download, Search } from 'lucide-react';
+import { Receipt as ReceiptIcon, Download, Search, Trash2 } from 'lucide-react';
 import type { Receipt } from '../../types';
 import { receiptService } from '../../services/paymentService';
 import { useAuthStore } from '../../store/authStore';
@@ -17,7 +17,7 @@ export const Receipts: React.FC = () => {
   const load = async () => {
     // Supervisors only ever see their own receipts (enforced at query level)
     const list = isSupervisor
-      ? await receiptService.getBySupervisor(currentUser?.id || '')
+      ? await receiptService.getBySupervisor(currentUser?.id || '', true)
       : await receiptService.getAll(true);
     setAll(list);
   };
@@ -29,6 +29,12 @@ export const Receipts: React.FC = () => {
     return () => window.removeEventListener('app-realtime-update', h);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentRole, currentUser?.id]);
+
+  const doDelete = async (r: Receipt) => {
+    if (!confirm(`Are you sure you want to delete receipt ${r.receiptNo}? This cannot be undone.`)) return;
+    await receiptService.deleteReceipt(r.id);
+    await load();
+  };
 
   const filtered = all.filter(r => {
     if (!q.trim()) return true;
@@ -66,10 +72,21 @@ export const Receipts: React.FC = () => {
               </div>
               <div className="text-[10px] text-slate-400">{new Date(r.createdAt).toLocaleString('en-IN')}</div>
             </div>
-            <button onClick={async () => openPdfBlob(await generateInstallationReceiptPdf(r), `${r.receiptNo}.pdf`)}
-              className="px-2.5 py-1.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 font-bold text-[11px] rounded-lg flex items-center gap-1 cursor-pointer">
-              <Download className="w-3.5 h-3.5" /> PDF
-            </button>
+            <div className="flex items-center gap-1.5 shrink-0">
+              <button onClick={async () => openPdfBlob(await generateInstallationReceiptPdf(r), `${r.receiptNo}.pdf`)}
+                className="px-2.5 py-1.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 font-bold text-[11px] rounded-lg flex items-center gap-1 cursor-pointer">
+                <Download className="w-3.5 h-3.5" /> PDF
+              </button>
+              {!isSupervisor && (
+                <button
+                  onClick={() => doDelete(r)}
+                  title="Delete Receipt"
+                  className="p-1.5 bg-slate-50 hover:bg-rose-50 text-slate-400 hover:text-rose-600 border border-slate-200 hover:border-rose-200 rounded-lg cursor-pointer transition-colors"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                </button>
+              )}
+            </div>
           </div>
         ))}
         <div className="px-4 py-3 flex items-center justify-between">

@@ -123,14 +123,15 @@ export const Leads: React.FC = () => {
   const [employeeFilter, setEmployeeFilter] = useState('');
   const [hotFilter, setHotFilter] = useState<'all' | 'hot' | 'normal'>('all');
   const [loanFilter, setLoanFilter] = useState<'all' | 'loan' | 'non_loan'>('all');
+  const [loanPaymentFilter, setLoanPaymentFilter] = useState<'all' | 'pending' | 'paid'>('all');
   const [dispatchFilter, setDispatchFilter] = useState<'all' | 'dispatched' | 'not_dispatched'>('all');
-  const [rawFilter, setRawFilter] = useState<'all' | 'raw' | 'process_done_payment_pending' | 'advanced' | 'confirmed'>(() => {
+  const [rawFilter, setRawFilter] = useState<'all' | 'raw' | 'process_done_payment_pending' | 'process_done_payment_done' | 'advanced' | 'confirmed'>(() => {
     const fromUrl = new URLSearchParams(window.location.search).get('filter') || new URLSearchParams(window.location.search).get('rawFilter');
-    if (fromUrl === 'process_done_payment_pending' || fromUrl === 'raw' || fromUrl === 'advanced' || fromUrl === 'confirmed' || fromUrl === 'all') {
+    if (fromUrl === 'process_done_payment_pending' || fromUrl === 'process_done_payment_done' || fromUrl === 'raw' || fromUrl === 'advanced' || fromUrl === 'confirmed' || fromUrl === 'all') {
       return fromUrl as any;
     }
     const fromStorage = sessionStorage.getItem('leads_rawFilter');
-    if (fromStorage === 'process_done_payment_pending' || fromStorage === 'raw' || fromStorage === 'confirmed' || fromStorage === 'all' || fromStorage === 'advanced') {
+    if (fromStorage === 'process_done_payment_pending' || fromStorage === 'process_done_payment_done' || fromStorage === 'raw' || fromStorage === 'confirmed' || fromStorage === 'all' || fromStorage === 'advanced') {
       return fromStorage as any;
     }
     // Default to confirmed leads only (as requested by user)
@@ -157,7 +158,7 @@ export const Leads: React.FC = () => {
   const [confirmedFilterStartDate, setConfirmedFilterStartDate] = useState<string>('');
   const [confirmedFilterEndDate, setConfirmedFilterEndDate] = useState<string>('');
 
-  const handleSetRawFilter = (filter: 'all' | 'raw' | 'process_done_payment_pending' | 'advanced' | 'confirmed') => {
+  const handleSetRawFilter = (filter: 'all' | 'raw' | 'process_done_payment_pending' | 'process_done_payment_done' | 'advanced' | 'confirmed') => {
     setRawFilter(filter);
     sessionStorage.setItem('leads_rawFilter', filter);
     const nextParams = new URLSearchParams(searchParams);
@@ -602,7 +603,7 @@ export const Leads: React.FC = () => {
   }, [leads, orderConfirmationsMap, leadQuotationsMap, employeeNames]);
 
   const leadPipelineCounts = React.useMemo(() => {
-    let raw = 0, confirmed = 0, pending = 0, hot = 0, processDone = 0, loan = 0, dispatched = 0;
+    let raw = 0, confirmed = 0, pending = 0, hot = 0, processDone = 0, processDonePaid = 0, loan = 0, loanPending = 0, loanPaid = 0, dispatched = 0;
     if (!Array.isArray(leads) || leads.length === 0) {
       return {
         rawLeadsCount: 0,
@@ -610,7 +611,10 @@ export const Leads: React.FC = () => {
         pendingBalanceLeadsCount: 0,
         hotLeadsCount: 0,
         processDonePaymentDueCount: 0,
+        processDonePaymentDoneCount: 0,
         loanLeadsCount: 0,
+        loanPendingCount: 0,
+        loanPaidCount: 0,
         dispatchedLeadsCount: 0
       };
     }
@@ -619,6 +623,10 @@ export const Leads: React.FC = () => {
       if (!l) continue;
       if (l.isLoan) loan++;
       const fin = leadFinancialMap[l.id];
+      if (l.isLoan && fin) {
+        if (fin.pendingBalance > 0) loanPending++;
+        else if (fin.totalValue > 0 && fin.pendingBalance <= 0) loanPaid++;
+      }
       const hasPayment = Boolean(fin && (fin.paidAmount || 0) > 0);
       const isDispatched = dispatchedLeadIds.has(l.id);
       if (isDispatched) dispatched++;
@@ -637,6 +645,9 @@ export const Leads: React.FC = () => {
       if (isProcDone && fin && fin.pendingBalance > 0) {
         processDone++;
       }
+      if (isProcDone && fin && fin.totalValue > 0 && fin.pendingBalance <= 0) {
+        processDonePaid++;
+      }
     }
     return {
       rawLeadsCount: raw,
@@ -644,7 +655,10 @@ export const Leads: React.FC = () => {
       pendingBalanceLeadsCount: pending,
       hotLeadsCount: hot,
       processDonePaymentDueCount: processDone,
+      processDonePaymentDoneCount: processDonePaid,
       loanLeadsCount: loan,
+      loanPendingCount: loanPending,
+      loanPaidCount: loanPaid,
       dispatchedLeadsCount: dispatched
     };
   }, [leads, leadFinancialMap, dispatchedLeadIds, installationEvidenceLeadIds]);
@@ -655,7 +669,10 @@ export const Leads: React.FC = () => {
     pendingBalanceLeadsCount,
     hotLeadsCount,
     processDonePaymentDueCount,
+    processDonePaymentDoneCount,
     loanLeadsCount,
+    loanPendingCount,
+    loanPaidCount,
     dispatchedLeadsCount
   } = leadPipelineCounts;
 
@@ -704,6 +721,13 @@ export const Leads: React.FC = () => {
         (loanFilter === 'non_loan' && !lead.isLoan);
       if (!matchesLoan) return false;
 
+      if (loanFilter === 'loan' && loanPaymentFilter !== 'all') {
+        const loanPending = Boolean(fin && fin.pendingBalance > 0);
+        const loanPaid = Boolean(fin && fin.totalValue > 0 && fin.pendingBalance <= 0);
+        if (loanPaymentFilter === 'pending' && !loanPending) return false;
+        if (loanPaymentFilter === 'paid' && !loanPaid) return false;
+      }
+
       const isDispatched = dispatchedLeadIds.has(lead.id);
       let matchesDispatch = true;
       if (dispatchFilter === 'dispatched') {
@@ -716,6 +740,7 @@ export const Leads: React.FC = () => {
       const isRaw = (lead.status === 'new' || lead.status === 'quotation_sent') && !hasPayment && !isDispatched;
       const isProcessDone = (lead.status === 'closed' || lead.status === 'installed' || isDispatched || installationEvidenceLeadIds.has(lead.id));
       const isProcessDonePaymentPending = isProcessDone && Boolean(fin && fin.pendingBalance > 0);
+      const isProcessDonePaymentDone = isProcessDone && Boolean(fin && fin.totalValue > 0 && fin.pendingBalance <= 0);
 
       let matchesRaw = true;
       if (loanFilter === 'loan') {
@@ -726,6 +751,8 @@ export const Leads: React.FC = () => {
         matchesRaw = isRaw;
       } else if (rawFilter === 'process_done_payment_pending') {
         matchesRaw = isProcessDonePaymentPending;
+      } else if (rawFilter === 'process_done_payment_done') {
+        matchesRaw = isProcessDonePaymentDone;
       } else if (rawFilter === 'advanced') {
         matchesRaw = !isRaw;
       } else if (rawFilter === 'all') {
@@ -5249,6 +5276,29 @@ export const Leads: React.FC = () => {
                       </span>
                     </button>
 
+                    {/* Quick Process Done & Payment Done Filter Toggle Pill */}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setLoanFilter('all');
+                        handleSetRawFilter(rawFilter === 'process_done_payment_done' ? 'confirmed' : 'process_done_payment_done');
+                      }}
+                      className={`px-3 py-2 rounded-lg border flex items-center gap-1.5 transition-all cursor-pointer ${
+                        rawFilter === 'process_done_payment_done' && loanFilter !== 'loan'
+                          ? 'bg-teal-700 text-white border-teal-800 shadow-xs font-black'
+                          : 'bg-teal-50 text-teal-800 border-teal-200 hover:bg-teal-100 font-bold'
+                      }`}
+                      title="Filter Leads where Process Completed AND Payment Fully Done"
+                    >
+                      <CheckCircle className={`w-4 h-4 ${rawFilter === 'process_done_payment_done' && loanFilter !== 'loan' ? 'text-white' : 'text-teal-700'}`} />
+                      <span>✅ Process &amp; Payment Done</span>
+                      <span className={`px-1.5 py-0.2 rounded-full text-[10px] ${
+                        rawFilter === 'process_done_payment_done' && loanFilter !== 'loan' ? 'bg-white text-teal-800 font-black' : 'bg-teal-200/80 text-teal-900 font-black'
+                      }`}>
+                        {processDonePaymentDoneCount}
+                      </span>
+                    </button>
+
                     {/* Quick Hot Lead Filter Toggle Pill */}
                     <button
                       type="button"
@@ -5278,9 +5328,11 @@ export const Leads: React.FC = () => {
                       onClick={() => {
                         if (loanFilter === 'loan') {
                           setLoanFilter('all');
+                          setLoanPaymentFilter('all');
                           handleSetRawFilter('confirmed');
                         } else {
                           setLoanFilter('loan');
+                          setLoanPaymentFilter('all');
                           handleSetRawFilter('all');
                           setHotFilter('all');
                           setDispatchFilter('all');
@@ -5303,6 +5355,49 @@ export const Leads: React.FC = () => {
                         {loanLeadsCount}
                       </span>
                     </button>
+
+                    {/* Loan Sub-Filter Chips (only when Loan Cases active) */}
+                    {loanFilter === 'loan' && (
+                      <>
+                        <button
+                          type="button"
+                          onClick={() => setLoanPaymentFilter(prev => prev === 'pending' ? 'all' : 'pending')}
+                          className={`px-3 py-2 rounded-lg border flex items-center gap-1.5 transition-all cursor-pointer ${
+                            loanPaymentFilter === 'pending'
+                              ? 'bg-amber-600 text-white border-amber-700 shadow-xs font-black'
+                              : 'bg-amber-50 text-amber-800 border-amber-200 hover:bg-amber-100 font-bold'
+                          }`}
+                          title="Loan Cases with Remaining Balance"
+                        >
+                          <Wallet className={`w-4 h-4 ${loanPaymentFilter === 'pending' ? 'text-white' : 'text-amber-600'}`} />
+                          <span>🏦💸 Loan Remaining</span>
+                          <span className={`px-1.5 py-0.2 rounded-full text-[10px] ${
+                            loanPaymentFilter === 'pending' ? 'bg-white text-amber-700 font-black' : 'bg-amber-200/80 text-amber-900 font-black'
+                          }`}>
+                            {loanPendingCount}
+                          </span>
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => setLoanPaymentFilter(prev => prev === 'paid' ? 'all' : 'paid')}
+                          className={`px-3 py-2 rounded-lg border flex items-center gap-1.5 transition-all cursor-pointer ${
+                            loanPaymentFilter === 'paid'
+                              ? 'bg-green-700 text-white border-green-800 shadow-xs font-black'
+                              : 'bg-green-50 text-green-800 border-green-200 hover:bg-green-100 font-bold'
+                          }`}
+                          title="Loan Cases that are Fully Paid"
+                        >
+                          <CheckCircle className={`w-4 h-4 ${loanPaymentFilter === 'paid' ? 'text-white' : 'text-green-700'}`} />
+                          <span>🏦✅ Loan Fully Paid</span>
+                          <span className={`px-1.5 py-0.2 rounded-full text-[10px] ${
+                            loanPaymentFilter === 'paid' ? 'bg-white text-green-800 font-black' : 'bg-green-200/80 text-green-900 font-black'
+                          }`}>
+                            {loanPaidCount}
+                          </span>
+                        </button>
+                      </>
+                    )}
 
                     {/* Quick Remaining Balance Filter Toggle Pill */}
                     <button
@@ -5371,6 +5466,7 @@ export const Leads: React.FC = () => {
                       <option value="confirmed">⚡ Confirmed Leads ({confirmedLeadsCount})</option>
                       <option value="raw">🌱 Raw Leads ({rawLeadsCount})</option>
                       <option value="process_done_payment_pending">⚠️ Process Done - Payment Due ({processDonePaymentDueCount})</option>
+                      <option value="process_done_payment_done">✅ Process &amp; Payment Done ({processDonePaymentDoneCount})</option>
                       <option value="loan_cases">🏦 Loan Cases ({loanLeadsCount})</option>
                       <option value="all">🌐 All Leads (Raw & Confirmed)</option>
                     </select>

@@ -28,7 +28,8 @@ import {
   Receipt,
   Bot,
   Sparkles,
-  Wrench
+  Wrench,
+  Target
 } from 'lucide-react';
 
 interface LayoutProps {
@@ -48,7 +49,7 @@ export const Layout: React.FC<LayoutProps> = ({ children }) => {
   const [openDropdowns, setOpenDropdowns] = useState<Record<string, boolean>>(() => {
     const current = window.location.pathname;
     return {
-      HRMS: current.startsWith('/employees') || current.startsWith('/leave-requests'),
+      HRMS: current.startsWith('/employees') || current.startsWith('/leave-requests') || current.startsWith('/kra') || current.startsWith('/hrms'),
       Installation:
         current.startsWith('/installation-payments') ||
         current.startsWith('/receipts') ||
@@ -68,7 +69,7 @@ export const Layout: React.FC<LayoutProps> = ({ children }) => {
     const current = location.pathname;
     setOpenDropdowns(prev => {
       let updated = { ...prev };
-      if (current.startsWith('/employees') || current.startsWith('/leave-requests')) {
+      if (current.startsWith('/employees') || current.startsWith('/leave-requests') || current.startsWith('/kra') || current.startsWith('/hrms')) {
         updated['HRMS'] = true;
       }
       if (
@@ -254,8 +255,20 @@ export const Layout: React.FC<LayoutProps> = ({ children }) => {
           path: '/leave-requests',
           icon: CalendarCheck,
           badge: pendingLeaveCount
+        },
+        {
+          name: 'KRA Management',
+          path: '/kra',
+          icon: Target,
+          roles: ['super_admin']
         }
       ]
+    },
+    {
+      name: 'My KRA Score',
+      path: '/my-kra',
+      roles: ['admin', 'field_employee', 'inventory_manager', 'dealer', 'installation_supervisor'],
+      icon: Target
     },
     {
       name: 'Expenses',

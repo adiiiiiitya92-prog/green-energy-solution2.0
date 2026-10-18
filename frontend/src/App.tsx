@@ -130,6 +130,8 @@ const InstallationSupervisorPanel = lazyWithRetry(() => import('./views/Installa
 const InstallationPayments = lazyWithRetry(() => import('./views/SuperAdmin/InstallationPayments').then(m => ({ default: m.InstallationPayments })));
 const Receipts = lazyWithRetry(() => import('./views/SuperAdmin/Receipts').then(m => ({ default: m.Receipts })));
 const InstallationReport = lazyWithRetry(() => import('./views/SuperAdmin/InstallationReport').then(m => ({ default: m.InstallationReport })));
+const KRAManagement = lazyWithRetry(() => import('./views/SuperAdmin/KRAManagement').then(m => ({ default: m.KRAManagement })));
+const MyKRA = lazyWithRetry(() => import('./views/FieldEmployee/MyKRA').then(m => ({ default: m.MyKRA })));
 
 const PageLoader: React.FC = () => (
   <div className="min-h-[50vh] flex flex-col justify-center items-center py-16 text-slate-400">
@@ -232,6 +234,7 @@ export const App: React.FC = () => {
                   <Route path="/complaints" element={<Complaints />} />
                   <Route path="/visits" element={<Visits />} />
                   <Route path="/profile" element={<ProfileView />} />
+                  <Route path="/my-kra" element={<MyKRA />} />
                   <Route path="*" element={<Navigate to="/leads" replace />} />
                 </>
               ) : isInventoryManager ? (
@@ -244,6 +247,7 @@ export const App: React.FC = () => {
                   <Route path="/challans" element={<Challans />} />
                   <Route path="/b2b-businesses" element={<B2BBusinesses />} />
                   <Route path="/product-challans" element={<ProductChallans />} />
+                  <Route path="/my-kra" element={<MyKRA />} />
                   <Route path="*" element={<Navigate to="/inventory-panel" replace />} />
                 </>
               ) : isInstallationSupervisor ? (
@@ -254,6 +258,7 @@ export const App: React.FC = () => {
                   <Route path="/complaints" element={<Complaints />} />
                   <Route path="/leave-application" element={<LeaveApplication />} />
                   <Route path="/expense-tracker" element={<ExpenseTracker />} />
+                  <Route path="/my-kra" element={<MyKRA />} />
                   <Route path="*" element={<Navigate to="/installation" replace />} />
                 </>
               ) : !isEmployee ? (
@@ -271,6 +276,8 @@ export const App: React.FC = () => {
                   <Route path="/leave-application" element={<LeaveApplication />} />
                   <Route path="/leave-requests" element={<LeaveRequests />} />
                   <Route path="/hrms/leave-requests" element={<LeaveRequests />} />
+                  <Route path="/kra" element={currentRole === 'super_admin' ? <KRAManagement /> : <Navigate to="/dashboard" replace />} />
+                  <Route path="/hrms/kra" element={currentRole === 'super_admin' ? <KRAManagement /> : <Navigate to="/dashboard" replace />} />
                   <Route path="/expense-tracker" element={<ExpenseTracker />} />
                   <Route path="/expenses" element={(currentRole === 'super_admin' || currentRole === 'manager') ? <Expenses /> : <ExpenseTracker />} />
                   <Route path="/complaints" element={<Complaints />} />
@@ -305,7 +312,8 @@ export const App: React.FC = () => {
                   <Route path="/visits/new" element={<VisitsNewAutoOpen />} />
                   <Route path="/shadow-analysis" element={<ShadowAnalysisContainer />} />
                   <Route path="/profile" element={<ProfileView />} />
-                  
+                  <Route path="/my-kra" element={<MyKRA />} />
+
                   <Route path="*" element={<Navigate to="/leads" replace />} />
                 </>
               )}

@@ -881,3 +881,53 @@ export interface ExpenseClaim {
   updatedAt: string;
 }
 
+// ===================== KRA (Key Result Areas) =====================
+export interface KRAItem {
+  name: string;
+  weight: number;
+  target: string;
+}
+
+export interface KRATemplate {
+  id: string;
+  role: UserRole | 'all';
+  title: string;
+  kras: KRAItem[];
+  isDefault?: boolean;
+  createdBy?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface KRAScoreItem {
+  name: string;
+  weight: number;
+  target: string;
+  actual?: string;
+  achievementPct: number;
+  score: number;
+  remarks?: string;
+}
+
+export interface KRAScore {
+  id: string;
+  employeeId: string;
+  employeeName: string;
+  employeeRole: string;
+  designation?: string;
+  month: number;
+  year: number;
+  templateId?: string;
+  kras: KRAScoreItem[];
+  totalScore: number;
+  grade: 'A+' | 'A' | 'B' | 'C' | 'D';
+  incentivePct?: number;
+  managerRemarks?: string;
+  status: 'draft' | 'submitted' | 'approved';
+  reviewedByUserId?: string;
+  reviewedByUserName?: string;
+  reviewedAt?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+

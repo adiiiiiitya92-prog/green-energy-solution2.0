@@ -9,11 +9,12 @@ import { employeeService } from '../../services/employeeService';
 import { productService } from '../../services/productService';
 import { challanService } from '../../services/challanService';
 import { complaintService } from '../../services/complaintService';
+import { kraService } from '../../services/kraService';
 import { useAuthStore } from '../../store/authStore';
 import { FollowUpReminders } from '../../components/Common/FollowUpReminders';
 import { DeletionApprovalsModal } from '../../components/Common/DeletionApprovalsModal';
-import type { Lead, Quotation, OrderConfirmation, Profile, Product, PaymentInstallment, DeletionRequest, Complaint } from '../../types';
-import { TrendingUp, DollarSign, Award, ClipboardList, PackageCheck, ShieldAlert, Boxes, Check, X, AlertCircle, ChevronRight, Wallet, ChevronDown, ChevronUp, FileEdit, Phone, Mail, Eye, MessageSquareWarning } from 'lucide-react';
+import type { Lead, Quotation, OrderConfirmation, Profile, Product, PaymentInstallment, DeletionRequest, Complaint, KRAScore } from '../../types';
+import { TrendingUp, DollarSign, Award, ClipboardList, PackageCheck, ShieldAlert, Boxes, Check, X, AlertCircle, ChevronRight, Wallet, ChevronDown, ChevronUp, FileEdit, Phone, Mail, Eye, MessageSquareWarning, Target } from 'lucide-react';
 
 export const Dashboard: React.FC = () => {
   const { currentRole, currentUser } = useAuthStore();
@@ -36,6 +37,7 @@ export const Dashboard: React.FC = () => {
   const [pendingDeleteRequests, setPendingDeleteRequests] = useState<DeletionRequest[]>([]);
   const [pendingComplaints, setPendingComplaints] = useState<Complaint[]>([]);
   const [pendingComplaintsCount, setPendingComplaintsCount] = useState<number>(0);
+  const [kraScores, setKraScores] = useState<KRAScore[]>([]);
   const [showApprovalsModal, setShowApprovalsModal] = useState<boolean>(false);
   const [isLowStockMinimized, setIsLowStockMinimized] = useState<boolean>(() => {
     try {
@@ -199,6 +201,12 @@ export const Dashboard: React.FC = () => {
           setPendingComplaintsCount(count);
         } catch (_) {}
       }
+
+      // KRA scores for leaderboard replacement
+      try {
+        const scores = await kraService.getAllScores();
+        setKraScores(scores);
+      } catch (_) {}
     } catch (err) {
       console.error("Error loading Dashboard metrics:", err);
     } finally {
@@ -264,20 +272,28 @@ export const Dashboard: React.FC = () => {
   const grandTotalInventoryValue = products.reduce((sum, p) => sum + ((p.rate || p.bomRate || 0) * (p.stockQuantity || 0)), 0);
   const totalStockUnitsCount = products.reduce((sum, p) => sum + (p.stockQuantity || 0), 0);
 
-  // 4. Employee performance metrics
-  const employeePerformance = employees.map(emp => {
-    const source = hasFullAccess ? (allCompanyLeads.length > 0 ? allCompanyLeads : leads) : leads;
-    const assignedLeads = source.filter(l => l.assignedSalesPersonId === emp.id || l.assignedAdminId === emp.id || l.assignedEmployeeId === emp.id);
-    const convertedLeads = assignedLeads.filter(l => ['confirmed', 'registered', 'installed', 'closed'].includes(l.status));
-    const rate = assignedLeads.length > 0 ? (convertedLeads.length / assignedLeads.length) * 100 : 0;
-    
-    return {
-      name: emp.fullName,
-      leadsCount: assignedLeads.length,
-      convertedCount: convertedLeads.length,
-      conversionRate: rate.toFixed(0) + '%'
-    };
-  });
+  // 4. KRA report rows (current month) — replaces the old Sales Leaderboard
+  const kraReportRows = (() => {
+    const now = new Date();
+    const curMonth = now.getMonth() + 1;
+    const curYear = now.getFullYear();
+    const empsById = new Map(employees.map(e => [e.id, e]));
+    return kraScores
+      .filter(s => s.year === curYear && s.month === curMonth)
+      .map(s => {
+        const emp = empsById.get(s.employeeId);
+        return {
+          id: s.id,
+          name: s.employeeName || emp?.fullName || 'Unknown',
+          role: (s.employeeRole || emp?.role || '').replace(/_/g, ' '),
+          total: s.totalScore,
+          grade: s.grade,
+          incentive: s.incentivePct || 0,
+          status: s.status
+        };
+      })
+      .sort((a, b) => b.total - a.total);
+  })();
 
   // 5. Process Done (Payment Due) financial totals sum calculation
   // Super Admin / Ops Admin: company-wide calculations across all leads
@@ -815,31 +831,71 @@ export const Dashboard: React.FC = () => {
       <FollowUpReminders />
 
       <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-xs">
-        <h3 className="font-bold text-slate-800 text-sm uppercase tracking-wider mb-4 border-b border-slate-100 pb-4">
-          Sales Representative Leaderboard
-        </h3>
+        <div className="flex items-center justify-between mb-4 border-b border-slate-100 pb-4">
+          <h3 className="font-bold text-slate-800 text-sm uppercase tracking-wider flex items-center gap-2">
+            <Target className="w-4 h-4 text-emerald-600" />
+            KRA Performance Report
+            <span className="ml-2 text-[10px] font-semibold text-slate-500 normal-case tracking-normal">
+              ({new Date().toLocaleString('default', { month: 'long' })} {new Date().getFullYear()})
+            </span>
+          </h3>
+          <Link
+            to="/hrms/kra"
+            className="text-[11px] font-bold text-emerald-700 hover:text-emerald-900 flex items-center gap-1"
+          >
+            Manage KRAs <ChevronRight className="w-3 h-3" />
+          </Link>
+        </div>
         <div className="overflow-x-auto">
           <table className="w-full text-xs text-left">
             <thead>
               <tr className="text-slate-400 font-bold uppercase border-b border-slate-100">
-                <th className="pb-3">Employee Name</th>
-                <th className="pb-3 text-center">Leads Assigned</th>
-                <th className="pb-3 text-center">Bookings Converted</th>
-                <th className="pb-3 text-right">Conversion Rate</th>
+                <th className="pb-3">#</th>
+                <th className="pb-3">Employee</th>
+                <th className="pb-3">Role</th>
+                <th className="pb-3 text-center">Score / 100</th>
+                <th className="pb-3 text-center">Grade</th>
+                <th className="pb-3 text-center">Incentive</th>
+                <th className="pb-3 text-right">Status</th>
               </tr>
             </thead>
             <tbody>
-              {employeePerformance.map((perf, index) => (
-                <tr key={index} className="border-b border-slate-50 last:border-0 hover:bg-slate-50/50 transition-colors">
-                  <td className="py-3 font-bold text-slate-800">{perf.name}</td>
-                  <td className="py-3 text-center font-semibold text-slate-600">{perf.leadsCount}</td>
-                  <td className="py-3 text-center font-semibold text-emerald-600">{perf.convertedCount}</td>
-                  <td className="py-3 text-right font-extrabold text-slate-900">{perf.conversionRate}</td>
-                </tr>
-              ))}
-              {employeePerformance.length === 0 && (
+              {kraReportRows.map((r, i) => {
+                const gradeCls =
+                  r.grade === 'A+' ? 'bg-emerald-100 text-emerald-700 border-emerald-300'
+                  : r.grade === 'A' ? 'bg-green-100 text-green-700 border-green-300'
+                  : r.grade === 'B' ? 'bg-yellow-100 text-yellow-700 border-yellow-300'
+                  : r.grade === 'C' ? 'bg-orange-100 text-orange-700 border-orange-300'
+                  : 'bg-red-100 text-red-700 border-red-300';
+                const statusCls =
+                  r.status === 'approved' ? 'bg-emerald-100 text-emerald-700'
+                  : r.status === 'submitted' ? 'bg-blue-100 text-blue-700'
+                  : 'bg-slate-100 text-slate-600';
+                return (
+                  <tr key={r.id} className="border-b border-slate-50 last:border-0 hover:bg-slate-50/50 transition-colors">
+                    <td className="py-3 text-slate-500 font-semibold">{i + 1}</td>
+                    <td className="py-3 font-bold text-slate-800">{r.name}</td>
+                    <td className="py-3 text-slate-500 uppercase text-[10px] tracking-wide">{r.role}</td>
+                    <td className="py-3 text-center font-extrabold text-emerald-700">{r.total}</td>
+                    <td className="py-3 text-center">
+                      <span className={`text-[10px] font-bold px-2 py-0.5 rounded border ${gradeCls}`}>
+                        {r.grade}
+                      </span>
+                    </td>
+                    <td className="py-3 text-center font-semibold text-amber-700">{r.incentive}%</td>
+                    <td className="py-3 text-right">
+                      <span className={`text-[10px] font-bold px-2 py-0.5 rounded ${statusCls}`}>
+                        {r.status.toUpperCase()}
+                      </span>
+                    </td>
+                  </tr>
+                );
+              })}
+              {kraReportRows.length === 0 && (
                 <tr>
-                  <td colSpan={4} className="py-6 text-center text-slate-400 font-medium">No performance data recorded yet.</td>
+                  <td colSpan={7} className="py-6 text-center text-slate-400 font-medium">
+                    No KRA scores recorded for this month yet. Visit <Link to="/hrms/kra" className="text-emerald-600 font-bold underline">KRA Management</Link> to add.
+                  </td>
                 </tr>
               )}
             </tbody>

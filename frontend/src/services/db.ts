@@ -26,7 +26,8 @@ import type {
   Receipt,
   SupervisorSummary,
   KRATemplate,
-  KRAScore
+  KRAScore,
+  ScheduledFieldVisit
 } from '../types';
 
 export interface DeletedRecord {
@@ -70,6 +71,7 @@ export class SolarCRMDatabase extends Dexie {
   counters!: Table<CounterDoc>;
   kraTemplates!: Table<KRATemplate>;
   kraScores!: Table<KRAScore>;
+  scheduledFieldVisits!: Table<ScheduledFieldVisit>;
 
   constructor() {
     super('GreenEnergyCRMDatabase');
@@ -282,6 +284,39 @@ export class SolarCRMDatabase extends Dexie {
       // KRA (Key Result Areas) tables
       kraTemplates: 'id, role, isDefault, createdAt',
       kraScores: 'id, employeeId, year, month, status, createdAt'
+    });
+
+    this.version(13).stores({
+      profiles: 'id, role, isActive',
+      leads: 'id, assignedEmployeeId, status, createdAt',
+      quotations: 'id, leadId, quotationNumber, createdAt',
+      orderConfirmations: 'id, leadId, quotationId',
+      clientDocuments: 'id, leadId, docType',
+      clientRegistrations: 'leadId',
+      installationPhotos: 'id, leadId, photoType',
+      releaseDocuments: 'id, leadId',
+      fieldVisitReports: 'id, employeeId, leadId, visitedAt',
+      products: 'id, name, category',
+      challans: 'id, leadId, assignedEmployeeId, challanNumber, createdAt',
+      shadowAnalyses: 'id, leadId, projectName, createdAt',
+      deletedRecords: 'id, collectionName, deletedAt',
+      deletionRequests: 'id, status, entityType, requestedByUserId, requestedAt',
+      b2bBusinesses: 'id, businessName, mobileNumber, gstNumber, contactPerson, createdAt',
+      stockTransactions: 'id, challanId, challanNumber, productId, timestamp',
+      packages: 'id, name, code, status, createdAt',
+      complaints: 'id, complaintNumber, status, priority, customerType, leadId, assignedToId, assignedDepartment, isOverdue, createdAt',
+      complaintConfigCategories: 'id, name',
+      leaveRequests: 'id, leaveNumber, employeeId, status, startDate, endDate, createdAt',
+      expenses: 'id, expenseNumber, employeeId, status, category, expenseDate, createdAt',
+      productChallans: 'id, challanNo, leadId, createdBy, status, createdAt',
+      installations: 'id, leadId, supervisorId, status, completedAt, createdAt',
+      paymentRequests: 'id, requestNumber, leadId, supervisorId, status, createdAt',
+      receipts: 'id, receiptNo, paymentRequestId, supervisorId, leadId, createdAt',
+      supervisorSummaries: 'id, supervisorId',
+      counters: 'id',
+      kraTemplates: 'id, role, isDefault, createdAt',
+      kraScores: 'id, employeeId, year, month, status, createdAt',
+      scheduledFieldVisits: 'id, leadId, assignedToId, scheduledDate, status, createdAt'
     });
   }
 }

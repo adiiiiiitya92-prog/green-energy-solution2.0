@@ -207,6 +207,7 @@ export const Dashboard: React.FC = () => {
         const scores = await kraService.getAllScores();
         setKraScores(scores);
       } catch (_) {}
+
     } catch (err) {
       console.error("Error loading Dashboard metrics:", err);
     } finally {

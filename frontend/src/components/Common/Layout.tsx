@@ -29,7 +29,8 @@ import {
   Bot,
   Sparkles,
   Wrench,
-  Target
+  Target,
+  ClipboardList
 } from 'lucide-react';
 
 interface LayoutProps {
@@ -161,6 +162,12 @@ export const Layout: React.FC<LayoutProps> = ({ children }) => {
       icon: Compass
     },
     {
+      name: 'Raw Leads List',
+      path: '/raw-leads',
+      roles: ['super_admin'],
+      icon: ClipboardList
+    },
+    {
       name: 'Inventory & Challan Panel',
       path: '/inventory-panel',
       roles: ['inventory_manager'],
@@ -269,6 +276,12 @@ export const Layout: React.FC<LayoutProps> = ({ children }) => {
       path: '/my-kra',
       roles: ['admin', 'field_employee', 'inventory_manager', 'dealer', 'installation_supervisor'],
       icon: Target
+    },
+    {
+      name: 'My Field Visits',
+      path: '/my-field-visits',
+      roles: ['field_employee', 'admin', 'inventory_manager', 'dealer', 'installation_supervisor'],
+      icon: MapPin
     },
     {
       name: 'Expenses',

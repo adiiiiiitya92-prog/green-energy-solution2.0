@@ -51,6 +51,26 @@ export interface Lead {
   followUpCompleted?: boolean;
   installationRemark?: string;
   confirmedAt?: string; // ⚡ Exact date/time when order was confirmed
+  targetDays?: number;
+  targetSetAt?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ScheduledFieldVisit {
+  id: string;
+  leadId: string;
+  leadName: string;
+  assignedToId: string;
+  assignedToName: string;
+  scheduledDate: string;
+  scheduledTime?: string;
+  purpose?: string;
+  status: 'scheduled' | 'done' | 'missed';
+  completedAt?: string;
+  completionNotes?: string;
+  createdBy: string;
+  createdByName?: string;
   createdAt: string;
   updatedAt: string;
 }

@@ -68,6 +68,7 @@ export const FollowUpReminders: React.FC<{
         quotationService.getAllQuotations()
       ]);
       const leads = filterLeadsForUser(rawLeads, currentUser, currentRole);
+      const seesAllLeads = leads.length === rawLeads.length;
 
       const leadMap = new Map<string, Lead>();
       leads.forEach(l => leadMap.set(l.id, l));
@@ -84,6 +85,7 @@ export const FollowUpReminders: React.FC<{
 
       sortedQuotations.forEach(q => {
         const lead = leadMap.get(q.leadId);
+        if (!lead && !seesAllLeads) return;
         const rawDate = q.followUpDate || lead?.nextFollowUpDate;
         const fDate = isValidDate(rawDate) ? dayjs(rawDate).format('YYYY-MM-DD') : '';
         const cleanPhone = (q.consumerMobile || lead?.phoneNumber || '').replace(/\D/g, '');

@@ -4,6 +4,8 @@ import { useAuthStore } from '../../store/authStore';
 import { expenseService, resolveExpenseReceiptUrl, normalizeReceiptUrl } from '../../services/expenseService';
 import type { ExpenseClaim, ExpenseCategory } from '../../types';
 import { BillProofPreviewModal } from '../../components/Expenses/BillProofPreviewModal';
+import dayjs from 'dayjs';
+import isBetween from 'dayjs/plugin/isBetween';
 import {
   Receipt,
   Search,
@@ -27,6 +29,8 @@ import {
   Download
 } from 'lucide-react';
 
+dayjs.extend(isBetween);
+
 export const Expenses: React.FC = () => {
   const { currentUser } = useAuthStore();
   const [claims, setClaims] = useState<ExpenseClaim[]>([]);
@@ -34,6 +38,10 @@ export const Expenses: React.FC = () => {
   const [statusFilter, setStatusFilter] = useState<'all' | 'pending' | 'approved' | 'rejected'>('all');
   const [roleFilter, setRoleFilter] = useState<string>('all');
   const [categoryFilter, setCategoryFilter] = useState<string>('all');
+  const [employeeFilter, setEmployeeFilter] = useState<string>('all');
+  const [datePreset, setDatePreset] = useState<'all' | 'today' | 'week' | 'month' | 'custom'>('all');
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo] = useState('');
   const [loading, setLoading] = useState(false);
   const [toastMessage, setToastMessage] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
 
@@ -181,17 +189,32 @@ export const Expenses: React.FC = () => {
   const approvedCount = claims.filter(c => c.status === 'approved').length;
   const rejectedCount = claims.filter(c => c.status === 'rejected').length;
 
+  const uniqueEmployees = Array.from(
+    new Map(claims.map(c => [c.employeeId, c.employeeName])).entries()
+  ).sort((a, b) => a[1].localeCompare(b[1]));
+
+  const getDateRange = (): [dayjs.Dayjs, dayjs.Dayjs] | null => {
+    if (datePreset === 'all') return null;
+    const now = dayjs();
+    if (datePreset === 'today') return [now.startOf('day'), now.endOf('day')];
+    if (datePreset === 'week') return [now.startOf('week'), now.endOf('week')];
+    if (datePreset === 'month') return [now.startOf('month'), now.endOf('month')];
+    if (datePreset === 'custom' && dateFrom && dateTo) return [dayjs(dateFrom).startOf('day'), dayjs(dateTo).endOf('day')];
+    return null;
+  };
+
   const filteredClaims = claims.filter(claim => {
-    // Status filter
     if (statusFilter !== 'all' && claim.status !== statusFilter) return false;
-
-    // Role filter
     if (roleFilter !== 'all' && claim.employeeRole !== roleFilter) return false;
-
-    // Category filter
     if (categoryFilter !== 'all' && claim.category !== categoryFilter) return false;
+    if (employeeFilter !== 'all' && claim.employeeId !== employeeFilter) return false;
 
-    // Search filter
+    const range = getDateRange();
+    if (range) {
+      const d = dayjs(claim.expenseDate);
+      if (!d.isBetween(range[0], range[1], null, '[]')) return false;
+    }
+
     if (searchTerm.trim()) {
       const q = searchTerm.toLowerCase();
       const matchName = claim.employeeName?.toLowerCase().includes(q) || false;
@@ -204,6 +227,39 @@ export const Expenses: React.FC = () => {
 
     return true;
   });
+
+  const filteredTotalAmount = filteredClaims.reduce((s, c) => s + (Number(c.amount) || 0), 0);
+  const filteredApprovedAmount = filteredClaims.filter(c => c.status === 'approved').reduce((s, c) => s + (c.approvedAmount !== undefined ? Number(c.approvedAmount) || 0 : Number(c.amount) || 0), 0);
+
+  const handleDownloadReport = () => {
+    const rows = filteredClaims.map(c => ({
+      'Expense #': c.expenseNumber,
+      'Employee': c.employeeName,
+      'Phone': c.employeePhone,
+      'Role': (c.employeeRole || '').replace(/_/g, ' '),
+      'Category': formatCategoryLabel(c.category),
+      'Title': c.title,
+      'Expense Date': dayjs(c.expenseDate).format('DD-MM-YYYY'),
+      'Claim Amount': c.amount,
+      'Status': c.status,
+      'Approved Amount': c.approvedAmount ?? '',
+      'Voucher': c.voucherNumber || '',
+      'Remarks': c.approvalRemarks || c.rejectionReason || ''
+    }));
+    if (rows.length === 0) return;
+    const headers = Object.keys(rows[0]);
+    const csv = [
+      headers.join(','),
+      ...rows.map(r => headers.map(h => `"${String((r as any)[h]).replace(/"/g, '""')}"`).join(','))
+    ].join('\n');
+    const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `Expense_Report_${dayjs().format('DD-MMM-YYYY')}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
 
   const formatCategoryLabel = (cat: ExpenseCategory) => {
     switch (cat) {
@@ -355,65 +411,117 @@ export const Expenses: React.FC = () => {
       </div>
 
       {/* Filter and Search Bar */}
-      <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-xs flex flex-col md:flex-row items-center justify-between gap-3">
-        <div className="relative w-full md:w-80">
-          <Search className="w-4 h-4 text-slate-400 absolute left-3 top-3" />
-          <input
-            type="text"
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-            placeholder="Search employee, phone, expense #, title..."
-            className="w-full bg-slate-50 border border-slate-200 rounded-xl pl-9 pr-3 py-2 text-xs font-medium text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:bg-white transition-all placeholder:text-slate-400"
-          />
+      <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-xs space-y-3">
+        <div className="flex flex-col md:flex-row items-center justify-between gap-3">
+          <div className="relative w-full md:w-80">
+            <Search className="w-4 h-4 text-slate-400 absolute left-3 top-3" />
+            <input
+              type="text"
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              placeholder="Search employee, phone, expense #, title..."
+              className="w-full bg-slate-50 border border-slate-200 rounded-xl pl-9 pr-3 py-2 text-xs font-medium text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:bg-white transition-all placeholder:text-slate-400"
+            />
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2 w-full md:w-auto">
+            <div className="flex items-center space-x-1 bg-slate-100 p-1 rounded-xl text-xs">
+              {(['all', 'pending', 'approved', 'rejected'] as const).map(st => (
+                <button
+                  key={st}
+                  onClick={() => setStatusFilter(st)}
+                  type="button"
+                  className={`px-3 py-1 rounded-lg font-bold capitalize transition-all cursor-pointer ${
+                    statusFilter === st
+                      ? 'bg-white text-slate-900 shadow-xs'
+                      : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  {st}
+                </button>
+              ))}
+            </div>
+
+            <select
+              value={employeeFilter}
+              onChange={(e) => setEmployeeFilter(e.target.value)}
+              className="bg-slate-50 border border-slate-200 rounded-xl px-3 py-1.5 text-xs font-bold text-slate-700 focus:outline-none focus:ring-2 focus:ring-emerald-500 cursor-pointer"
+            >
+              <option value="all">All Employees</option>
+              {uniqueEmployees.map(([id, name]) => (
+                <option key={id} value={id}>{name}</option>
+              ))}
+            </select>
+
+            <select
+              value={roleFilter}
+              onChange={(e) => setRoleFilter(e.target.value)}
+              className="bg-slate-50 border border-slate-200 rounded-xl px-3 py-1.5 text-xs font-bold text-slate-700 focus:outline-none focus:ring-2 focus:ring-emerald-500 cursor-pointer"
+            >
+              <option value="all">All Roles</option>
+              <option value="field_employee">Field Employees</option>
+              <option value="sales_person">Sales Employees</option>
+              <option value="admin">Admins</option>
+              <option value="inventory_manager">Inventory Managers</option>
+              <option value="dealer">Dealers</option>
+            </select>
+
+            <select
+              value={categoryFilter}
+              onChange={(e) => setCategoryFilter(e.target.value)}
+              className="bg-slate-50 border border-slate-200 rounded-xl px-3 py-1.5 text-xs font-bold text-slate-700 focus:outline-none focus:ring-2 focus:ring-emerald-500 cursor-pointer"
+            >
+              <option value="all">All Categories</option>
+              <option value="travel">Travel</option>
+              <option value="fuel">Fuel / Petrol</option>
+              <option value="food">Food</option>
+              <option value="tools_hardware">Site Tools</option>
+              <option value="stay_hotel">Hotel / Stay</option>
+              <option value="emergency_repair">Emergency Spares</option>
+              <option value="other">Other</option>
+            </select>
+          </div>
         </div>
 
-        <div className="flex flex-wrap items-center gap-2 w-full md:w-auto">
-          {/* Status Chips */}
+        {/* Date Filters Row */}
+        <div className="flex flex-wrap items-center gap-2 border-t border-slate-100 pt-3">
+          <Calendar className="w-4 h-4 text-slate-400" />
           <div className="flex items-center space-x-1 bg-slate-100 p-1 rounded-xl text-xs">
-            {(['all', 'pending', 'approved', 'rejected'] as const).map(st => (
+            {([['all', 'All Time'], ['today', 'Today'], ['week', 'This Week'], ['month', 'This Month'], ['custom', 'Custom']] as const).map(([val, label]) => (
               <button
-                key={st}
-                onClick={() => setStatusFilter(st)}
+                key={val}
+                onClick={() => setDatePreset(val)}
                 type="button"
-                className={`px-3 py-1 rounded-lg font-bold capitalize transition-all cursor-pointer ${
-                  statusFilter === st
-                    ? 'bg-white text-slate-900 shadow-xs'
-                    : 'text-slate-600 hover:text-slate-900'
+                className={`px-3 py-1 rounded-lg font-bold transition-all cursor-pointer ${
+                  datePreset === val ? 'bg-white text-slate-900 shadow-xs' : 'text-slate-600 hover:text-slate-900'
                 }`}
               >
-                {st}
+                {label}
               </button>
             ))}
           </div>
+          {datePreset === 'custom' && (
+            <div className="flex items-center gap-2">
+              <input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)} className="bg-slate-50 border border-slate-200 rounded-xl px-2.5 py-1.5 text-xs font-bold text-slate-700 focus:outline-none focus:ring-2 focus:ring-emerald-500" />
+              <span className="text-xs text-slate-400 font-bold">to</span>
+              <input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)} className="bg-slate-50 border border-slate-200 rounded-xl px-2.5 py-1.5 text-xs font-bold text-slate-700 focus:outline-none focus:ring-2 focus:ring-emerald-500" />
+            </div>
+          )}
 
-          {/* Role Filter */}
-          <select
-            value={roleFilter}
-            onChange={(e) => setRoleFilter(e.target.value)}
-            className="bg-slate-50 border border-slate-200 rounded-xl px-3 py-1.5 text-xs font-bold text-slate-700 focus:outline-none focus:ring-2 focus:ring-emerald-500 cursor-pointer"
-          >
-            <option value="all">All Roles</option>
-            <option value="field_employee">Field Employees</option>
-            <option value="admin">Admins</option>
-            <option value="inventory_manager">Inventory Managers</option>
-            <option value="dealer">Dealers</option>
-          </select>
-
-          {/* Category Filter */}
-          <select
-            value={categoryFilter}
-            onChange={(e) => setCategoryFilter(e.target.value)}
-            className="bg-slate-50 border border-slate-200 rounded-xl px-3 py-1.5 text-xs font-bold text-slate-700 focus:outline-none focus:ring-2 focus:ring-emerald-500 cursor-pointer"
-          >
-            <option value="all">All Categories</option>
-            <option value="travel">Travel</option>
-            <option value="fuel">Fuel / Petrol</option>
-            <option value="food">Food</option>
-            <option value="tools_hardware">Site Tools</option>
-            <option value="stay_hotel">Hotel / Stay</option>
-            <option value="emergency_repair">Emergency Spares</option>
-            <option value="other">Other</option>
-          </select>
+          <div className="ml-auto flex items-center gap-2">
+            <span className="text-[11px] font-bold text-slate-500">
+              {filteredClaims.length} claims · ₹{filteredTotalAmount.toLocaleString('en-IN')} total · ₹{filteredApprovedAmount.toLocaleString('en-IN')} approved
+            </span>
+            <button
+              type="button"
+              onClick={handleDownloadReport}
+              disabled={filteredClaims.length === 0}
+              className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-40 text-white font-extrabold text-xs rounded-xl flex items-center gap-1.5 cursor-pointer shadow-xs transition-all"
+            >
+              <Download className="w-3.5 h-3.5" />
+              <span>Download CSV</span>
+            </button>
+          </div>
         </div>
       </div>
 

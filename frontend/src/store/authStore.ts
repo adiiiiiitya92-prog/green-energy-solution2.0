@@ -19,6 +19,10 @@ interface AuthState {
   resetAllData: () => Promise<void>;
 }
 
+// Sales employees get exactly the Field Employee panel; profile.role stays 'sales_person' for labels, KRA and reports.
+export const accessRoleFor = (role: UserRole | undefined): UserRole =>
+  role === 'sales_person' ? 'field_employee' : (role || 'field_employee');
+
 // Device-level persistent auth storage helpers
 const persistUserSession = (profile: Profile) => {
   try {
@@ -170,7 +174,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       persistUserSession(updatedProfile);
       set({
         currentUser: updatedProfile,
-        currentRole: updatedProfile.role,
+        currentRole: accessRoleFor(updatedProfile.role),
         isAuthenticated: true,
         originalUser: null
       });
@@ -238,7 +242,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       persistUserSession(profile);
       set({
         currentUser: profile,
-        currentRole: profile.role,
+        currentRole: accessRoleFor(profile.role),
         isAuthenticated: true,
         originalUser: null
       });
@@ -251,6 +255,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   },
 
   logout: async () => {
+    await import('../services/pushService').then(m => m.detachPushOnLogout()).catch(() => {});
     await clearUserSession();
     set({
       currentUser: null,
@@ -272,7 +277,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   impersonateUser: async (user) => {
     const original = get().originalUser || get().currentUser;
     set({
-      currentRole: user.role,
+      currentRole: accessRoleFor(user.role),
       currentUser: user,
       originalUser: original
     });
@@ -282,7 +287,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     const original = get().originalUser;
     if (original) {
       set({
-        currentRole: original.role,
+        currentRole: accessRoleFor(original.role),
         currentUser: original,
         originalUser: null
       });
@@ -302,7 +307,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         if (cached && (cached.id || cached.email) && cached.isActive !== false) {
           set({
             currentUser: cached,
-            currentRole: cached.role,
+            currentRole: accessRoleFor(cached.role),
             isAuthenticated: true,
             isLoading: false,
             originalUser: null
@@ -381,7 +386,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         persistUserSession(profile);
         set({
           currentUser: profile,
-          currentRole: profile.role,
+          currentRole: accessRoleFor(profile.role),
           isAuthenticated: true,
           isLoading: false,
           originalUser: null

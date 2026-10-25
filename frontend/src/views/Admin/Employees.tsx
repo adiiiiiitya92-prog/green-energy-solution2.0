@@ -37,7 +37,7 @@ export const Employees: React.FC = () => {
   // Add Form states
   const [fullName, setFullName] = useState('');
   const [phone, setPhone] = useState('');
-  const [role, setRole] = useState<'admin' | 'field_employee' | 'inventory_manager' | 'dealer' | 'manager' | 'installation_supervisor'>('field_employee');
+  const [role, setRole] = useState<'admin' | 'field_employee' | 'inventory_manager' | 'dealer' | 'manager' | 'installation_supervisor' | 'telecaller' | 'liaisoning' | 'sales_person'>('field_employee');
   const [email, setEmail] = useState('');
   const [aadhaarNumber, setAadhaarNumber] = useState('');
   const [panNumber, setPanNumber] = useState('');
@@ -385,9 +385,12 @@ export const Employees: React.FC = () => {
                     className="w-full border border-slate-200 rounded-xl px-3 py-2.5 bg-slate-50 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 text-slate-900 cursor-pointer"
                   >
                     <option value="field_employee">Field Employee</option>
+                    <option value="sales_person">Sales Employee</option>
                     <option value="dealer">Dealer Partner / Franchise</option>
                     <option value="inventory_manager">Inventory Manager (Store & Stock Only)</option>
                     <option value="installation_supervisor">Installation Supervisor</option>
+                    <option value="telecaller">Marketing / Telecaller</option>
+                    <option value="liaisoning">Liaisoning (Registration & Release)</option>
                     <option value="admin">Administrator</option>
                     {(currentRole === 'super_admin' || originalUser?.role === 'super_admin' || editingEmployee.role === 'manager') && (
                       <option value="manager">Manager (Full Access except Dashboard/Reports/Leads)</option>
@@ -575,11 +578,14 @@ export const Employees: React.FC = () => {
                   className="w-full border border-slate-200 rounded-xl px-3 py-2.5 bg-slate-50 focus:bg-white focus:outline-none focus:ring-1 focus:ring-emerald-500 cursor-pointer"
                 >
                   <option value="field_employee">Field Employee</option>
+                  <option value="sales_person">Sales Employee</option>
                   <option value="dealer">Dealer Partner / Franchise</option>
                   <option value="inventory_manager">Inventory Manager (Store & Stock Only)</option>
                   {(currentRole === 'super_admin' || currentRole === 'manager' || originalUser?.role === 'super_admin' || originalUser?.role === 'manager') && (
                     <option value="installation_supervisor">Installation Supervisor</option>
                   )}
+                  <option value="telecaller">Marketing / Telecaller</option>
+                  <option value="liaisoning">Liaisoning (Registration & Release)</option>
                   <option value="admin">Administrator</option>
                   {(currentRole === 'super_admin' || originalUser?.role === 'super_admin') && (
                     <option value="manager">Manager (Full Access except Dashboard/Reports/Leads)</option>

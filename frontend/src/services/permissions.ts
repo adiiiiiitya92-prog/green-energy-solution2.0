@@ -36,7 +36,7 @@ export type Feature =
   | 'installation_supervisor_panel';
 
 // Areas a Manager must NOT access (everything else Super Admin can, Manager can too).
-const MANAGER_DENIED: Feature[] = ['dashboard', 'reports', 'lead_pipeline'];
+const MANAGER_DENIED: Feature[] = ['dashboard'];
 
 export function hasAccess(role: UserRole | undefined | null, feature: Feature): boolean {
   if (!role) return false;
@@ -95,14 +95,19 @@ export function defaultRouteForRole(role: UserRole | undefined | null): string {
     case 'admin':
       return '/dashboard';
     case 'manager':
-      return '/complaints'; // Manager has no dashboard; land on Complaints
+      return '/leads';
     case 'inventory_manager':
       return '/inventory-panel';
     case 'installation_supervisor':
       return '/installation';
+    case 'telecaller':
+      return '/telecaller';
+    case 'liaisoning':
+      return '/liaisoning';
     case 'dealer':
       return '/leads';
     case 'field_employee':
+    case 'sales_person':
       return '/leads';
     default:
       return '/leads';

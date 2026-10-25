@@ -10,6 +10,7 @@ import { LeafletMap } from '../../components/Map/LeafletMap';
 import { pdfService } from '../../services/pdfService';
 import { Plus, MapPin, User, Compass, Upload, Search, ChevronDown, ChevronUp, Trash2, Download, RotateCcw, Clock, Sparkles } from 'lucide-react';
 import { uploadImageToFirebase, getQuickB2Url, getFreshB2SignedUrl, getSafeBlobUrl } from '../../services/firebase';
+import { compressImage } from '../../services/imageCompressionService';
 import dayjs from 'dayjs';
 
 export const Visits: React.FC = () => {
@@ -172,7 +173,7 @@ export const Visits: React.FC = () => {
 
     // Load employees
     const profiles = await employeeService.getAllProfiles();
-    setEmployees(profiles.filter(p => p.role === 'field_employee'));
+    setEmployees(profiles.filter(p => p.role === 'field_employee' || p.role === 'sales_person'));
     const names: Record<string, string> = {};
     profiles.forEach(p => {
       names[p.id] = p.fullName;

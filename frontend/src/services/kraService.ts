@@ -48,6 +48,54 @@ export const DEFAULT_FIELD_KRA: KRAItem[] = [
   }
 ];
 
+export const DEFAULT_SALES_KRA: KRAItem[] = [
+  { name: 'Sales Achievement', weight: 40, target: '5 bookings per month' },
+  { name: 'Recovery', weight: 25, target: 'At least 95% of amount due' },
+  { name: 'Project Completion Flow', weight: 20, target: 'At least 80% of projects due' },
+  { name: 'Project Cost Control / Saving', weight: 15, target: 'At least 10% saving vs approved budget (details note attached)' }
+];
+
+export const DEFAULT_MARKETING_KRA: KRAItem[] = [
+  { name: 'Sales Achievement against Leads', weight: 30, target: 'Maximum conversion of leads' },
+  { name: 'Calling / Follow-up', weight: 25, target: 'At least 98% of amount due' },
+  {
+    name: 'Social Media Posting (Facebook, Instagram, WhatsApp, IndiaMART, Justdial, Boost 360)',
+    weight: 20,
+    target: 'At least 80% of projects due, at least daily posting'
+  },
+  {
+    name: 'Lead Handling & CRM Updates and Follow-up',
+    weight: 15,
+    target: 'At least 100% CRM update and follow-up (data from CRM)'
+  }
+];
+
+export const DEFAULT_ADMIN_KRA: KRAItem[] = [
+  { name: 'Work Completion', weight: 40, target: 'As per CRM' },
+  { name: 'Recovery and Update in CRM', weight: 25, target: 'At least 95% of amount due' },
+  { name: 'Project Completion Flow', weight: 20, target: 'At least 80% of projects due' },
+  { name: 'Project Cost Control / Saving', weight: 15, target: 'At least 10% saving vs approved budget' }
+];
+
+export const DEFAULT_ADMIN_KRA_2: KRAItem[] = [
+  { name: 'Work Completion', weight: 35, target: 'As per CRM' },
+  { name: 'Recovery and Update in CRM', weight: 25, target: 'At least 95% of amount due' },
+  { name: 'Project Completion Flow', weight: 20, target: 'At least 80% of projects due' },
+  { name: 'Project Cost Control / Saving', weight: 15, target: 'At least 10% saving vs approved budget' },
+  { name: 'Other Activity', weight: 5, target: 'File and CO related work' }
+];
+
+// Fixed ids so a template the admin deletes stays deleted (deletions are tracked by id)
+const SEED_TEMPLATES: Array<Omit<KRATemplate, 'createdAt' | 'updatedAt'>> = [
+  { id: 'kra_tpl_seed_field', role: 'field_employee', title: 'Field Employee KRA (Default)', kras: DEFAULT_FIELD_KRA, isDefault: true },
+  { id: 'kra_tpl_seed_sales', role: 'sales_person', title: 'Sales KRA', kras: DEFAULT_SALES_KRA },
+  { id: 'kra_tpl_seed_marketing', role: 'telecaller', title: 'Marketing Team KRA', kras: DEFAULT_MARKETING_KRA },
+  { id: 'kra_tpl_seed_admin', role: 'admin', title: 'Admin KRA', kras: DEFAULT_ADMIN_KRA },
+  { id: 'kra_tpl_seed_admin_2', role: 'admin', title: 'Admin KRA (2) — with Other Activity', kras: DEFAULT_ADMIN_KRA_2 }
+];
+
+let seedChecked = false;
+
 export function computeGrade(total: number): KRAScore['grade'] {
   if (total >= 90) return 'A+';
   if (total >= 80) return 'A';
@@ -100,20 +148,24 @@ export const kraService = {
       }
     };
 
-    if (valid.length === 0) {
-      await sync();
-      // Seed default field KRA if still empty
-      const after = await db.kraTemplates.toArray();
-      if (after.length === 0) {
-        await this.createTemplate({
-          role: 'field_employee',
-          title: 'Field Employee KRA (Default)',
-          kras: DEFAULT_FIELD_KRA,
-          isDefault: true
-        });
+    if (!seedChecked) {
+      seedChecked = true;
+      if (valid.length === 0) await sync();
+      const existing = await db.kraTemplates.toArray();
+      const freshDeleted = await getDeletedRecordIdsSet();
+      const ids = new Set(existing.map(t => t.id));
+      const titles = new Set(existing.map(t => t.title.trim().toLowerCase()));
+      const now = new Date().toISOString();
+      for (const seed of SEED_TEMPLATES) {
+        if (ids.has(seed.id) || freshDeleted.has(seed.id) || titles.has(seed.title.toLowerCase())) continue;
+        const tpl: KRATemplate = { ...seed, createdAt: now, updatedAt: now };
+        await db.kraTemplates.put(tpl);
+        saveRecordToFirestore('kraTemplates', tpl.id, tpl);
       }
       const refreshed = await db.kraTemplates.toArray();
-      return refreshed.filter(t => !deleted.has(t.id));
+      return refreshed
+        .filter(t => !freshDeleted.has(t.id))
+        .sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
     }
     if (Date.now() - lastTplSync > SYNC_INTERVAL) sync().catch(() => {});
     return valid.sort(

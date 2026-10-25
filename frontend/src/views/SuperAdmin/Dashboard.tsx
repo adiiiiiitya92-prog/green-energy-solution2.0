@@ -13,8 +13,9 @@ import { kraService } from '../../services/kraService';
 import { useAuthStore } from '../../store/authStore';
 import { FollowUpReminders } from '../../components/Common/FollowUpReminders';
 import { DeletionApprovalsModal } from '../../components/Common/DeletionApprovalsModal';
-import type { Lead, Quotation, OrderConfirmation, Profile, Product, PaymentInstallment, DeletionRequest, Complaint, KRAScore } from '../../types';
-import { TrendingUp, DollarSign, Award, ClipboardList, PackageCheck, ShieldAlert, Boxes, Check, X, AlertCircle, ChevronRight, Wallet, ChevronDown, ChevronUp, FileEdit, Phone, Mail, Eye, MessageSquareWarning, Target } from 'lucide-react';
+import type { Lead, Quotation, OrderConfirmation, Profile, Product, PaymentInstallment, DeletionRequest, KRAScore } from '../../types';
+import dayjs from 'dayjs';
+import { Award, ShieldAlert, Check, X, AlertCircle, ChevronRight, Wallet, ChevronDown, ChevronUp, Eye, MessageSquareWarning, Target, Users, Filter, Clock } from 'lucide-react';
 
 export const Dashboard: React.FC = () => {
   const { currentRole, currentUser } = useAuthStore();
@@ -35,10 +36,11 @@ export const Dashboard: React.FC = () => {
   const [products, setProducts] = useState<Product[]>([]);
   const [lowStockProducts, setLowStockProducts] = useState<Product[]>([]);
   const [pendingDeleteRequests, setPendingDeleteRequests] = useState<DeletionRequest[]>([]);
-  const [pendingComplaints, setPendingComplaints] = useState<Complaint[]>([]);
   const [pendingComplaintsCount, setPendingComplaintsCount] = useState<number>(0);
   const [kraScores, setKraScores] = useState<KRAScore[]>([]);
   const [showApprovalsModal, setShowApprovalsModal] = useState<boolean>(false);
+  const [pendingLeaveCount, setPendingLeaveCount] = useState(0);
+  const [pendingExpenseCount, setPendingExpenseCount] = useState(0);
   const [isLowStockMinimized, setIsLowStockMinimized] = useState<boolean>(() => {
     try {
       return localStorage.getItem('minimized_inventory_alert') === 'true';
@@ -109,6 +111,21 @@ export const Dashboard: React.FC = () => {
 
         if (localEmps && localEmps.length > 0) {
           setEmployees(localEmps);
+        }
+
+        // Instant local counts for Needs Attention (no remote wait)
+        if (isSuperAdmin || hasFullAccess) {
+          const [localComplaints, localLeaves, localExpenses] = await Promise.all([
+            db.complaints.toArray().catch(() => []),
+            db.leaveRequests.toArray().catch(() => []),
+            db.expenses.toArray().catch(() => [])
+          ]);
+          if (isMounted) {
+            const pc = (localComplaints || []).filter((c: any) => c.status !== 'Resolved' && c.status !== 'Closed').length;
+            if (pc > 0) setPendingComplaintsCount(pc);
+            setPendingLeaveCount((localLeaves || []).filter((l: any) => l.status === 'pending').length);
+            setPendingExpenseCount((localExpenses || []).filter((e: any) => e.status === 'pending').length);
+          }
         }
 
         if (validLeads.length > 0 || validQuotes.length > 0 || validOcs.length > 0) {
@@ -192,14 +209,12 @@ export const Dashboard: React.FC = () => {
       }
       if (deleteReqsRes.status === 'fulfilled') setPendingDeleteRequests(deleteReqsRes.value || []);
 
-      // Change 3: Pending complaints widget (Super Admin only; limited local query)
+      // Pending complaints — background sync then update count (non-blocking)
       if (isSuperAdmin) {
-        try {
-          await complaintService.getComplaints(); // ensure local mirror is populated (throttled sync)
-          const { items, count } = await complaintService.getPendingComplaints(10);
-          setPendingComplaints(items);
-          setPendingComplaintsCount(count);
-        } catch (_) {}
+        complaintService.getComplaints()
+          .then(() => complaintService.getPendingComplaints(1))
+          .then(({ count }) => setPendingComplaintsCount(count))
+          .catch(() => {});
       }
 
       // KRA scores for leaderboard replacement
@@ -207,6 +222,20 @@ export const Dashboard: React.FC = () => {
         const scores = await kraService.getAllScores();
         setKraScores(scores);
       } catch (_) {}
+
+      // Pending leave & expense counts
+      if (isSuperAdmin || hasFullAccess) {
+        try {
+          const { leaveService } = await import('../../services/leaveService');
+          const allLeaves = await leaveService.getAllLeaveRequests();
+          setPendingLeaveCount(allLeaves.filter(l => l.status === 'pending').length);
+        } catch (_) {}
+        try {
+          const { expenseService } = await import('../../services/expenseService');
+          const allExpenses = await expenseService.getAllExpenses();
+          setPendingExpenseCount(allExpenses.filter(e => e.status === 'pending').length);
+        } catch (_) {}
+      }
 
     } catch (err) {
       console.error("Error loading Dashboard metrics:", err);
@@ -258,6 +287,42 @@ export const Dashboard: React.FC = () => {
     closed: leads.filter(l => l.status === 'closed').length,
     lost: leads.filter(l => l.status === 'lost').length,
   };
+
+  // 1b. Ordered funnel stages (exact company-wide CRM numbers)
+  const funnelSource = allCompanyLeads.length > 0 ? allCompanyLeads : leads;
+  const funnelCount = (status: Lead['status']) => funnelSource.filter(l => l.status === status).length;
+  const funnelStages = [
+    { label: 'New Leads', count: funnelCount('new') },
+    { label: 'Quotation Sent', count: funnelCount('quotation_sent') },
+    { label: 'Booking Confirmed', count: funnelCount('confirmed') },
+    { label: 'Registered', count: funnelCount('registered') },
+    { label: 'Installed', count: funnelCount('installed') },
+    { label: 'Completed (Closed)', count: funnelCount('closed') },
+  ];
+  const funnelTotal = funnelSource.length;
+  const funnelMax = Math.max(1, ...funnelStages.map(s => s.count));
+
+  // 1c. Sales Representative Leaderboard (company-wide) — assigned vs converted
+  const salesLeaderboard = (() => {
+    const sourceLeads = allCompanyLeads.length > 0 ? allCompanyLeads : leads;
+    const empsById = new Map(employees.map(e => [e.id, e]));
+    const bookedStatuses = new Set(['confirmed', 'registered', 'installed', 'closed']);
+    const agg = new Map<string, { id: string; name: string; assigned: number; converted: number }>();
+    sourceLeads.forEach(l => {
+      const repId = l.assignedSalesPersonId || l.assignedEmployeeId;
+      if (!repId) return;
+      if (!agg.has(repId)) {
+        const emp = empsById.get(repId);
+        agg.set(repId, { id: repId, name: emp?.fullName || 'Unknown', assigned: 0, converted: 0 });
+      }
+      const row = agg.get(repId)!;
+      row.assigned += 1;
+      if (bookedStatuses.has(l.status)) row.converted += 1;
+    });
+    return Array.from(agg.values())
+      .map(r => ({ ...r, rate: r.assigned > 0 ? Math.round((r.converted / r.assigned) * 100) : 0 }))
+      .sort((a, b) => b.converted - a.converted || b.rate - a.rate);
+  })();
 
   // 2. Revenue calculation with multi-installment support
   const getQVal = (q: Quotation) => getQuotationTotalAmount(q);
@@ -361,62 +426,93 @@ export const Dashboard: React.FC = () => {
     };
   })();
 
+  // 6. Needs Attention aggregation
+  const now = dayjs();
+  const overdueFollowUps = leads.filter(l => l.nextFollowUpDate && !l.followUpCompleted && dayjs(l.nextFollowUpDate).isBefore(now, 'day')).length;
+  const leadsWithoutNextStep = leads.filter(l => l.status === 'new' && !l.nextFollowUpDate && !l.assignedSalesPersonId && !l.assignedEmployeeId).length;
+
+  // 7. Payment Overdue: confirmed leads with no payment update in 15+ days
+  const paymentOverdueLeads = (() => {
+    const sourceLeads = hasFullAccess ? (allCompanyLeads.length > 0 ? allCompanyLeads : leads) : leads;
+    const sourceOcs = allCompanyConfirmations.length > 0 ? allCompanyConfirmations : confirmations;
+    const sourceQuotes = allCompanyQuotations.length > 0 ? allCompanyQuotations : quotations;
+    const ocByLeadId = new Map<string, OrderConfirmation>();
+    sourceOcs.forEach(c => { if (c.leadId) ocByLeadId.set(c.leadId, c); });
+    const quoteByLeadId = new Map<string, Quotation>();
+    sourceQuotes.forEach(q => { if (q.leadId) quoteByLeadId.set(q.leadId, q); });
+
+    return sourceLeads
+      .filter(l => {
+        if (!['confirmed', 'registered', 'installed'].includes(l.status)) return false;
+        const oc = ocByLeadId.get(l.id);
+        const pList = oc ? getPaymentsList(oc) : [];
+        const totalPaid = pList.reduce((s, p) => s + (p.amount || 0), 0);
+        const q = quoteByLeadId.get(l.id);
+        const contractVal = q ? getQuotationTotalAmount(q) : (oc?.subtotal || 0);
+        if (contractVal > 0 && totalPaid >= contractVal) return false;
+        const lastPaymentDate = pList.length > 0 ? pList.reduce((latest, p) => {
+          const d = dayjs(p.paidAt);
+          return d.isAfter(latest) ? d : latest;
+        }, dayjs(pList[0].paidAt)) : null;
+        const refDate = lastPaymentDate || dayjs(oc?.createdAt || l.updatedAt || l.createdAt);
+        return now.diff(refDate, 'day') >= 15;
+      })
+      .map(l => {
+        const oc = ocByLeadId.get(l.id);
+        const pList = oc ? getPaymentsList(oc) : [];
+        const totalPaid = pList.reduce((s, p) => s + (p.amount || 0), 0);
+        const q = quoteByLeadId.get(l.id);
+        const contractVal = q ? getQuotationTotalAmount(q) : (oc?.subtotal || 0);
+        const lastPaymentDate = pList.length > 0 ? pList.reduce((latest, p) => {
+          const d = dayjs(p.paidAt);
+          return d.isAfter(latest) ? d : latest;
+        }, dayjs(pList[0].paidAt)) : dayjs(oc?.createdAt || l.updatedAt || l.createdAt);
+        const daysSince = now.diff(lastPaymentDate, 'day');
+        return { id: l.id, name: l.name, phone: l.phoneNumber, status: l.status, pending: Math.max(0, contractVal - totalPaid), daysSince };
+      })
+      .sort((a, b) => b.daysSince - a.daysSince);
+  })();
+
+  const overduePaymentTotal = paymentOverdueLeads.reduce((s, l) => s + l.pending, 0);
+
+  const attentionItems = [
+    { label: 'Overdue follow-ups', count: overdueFollowUps, color: 'text-red-600', bg: 'bg-red-50', link: '/leads' },
+    { label: 'Leads without a next step', count: leadsWithoutNextStep, color: 'text-orange-600', bg: 'bg-orange-50', link: '/leads' },
+    { label: 'Overdue customer payments (₹)', count: overduePaymentTotal, color: 'text-red-700', bg: 'bg-red-50', isAmount: true },
+    { label: 'Leave requests to approve', count: pendingLeaveCount, color: 'text-blue-600', bg: 'bg-blue-50', link: '/leave-requests' },
+    { label: 'Expense claims to approve', count: pendingExpenseCount, color: 'text-indigo-600', bg: 'bg-indigo-50', link: '/expenses' },
+    { label: 'Products low on stock', count: lowStockProducts.length, color: 'text-rose-600', bg: 'bg-rose-50', link: '/products' },
+  ].filter(i => i.count > 0);
+
   return (
-    <div className="space-y-8 animate-fade-in">
+    <div className="space-y-6 animate-fade-in">
       {/* Page Header */}
-      <div className="flex flex-col space-y-1">
-        <h1 className="text-2xl font-black tracking-tight text-slate-900 md:text-3xl font-sans">Executive Analytics</h1>
-        <p className="text-sm text-slate-500 font-medium">Real-time installation pipeline metrics & revenue insights.</p>
+      <div className="flex items-center justify-between gap-3">
+        <div>
+          <h1 className="text-xl sm:text-2xl font-black tracking-tight text-slate-900">Executive Analytics</h1>
+          <p className="text-xs sm:text-sm text-slate-500 font-medium">Real-time pipeline metrics & revenue insights</p>
+        </div>
+        <div className="text-[10px] font-bold text-slate-400 bg-slate-100 px-3 py-1.5 rounded-xl hidden sm:block">
+          {dayjs().format('DD MMM YYYY')}
+        </div>
       </div>
 
-      {/* Change 3: Pending Complaints widget (Super Admin) */}
-      {isSuperAdmin && (
-        <div className="bg-white border border-slate-200 rounded-3xl p-5 shadow-xs space-y-4">
+      {/* Pending Complaints widget (Super Admin) */}
+      {isSuperAdmin && pendingComplaintsCount > 0 && (
+        <Link to="/complaints?filter=pending" className="block bg-white border border-slate-200 rounded-2xl px-5 py-3.5 shadow-xs hover:shadow-md hover:border-amber-200 transition-all cursor-pointer">
           <div className="flex items-center justify-between gap-3">
             <div className="flex items-center gap-3">
-              <div className="p-2.5 rounded-2xl bg-amber-50 border border-amber-200 text-amber-600 shrink-0">
-                <MessageSquareWarning className="w-5 h-5" />
+              <div className="p-2 rounded-xl bg-amber-50 border border-amber-200 text-amber-600 shrink-0">
+                <MessageSquareWarning className="w-4 h-4" />
               </div>
-              <div>
-                <h3 className="text-base font-black text-slate-900 flex items-center gap-2">
-                  Pending Complaints
-                  <span className="bg-amber-500 text-white text-[11px] font-black px-2 py-0.5 rounded-full">{pendingComplaintsCount}</span>
-                </h3>
-                <p className="text-xs text-slate-500 font-semibold">Complaints not yet resolved</p>
-              </div>
+              <h3 className="text-sm font-black text-slate-900 flex items-center gap-2">
+                Pending Complaints
+                <span className="bg-amber-500 text-white text-[10px] font-black px-2 py-0.5 rounded-full">{pendingComplaintsCount}</span>
+              </h3>
             </div>
-            <Link to="/complaints?filter=pending"
-              className="px-3.5 py-2 bg-slate-800 hover:bg-slate-900 text-white font-bold text-xs rounded-xl flex items-center gap-1.5 shrink-0">
-              View All <ChevronRight className="w-3.5 h-3.5" />
-            </Link>
+            <ChevronRight className="w-4 h-4 text-slate-400" />
           </div>
-
-          {pendingComplaints.length === 0 ? (
-            <div className="text-center py-5 text-xs font-bold text-emerald-600 bg-emerald-50 rounded-2xl border border-emerald-100">
-              🎉 No pending complaints. All caught up!
-            </div>
-          ) : (
-            <div className="divide-y divide-slate-100 border border-slate-100 rounded-2xl overflow-hidden">
-              {pendingComplaints.map(c => {
-                const days = Math.max(0, Math.floor((Date.now() - new Date(c.createdAt).getTime()) / 86400000));
-                return (
-                  <Link key={c.id} to="/complaints?filter=pending"
-                    className="flex items-center justify-between gap-3 px-3.5 py-2.5 hover:bg-slate-50">
-                    <div className="min-w-0">
-                      <div className="font-bold text-slate-800 text-sm truncate">{c.title || c.complaintNumber}</div>
-                      <div className="text-[11px] text-slate-400 font-semibold truncate">
-                        {c.customerName} · {new Date(c.createdAt).toLocaleDateString('en-IN')} · {days}d pending
-                      </div>
-                    </div>
-                    <span className="text-[9px] bg-amber-100 text-amber-700 font-black px-2 py-0.5 rounded uppercase shrink-0 whitespace-nowrap">
-                      {c.status}
-                    </span>
-                  </Link>
-                );
-              })}
-            </div>
-          )}
-        </div>
+        </Link>
       )}
 
       {/* Super Admin Pending Delete & Edit Requests Alert Banner */}
@@ -585,244 +681,257 @@ export const Dashboard: React.FC = () => {
         </div>
       )}
 
-      {/* Financial Metrics & Inventory Valuation Cards */}
-      <div className={`grid grid-cols-1 gap-4 sm:grid-cols-2 ${isSuperAdmin ? 'lg:grid-cols-5' : 'lg:grid-cols-4'}`}>
-        {/* Total Proposals Value - Grey */}
-        <div className="bg-slate-50/70 p-5 rounded-2xl border-l-4 border-slate-400 border-y border-r border-slate-200 shadow-xs flex items-center justify-between hover:shadow-md transition-shadow">
-          <div>
-            <p className="text-xs text-slate-400 font-bold uppercase tracking-wider">Total Proposals Value</p>
-            <h3 className="text-xl font-extrabold text-slate-700 mt-1">₹{totalQuotedValue.toLocaleString('en-IN')}</h3>
-          </div>
-          <div className="bg-slate-200/80 text-slate-600 rounded-xl p-3">
-            <ClipboardList className="w-6 h-6" />
-          </div>
+      {/* Financial Metrics Cards */}
+      <div className={`grid grid-cols-2 gap-3 ${isSuperAdmin ? 'lg:grid-cols-5' : 'lg:grid-cols-4'}`}>
+        <div className="bg-slate-50/70 p-4 rounded-2xl border-l-4 border-slate-400 border-y border-r border-slate-200 shadow-xs hover:shadow-md transition-shadow">
+          <p className="text-[10px] sm:text-xs text-slate-400 font-bold uppercase tracking-wider">Proposals Value</p>
+          <h3 className="text-lg sm:text-xl font-extrabold text-slate-700 mt-1">₹{totalQuotedValue.toLocaleString('en-IN')}</h3>
         </div>
 
-        {/* Booked Order Value - Green */}
-        <div className="bg-emerald-50/40 p-5 rounded-2xl border-l-4 border-emerald-500 border-y border-r border-emerald-100 shadow-xs flex items-center justify-between hover:shadow-md transition-shadow">
-          <div>
-            <p className="text-xs text-emerald-600/80 font-bold uppercase tracking-wider">Booked Order Value</p>
-            <h3 className="text-xl font-extrabold text-emerald-700 mt-1">₹{totalConfirmedValue.toLocaleString('en-IN')}</h3>
-          </div>
-          <div className="bg-emerald-100 text-emerald-700 rounded-xl p-3">
-            <DollarSign className="w-6 h-6" />
-          </div>
+        <div className="bg-emerald-50/40 p-4 rounded-2xl border-l-4 border-emerald-500 border-y border-r border-emerald-100 shadow-xs hover:shadow-md transition-shadow">
+          <p className="text-[10px] sm:text-xs text-emerald-600/80 font-bold uppercase tracking-wider">Booked Value</p>
+          <h3 className="text-lg sm:text-xl font-extrabold text-emerald-700 mt-1">₹{totalConfirmedValue.toLocaleString('en-IN')}</h3>
         </div>
 
-        {/* Advance & Payments Collected - Orange */}
-        <div className="bg-orange-50/40 p-5 rounded-2xl border-l-4 border-orange-500 border-y border-r border-orange-100 shadow-xs flex items-center justify-between hover:shadow-md transition-shadow">
-          <div>
-            <p className="text-xs text-orange-600/80 font-bold uppercase tracking-wider">Total Payments</p>
-            <h3 className="text-xl font-extrabold text-orange-700 mt-1">₹{totalPaymentsCollected.toLocaleString('en-IN')}</h3>
-          </div>
-          <div className="bg-orange-100 text-orange-700 rounded-xl p-3">
-            <TrendingUp className="w-6 h-6" />
-          </div>
+        <div className="bg-orange-50/40 p-4 rounded-2xl border-l-4 border-orange-500 border-y border-r border-orange-100 shadow-xs hover:shadow-md transition-shadow">
+          <p className="text-[10px] sm:text-xs text-orange-600/80 font-bold uppercase tracking-wider">Total Payments</p>
+          <h3 className="text-lg sm:text-xl font-extrabold text-orange-700 mt-1">₹{totalPaymentsCollected.toLocaleString('en-IN')}</h3>
         </div>
 
-        {/* Outstanding Balance - Yellow */}
-        <div className="bg-amber-50/40 p-5 rounded-2xl border-l-4 border-amber-400 border-y border-r border-amber-100 shadow-xs flex items-center justify-between hover:shadow-md transition-shadow">
-          <div>
-            <p className="text-xs text-amber-600/80 font-bold uppercase tracking-wider">Outstanding Balance</p>
-            <h3 className="text-xl font-extrabold text-amber-700 mt-1">₹{outstandingBalance.toLocaleString('en-IN')}</h3>
-          </div>
-          <div className="bg-amber-100 text-amber-700 rounded-xl p-3">
-            <PackageCheck className="w-6 h-6" />
-          </div>
+        <div className="bg-amber-50/40 p-4 rounded-2xl border-l-4 border-amber-400 border-y border-r border-amber-100 shadow-xs hover:shadow-md transition-shadow">
+          <p className="text-[10px] sm:text-xs text-amber-600/80 font-bold uppercase tracking-wider">Outstanding</p>
+          <h3 className="text-lg sm:text-xl font-extrabold text-amber-700 mt-1">₹{outstandingBalance.toLocaleString('en-IN')}</h3>
         </div>
 
-        {/* Grand Total Inventory Value - Purple (Super Admin Exclusive) */}
         {isSuperAdmin && (
-          <div className="bg-purple-50/60 p-5 rounded-2xl border-l-4 border-purple-600 border-y border-r border-purple-200 shadow-xs flex items-center justify-between hover:shadow-md transition-shadow">
-            <div>
-              <p className="text-xs text-purple-700 font-bold uppercase tracking-wider">Total Inventory Value</p>
-              <h3 className="text-xl font-black text-purple-950 mt-1">₹{grandTotalInventoryValue.toLocaleString('en-IN')}</h3>
-              <p className="text-[10px] font-bold text-purple-600 mt-0.5">{totalStockUnitsCount.toLocaleString('en-IN')} Total Units</p>
-            </div>
-            <div className="bg-purple-100 text-purple-700 rounded-xl p-3">
-              <Boxes className="w-6 h-6" />
-            </div>
+          <div className="col-span-2 lg:col-span-1 bg-purple-50/60 p-4 rounded-2xl border-l-4 border-purple-600 border-y border-r border-purple-200 shadow-xs hover:shadow-md transition-shadow">
+            <p className="text-[10px] sm:text-xs text-purple-700 font-bold uppercase tracking-wider">Inventory Value</p>
+            <h3 className="text-lg sm:text-xl font-black text-purple-950 mt-1">₹{grandTotalInventoryValue.toLocaleString('en-IN')}</h3>
+            <p className="text-[10px] font-bold text-purple-600 mt-0.5">{totalStockUnitsCount.toLocaleString('en-IN')} Units</p>
           </div>
         )}
       </div>
 
-      {/* Process Done (Payment Due) Financial Summary Card */}
-      <div className="bg-gradient-to-br from-slate-900 via-purple-950 to-slate-900 text-white p-6 rounded-2xl border border-purple-500/30 shadow-xl space-y-4 relative overflow-hidden">
-        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
-          <div className="flex items-center space-x-3">
-            <div className="p-3 rounded-2xl bg-purple-500/20 border border-purple-500/30 text-purple-300 shrink-0">
-              <AlertCircle className="w-6 h-6 text-purple-300" />
+      {/* Process Done (Payment Due) Summary */}
+      <div className="bg-gradient-to-br from-slate-900 via-purple-950 to-slate-900 text-white p-5 rounded-2xl border border-purple-500/30 shadow-xl space-y-3 relative overflow-hidden">
+        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2">
+          <div className="flex items-center gap-3">
+            <div className="p-2 rounded-xl bg-purple-500/20 border border-purple-500/30 text-purple-300 shrink-0">
+              <AlertCircle className="w-5 h-5" />
             </div>
             <div>
-              <div className="flex items-center gap-2">
-                <span className="text-[10px] font-black text-purple-300 uppercase tracking-widest bg-purple-500/20 px-2.5 py-0.5 rounded-full border border-purple-400/30">
-                  ⚠️ PROCESS DONE (PAYMENT DUE) SUMMARY
-                </span>
-                <span className="text-[10px] font-bold text-purple-200">
-                  ({processDoneStats.count} Lead{processDoneStats.count === 1 ? '' : 's'})
-                </span>
-              </div>
-              <h2 className="text-lg font-black text-white mt-1">Completed Installations Pending Payment Dues</h2>
+              <h2 className="text-sm sm:text-base font-black text-white">Process Done — Payment Due</h2>
+              <p className="text-[10px] text-purple-300">{processDoneStats.count} leads with pending balance</p>
             </div>
           </div>
-
           <Link
             to="/leads?filter=process_done_payment_pending"
             onClick={() => {
               sessionStorage.removeItem('leads_selectedLeadId');
               sessionStorage.setItem('leads_rawFilter', 'process_done_payment_pending');
             }}
-            className="px-4 py-2 bg-purple-600 hover:bg-purple-500 text-white font-extrabold text-xs rounded-xl shadow-md transition-all cursor-pointer flex items-center gap-1.5 shrink-0"
+            className="px-3 py-1.5 bg-purple-600 hover:bg-purple-500 text-white font-extrabold text-xs rounded-xl shadow-md transition-all cursor-pointer flex items-center gap-1.5 shrink-0"
           >
-            <span>View All ({processDoneStats.count}) Leads</span>
-            <ChevronRight className="w-4 h-4" />
+            <span>View All</span>
+            <ChevronRight className="w-3.5 h-3.5" />
           </Link>
         </div>
 
-        {/* 3 Main Financial Totals Summed Together */}
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 pt-2">
-          {/* 1. Total Combined Contract Value */}
-          <div className="bg-white/5 backdrop-blur-md p-4 rounded-xl border border-white/10 space-y-1">
-            <span className="text-[11px] font-bold text-slate-300 uppercase tracking-wider block">
-              Total Contract Value
-            </span>
-            <h3 className="text-2xl font-black text-white">
-              ₹{processDoneStats.totalContract.toLocaleString('en-IN')}
-            </h3>
-            <p className="text-[10px] text-slate-400">
-              {hasFullAccess ? "Sum of contract value for all process done leads" : "Sum of contract value for assigned process done leads"}
-            </p>
+        <div className="grid grid-cols-3 gap-3">
+          <div className="bg-white/5 p-3 rounded-xl border border-white/10">
+            <span className="text-[10px] font-bold text-slate-300 uppercase block">Contract</span>
+            <h3 className="text-lg sm:text-xl font-black text-white mt-0.5">₹{processDoneStats.totalContract.toLocaleString('en-IN')}</h3>
           </div>
-
-          {/* 2. Total Combined Amount Paid */}
-          <div className="bg-emerald-500/10 backdrop-blur-md p-4 rounded-xl border border-emerald-500/20 space-y-1">
-            <span className="text-[11px] font-bold text-emerald-400 uppercase tracking-wider block">
-              Total Amount Paid
-            </span>
-            <h3 className="text-2xl font-black text-emerald-400">
-              ₹{processDoneStats.totalPaid.toLocaleString('en-IN')}
-            </h3>
-            <p className="text-[10px] text-emerald-400/80">
-              {hasFullAccess ? "Sum of payments collected" : "Sum of payments collected for assigned leads"}
-            </p>
+          <div className="bg-emerald-500/10 p-3 rounded-xl border border-emerald-500/20">
+            <span className="text-[10px] font-bold text-emerald-400 uppercase block">Paid</span>
+            <h3 className="text-lg sm:text-xl font-black text-emerald-400 mt-0.5">₹{processDoneStats.totalPaid.toLocaleString('en-IN')}</h3>
           </div>
-
-          {/* 3. Total Combined Remaining Pending Dues */}
-          <div className="bg-amber-500/10 backdrop-blur-md p-4 rounded-xl border border-amber-500/20 space-y-1">
-            <span className="text-[11px] font-bold text-amber-400 uppercase tracking-wider block flex items-center gap-1">
-              <Wallet className="w-3.5 h-3.5 text-amber-400" />
-              <span>Total Remaining Pending Dues</span>
+          <div className="bg-amber-500/10 p-3 rounded-xl border border-amber-500/20">
+            <span className="text-[10px] font-bold text-amber-400 uppercase block flex items-center gap-1">
+              <Wallet className="w-3 h-3" /> Pending
             </span>
-            <h3 className="text-2xl font-black text-amber-400">
-              ₹{processDoneStats.totalRemaining.toLocaleString('en-IN')}
-            </h3>
-            <p className="text-[10px] text-amber-400/80">
-              {hasFullAccess ? "Net collectable pending balance" : "Net collectable pending balance for assigned leads"}
-            </p>
+            <h3 className="text-lg sm:text-xl font-black text-amber-400 mt-0.5">₹{processDoneStats.totalRemaining.toLocaleString('en-IN')}</h3>
           </div>
         </div>
       </div>
 
-      {/* Main Grid: Pipeline Funnel + Performance */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Pipeline Funnel */}
-        <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-xs lg:col-span-2 space-y-6">
-          <div className="flex justify-between items-center border-b border-slate-100 pb-4">
-            <h3 className="font-bold text-slate-800 text-sm uppercase tracking-wider">Solar Installation Funnel</h3>
-            <span className="text-xs text-slate-400 font-bold">{leads.length} Total Leads</span>
+      {/* Needs Attention + Payment Overdue */}
+      {(attentionItems.length > 0 || paymentOverdueLeads.length > 0) && (
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          {/* Needs Attention Card */}
+          {attentionItems.length > 0 && (
+            <div className="bg-white border border-slate-200 rounded-2xl shadow-xs overflow-hidden">
+              <div className="px-5 py-3.5 border-b border-slate-100 flex items-center gap-2">
+                <AlertCircle className="w-4 h-4 text-amber-500" />
+                <h3 className="text-sm font-black text-slate-900">Needs Attention</h3>
+              </div>
+              <div className="divide-y divide-slate-100">
+                {attentionItems.map((item, i) => (
+                  <div key={i} className="px-5 py-3 flex items-center justify-between hover:bg-slate-50/50 transition-colors">
+                    <div className="flex items-center gap-2.5">
+                      <span className="text-amber-500 text-sm">⚠</span>
+                      {item.link ? (
+                        <Link to={item.link} className="text-sm font-semibold text-slate-700 hover:text-emerald-700 transition-colors">
+                          {item.label}
+                        </Link>
+                      ) : (
+                        <span className="text-sm font-semibold text-slate-700">{item.label}</span>
+                      )}
+                    </div>
+                    <span className={`text-sm font-black px-2.5 py-0.5 rounded-lg ${item.bg} ${item.color}`}>
+                      {item.isAmount ? `₹${item.count.toLocaleString('en-IN')}` : item.count}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Payment Overdue Table */}
+          {paymentOverdueLeads.length > 0 && (
+            <div className="bg-white border border-slate-200 rounded-2xl shadow-xs overflow-hidden">
+              <div className="px-5 py-3.5 border-b border-slate-100 flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Clock className="w-4 h-4 text-red-500" />
+                  <h3 className="text-sm font-black text-slate-900">Payment Overdue (15+ days)</h3>
+                  <span className="text-[10px] font-black bg-red-100 text-red-700 px-2 py-0.5 rounded-full">{paymentOverdueLeads.length}</span>
+                </div>
+              </div>
+              <div className="overflow-x-auto max-h-64 overflow-y-auto">
+                <table className="w-full text-xs text-left">
+                  <thead className="sticky top-0 bg-slate-50">
+                    <tr className="text-slate-400 font-bold uppercase text-[10px]">
+                      <th className="px-4 py-2.5">Lead Name</th>
+                      <th className="px-4 py-2.5 text-center">Stage</th>
+                      <th className="px-4 py-2.5 text-right">Pending (₹)</th>
+                      <th className="px-4 py-2.5 text-right">Days Since</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-50">
+                    {paymentOverdueLeads.slice(0, 15).map(l => (
+                      <tr key={l.id} className="hover:bg-red-50/30 transition-colors">
+                        <td className="px-4 py-2">
+                          <Link to={`/leads`} onClick={() => sessionStorage.setItem('leads_selectedLeadId', l.id)} className="font-bold text-slate-800 hover:text-emerald-700">{l.name}</Link>
+                          {l.phone && <p className="text-[10px] text-slate-400">{l.phone}</p>}
+                        </td>
+                        <td className="px-4 py-2 text-center">
+                          <span className={`text-[9px] font-black uppercase px-2 py-0.5 rounded-full ${
+                            l.status === 'confirmed' ? 'bg-emerald-100 text-emerald-700' :
+                            l.status === 'registered' ? 'bg-blue-100 text-blue-700' :
+                            'bg-purple-100 text-purple-700'
+                          }`}>{l.status}</span>
+                        </td>
+                        <td className="px-4 py-2 text-right font-black text-red-600">₹{l.pending.toLocaleString('en-IN')}</td>
+                        <td className="px-4 py-2 text-right">
+                          <span className={`font-black ${l.daysSince >= 30 ? 'text-red-600' : 'text-amber-600'}`}>{l.daysSince}d</span>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              {paymentOverdueLeads.length > 15 && (
+                <div className="px-5 py-2 border-t border-slate-100 text-center">
+                  <span className="text-[11px] font-bold text-slate-400">+ {paymentOverdueLeads.length - 15} more overdue leads</span>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Lead Pipeline Funnel (compact, exact CRM numbers) */}
+      <div className="bg-white border border-slate-200 rounded-2xl p-4 shadow-xs">
+        <div className="flex items-center justify-between gap-3 mb-3">
+          <div className="flex items-center gap-2">
+            <div className="p-1.5 rounded-lg bg-emerald-50 border border-emerald-100 text-emerald-600 shrink-0">
+              <Filter className="w-3.5 h-3.5" />
+            </div>
+            <div>
+              <h3 className="text-[13px] font-black text-slate-900 leading-tight">Lead Pipeline Funnel</h3>
+              <p className="text-[10px] text-slate-500 font-semibold">Leads that reached each stage</p>
+            </div>
           </div>
-
-          <div className="space-y-4">
-            {/* New Leads - Grey */}
-            <div>
-              <div className="flex justify-between text-xs font-bold text-slate-600 mb-1">
-                <span>1. New Leads Entry</span>
-                <span>{pipelineStats.new}</span>
+          <span className="text-[11px] font-bold text-slate-400 shrink-0">{funnelTotal} Total</span>
+        </div>
+        <div className="space-y-1.5">
+          {funnelStages.map((s, i) => (
+            <div key={i} className="flex items-center gap-2.5">
+              <span className="w-28 sm:w-32 text-[11px] font-bold text-slate-600 truncate shrink-0">{s.label}</span>
+              <div className="flex-1 bg-slate-100 h-4 rounded-md overflow-hidden">
+                <div
+                  className="bg-gradient-to-r from-emerald-500 to-emerald-600 h-full rounded-md transition-all"
+                  style={{ width: `${Math.max(s.count > 0 ? 5 : 0, (s.count / funnelMax) * 100)}%` }}
+                ></div>
               </div>
-              <div className="w-full bg-slate-100 h-2.5 rounded-full overflow-hidden">
-                <div className="bg-slate-400 h-full rounded-full" style={{ width: `${leads.length ? (pipelineStats.new / leads.length) * 100 : 0}%` }}></div>
-              </div>
+              <span className="w-8 text-right text-[13px] font-black text-slate-800 shrink-0">{s.count}</span>
             </div>
+          ))}
+        </div>
+      </div>
 
-            {/* Quotation Sent - Yellow */}
-            <div>
-              <div className="flex justify-between text-xs font-bold text-slate-600 mb-1">
-                <span>2. Proposal Sent</span>
-                <span>{pipelineStats.quotation}</span>
-              </div>
-              <div className="w-full bg-slate-100 h-2.5 rounded-full overflow-hidden">
-                <div className="bg-amber-400 h-full rounded-full" style={{ width: `${leads.length ? (pipelineStats.quotation / leads.length) * 100 : 0}%` }}></div>
-              </div>
-            </div>
-
-            {/* Confirmed Orders - Orange */}
-            <div>
-              <div className="flex justify-between text-xs font-bold text-slate-600 mb-1">
-                <span>3. Booking Confirmed</span>
-                <span>{pipelineStats.confirmed}</span>
-              </div>
-              <div className="w-full bg-slate-100 h-2.5 rounded-full overflow-hidden">
-                <div className="bg-orange-500 h-full rounded-full" style={{ width: `${leads.length ? (pipelineStats.confirmed / leads.length) * 100 : 0}%` }}></div>
-              </div>
-            </div>
-
-            {/* Registered Checklists - Grey Yellow */}
-            <div>
-              <div className="flex justify-between text-xs font-bold text-slate-600 mb-1">
-                <span>4. Registered & Bank Ready</span>
-                <span>{pipelineStats.registered}</span>
-              </div>
-              <div className="w-full bg-slate-100 h-2.5 rounded-full overflow-hidden">
-                <div className="bg-yellow-500 h-full rounded-full" style={{ width: `${leads.length ? (pipelineStats.registered / leads.length) * 100 : 0}%` }}></div>
-              </div>
-            </div>
-
-            {/* Installed - Green */}
-            <div>
-              <div className="flex justify-between text-xs font-bold text-slate-600 mb-1">
-                <span>5. Solar Array Installed</span>
-                <span>{pipelineStats.installed}</span>
-              </div>
-              <div className="w-full bg-slate-100 h-2.5 rounded-full overflow-hidden">
-                <div className="bg-emerald-500 h-full rounded-full" style={{ width: `${leads.length ? (pipelineStats.installed / leads.length) * 100 : 0}%` }}></div>
-              </div>
-            </div>
-
-            {/* Closed - Dark Green */}
-            <div>
-              <div className="flex justify-between text-xs font-bold text-slate-600 mb-1">
-                <span>6. Release Complete (Closed)</span>
-                <span>{pipelineStats.closed}</span>
-              </div>
-              <div className="w-full bg-slate-100 h-2.5 rounded-full overflow-hidden">
-                <div className="bg-emerald-700 h-full rounded-full" style={{ width: `${leads.length ? (pipelineStats.closed / leads.length) * 100 : 0}%` }}></div>
-              </div>
-            </div>
+      {/* Main Grid: Sales Leaderboard + Field Operations */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+        <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs lg:col-span-2">
+          <div className="flex items-center justify-between mb-3 border-b border-slate-100 pb-3">
+            <h3 className="font-bold text-slate-800 text-xs sm:text-sm uppercase tracking-wider flex items-center gap-2">
+              <Users className="w-4 h-4 text-emerald-600" />
+              Sales Leaderboard
+            </h3>
+            <Link to="/leads" className="text-[11px] font-bold text-emerald-700 hover:text-emerald-900 flex items-center gap-1">
+              View Leads <ChevronRight className="w-3 h-3" />
+            </Link>
+          </div>
+          <div className="overflow-x-auto max-h-72 overflow-y-auto">
+            <table className="w-full text-xs text-left">
+              <thead className="sticky top-0 bg-white">
+                <tr className="text-slate-400 font-bold uppercase text-[10px] border-b border-slate-100">
+                  <th className="pb-2">Employee</th>
+                  <th className="pb-2 text-center">Assigned</th>
+                  <th className="pb-2 text-center">Converted</th>
+                  <th className="pb-2 text-right">Rate</th>
+                </tr>
+              </thead>
+              <tbody>
+                {salesLeaderboard.map(r => {
+                  const rateCls = r.rate >= 60 ? 'text-emerald-700' : r.rate >= 30 ? 'text-amber-600' : 'text-slate-500';
+                  return (
+                    <tr key={r.id} className="border-b border-slate-50 last:border-0 hover:bg-slate-50/50 transition-colors">
+                      <td className="py-2 font-bold text-slate-800">{r.name}</td>
+                      <td className="py-2 text-center font-semibold text-slate-600">{r.assigned}</td>
+                      <td className="py-2 text-center font-extrabold text-emerald-700">{r.converted}</td>
+                      <td className={`py-2 text-right font-black ${rateCls}`}>{r.rate}%</td>
+                    </tr>
+                  );
+                })}
+                {salesLeaderboard.length === 0 && (
+                  <tr><td colSpan={4} className="py-6 text-center text-slate-400 font-medium">No leads assigned yet.</td></tr>
+                )}
+              </tbody>
+            </table>
           </div>
         </div>
 
-        {/* Quick Performance Card */}
-        <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-xs flex flex-col justify-between">
-          <div className="space-y-4">
-            <h3 className="font-bold text-slate-800 text-sm uppercase tracking-wider border-b border-slate-100 pb-4">
+        <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs flex flex-col justify-between">
+          <div className="space-y-3">
+            <h3 className="font-bold text-slate-800 text-xs sm:text-sm uppercase tracking-wider border-b border-slate-100 pb-3">
               Field Operations
             </h3>
-            <div className="grid grid-cols-2 gap-4">
-              <div className="bg-slate-50 p-4 rounded-xl text-center">
-                <p className="text-[10px] text-slate-400 font-bold uppercase">Visits Logged</p>
-                <h4 className="text-2xl font-extrabold text-slate-800 mt-1">{visitsCount}</h4>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="bg-slate-50 p-3 rounded-xl text-center">
+                <p className="text-[10px] text-slate-400 font-bold uppercase">Visits</p>
+                <h4 className="text-xl font-extrabold text-slate-800 mt-1">{visitsCount}</h4>
               </div>
-              <div className="bg-slate-50 p-4 rounded-xl text-center">
-                <p className="text-[10px] text-slate-400 font-bold uppercase">Lost / Dropped</p>
-                <h4 className="text-2xl font-extrabold text-rose-600 mt-1">{pipelineStats.lost}</h4>
+              <div className="bg-slate-50 p-3 rounded-xl text-center">
+                <p className="text-[10px] text-slate-400 font-bold uppercase">Lost</p>
+                <h4 className="text-xl font-extrabold text-rose-600 mt-1">{pipelineStats.lost}</h4>
               </div>
             </div>
           </div>
-
-          <div className="mt-6 pt-4 border-t border-slate-100 text-center">
-            <div className="inline-flex items-center space-x-2 text-xs text-emerald-600 bg-emerald-50 px-3.5 py-1.5 rounded-full font-bold">
-              <Award className="w-4 h-4" />
-              <span>Offline Pipeline Synchronized</span>
+          <div className="mt-4 pt-3 border-t border-slate-100 text-center">
+            <div className="inline-flex items-center space-x-1.5 text-xs text-emerald-600 bg-emerald-50 px-3 py-1.5 rounded-full font-bold">
+              <Award className="w-3.5 h-3.5" />
+              <span>Pipeline Synced</span>
             </div>
           </div>
         </div>

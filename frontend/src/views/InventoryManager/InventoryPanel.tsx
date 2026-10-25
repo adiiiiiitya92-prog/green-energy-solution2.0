@@ -1,10 +1,25 @@
 import React, { useState } from 'react';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { Products } from '../Admin/Products';
 import { Challans } from '../Admin/Challans';
+import { DispatchRequestsBoard } from './DispatchRequestsBoard';
 import { Package, Truck, ShieldCheck } from 'lucide-react';
 
 export const InventoryPanel: React.FC = () => {
-  const [activeTab, setActiveTab] = useState<'inventory' | 'challans'>('inventory');
+  const [activeTab, setActiveTabRaw] = useState<'inventory' | 'challans'>('inventory');
+  const navigate = useNavigate();
+  const location = useLocation();
+
+  // Challans reads location.state.prefillLeadId on mount; clear it on manual tab switches so the modal doesn't reopen.
+  const setActiveTab = (tab: 'inventory' | 'challans') => {
+    if (location.state) navigate(location.pathname + location.search, { replace: true, state: null });
+    setActiveTabRaw(tab);
+  };
+
+  const openChallanForLead = (leadId: string) => {
+    navigate(location.pathname, { replace: true, state: { prefillLeadId: leadId } });
+    setActiveTabRaw('challans');
+  };
 
   return (
     <div className="space-y-6 animate-fade-in">
@@ -55,6 +70,8 @@ export const InventoryPanel: React.FC = () => {
           </div>
         </div>
       </div>
+
+      <DispatchRequestsBoard onCreateChallan={openChallanForLead} />
 
       {/* Tab Navigation Navigation Pills (Mobile / Secondary) */}
       <div className="flex border-b border-slate-200 gap-6 text-xs font-black">

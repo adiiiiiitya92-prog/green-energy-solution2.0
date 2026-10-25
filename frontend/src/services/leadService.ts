@@ -20,6 +20,7 @@ export const filterLeadsForUser = (
   const isSuperAdmin = roleStr === 'super_admin';
   const isOperationsAdmin =
     roleStr === 'operations_admin' ||
+    roleStr === 'manager' ||
     desigStr.includes('operations admin') ||
     desigStr.includes('ops admin');
 

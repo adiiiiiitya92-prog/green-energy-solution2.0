@@ -19,6 +19,14 @@ import {
   conditionalStatusUpdate,
   incrementFields
 } from './mongoService.js';
+import {
+  ensureVapid,
+  saveSubscription,
+  removeSubscription,
+  notifyUsers,
+  PUSH_WATCHED,
+  handlePushTriggers
+} from './pushService.js';
 
 dotenv.config();
 
@@ -102,7 +110,15 @@ function validateCollection(colName) {
     err.statusCode = 400;
     throw err;
   }
+  if (PRIVATE_COLLECTIONS.has(colName)) {
+    const err = new Error(`Collection ${colName} is not accessible`);
+    err.statusCode = 403;
+    throw err;
+  }
 }
+
+// Holds the VAPID private key and device push endpoints; only the /api/push routes may touch these.
+const PRIVATE_COLLECTIONS = new Set(['appConfig', 'pushSubscriptions']);
 
 // ==============================================================
 // REAL-TIME SERVER-SENT EVENTS (SSE) FOR INSTANT CROSS-DEVICE SYNC
@@ -191,6 +207,60 @@ app.get('/api/realtime/stream', (req, res) => {
 });
 
 // ==============================================================
+// WEB PUSH NOTIFICATIONS (VAPID)
+// ==============================================================
+async function saveWithPush(collection, id, data) {
+  const prev = PUSH_WATCHED.has(collection) ? await getDocumentById(collection, id).catch(() => null) : null;
+  const saved = await upsertDocument(collection, id, data);
+  if (PUSH_WATCHED.has(collection)) {
+    handlePushTriggers(collection, prev, { ...(prev || {}), ...saved })
+      .catch(err => console.warn(`[Push] trigger failed for ${collection}/${id}:`, err?.message));
+  }
+  return saved;
+}
+
+app.get('/api/push/public-key', async (req, res) => {
+  try {
+    const { publicKey } = await ensureVapid();
+    res.json({ publicKey });
+  } catch (err) {
+    handleApiError(res, 'Failed to load push public key', err);
+  }
+});
+
+app.post('/api/push/subscribe', async (req, res) => {
+  try {
+    const id = await saveSubscription(req.body || {});
+    res.json({ success: true, id });
+  } catch (err) {
+    handleApiError(res, 'Failed to save push subscription', err);
+  }
+});
+
+app.post('/api/push/unsubscribe', async (req, res) => {
+  try {
+    await removeSubscription(req.body?.endpoint);
+    res.json({ success: true });
+  } catch (err) {
+    handleApiError(res, 'Failed to remove push subscription', err);
+  }
+});
+
+app.post('/api/push/test', async (req, res) => {
+  try {
+    const result = await notifyUsers([req.body?.userId], {
+      title: '✅ Notifications are working',
+      body: 'You will now get alerts on this device.',
+      url: '/',
+      tag: 'push-test'
+    });
+    res.json({ success: true, ...result });
+  } catch (err) {
+    handleApiError(res, 'Failed to send test push', err);
+  }
+});
+
+// ==============================================================
 // UNIVERSAL DATABASE CRUD (COMPATIBLE WITH FIRESTORE ENDPOINTS)
 // ==============================================================
 app.get(['/api/firestore/:collection', '/api/db/:collection'], async (req, res) => {
@@ -258,7 +328,7 @@ app.put(['/api/firestore/:collection/:id', '/api/db/:collection/:id'], async (re
   try {
     const { collection, id } = req.params;
     validateCollection(collection);
-    const saved = await upsertDocument(collection, id, req.body);
+    const saved = await saveWithPush(collection, id, req.body);
     broadcastRealtimeChange(collection, id, 'upsert', saved);
     res.json({ success: true, id, data: saved });
   } catch (err) {
@@ -271,7 +341,7 @@ app.post(['/api/firestore/:collection', '/api/db/:collection'], async (req, res)
     const { collection } = req.params;
     validateCollection(collection);
     const id = req.body.id || req.body._id || `${collection}_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`;
-    const saved = await upsertDocument(collection, id, { ...req.body, id });
+    const saved = await saveWithPush(collection, id, { ...req.body, id });
     broadcastRealtimeChange(collection, id, 'upsert', saved);
     res.status(201).json(saved);
   } catch (err) {
@@ -424,7 +494,7 @@ app.post('/api/leads', async (req, res) => {
     const id = req.body.id || `lead_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`;
     const now = new Date().toISOString();
     const newLead = { ...req.body, id, createdAt: req.body.createdAt || now, updatedAt: now };
-    await upsertDocument('leads', id, newLead);
+    await saveWithPush('leads', id, newLead);
     broadcastRealtimeChange('leads', id, 'upsert', newLead);
     res.status(201).json(newLead);
   } catch (err) {
@@ -437,7 +507,7 @@ app.put('/api/leads/:id', async (req, res) => {
     const { id } = req.params;
     const updatedAt = new Date().toISOString();
     const updatedData = { ...req.body, updatedAt };
-    const saved = await upsertDocument('leads', id, updatedData);
+    const saved = await saveWithPush('leads', id, updatedData);
     broadcastRealtimeChange('leads', id, 'upsert', saved);
     res.json(saved);
   } catch (err) {
@@ -745,7 +815,7 @@ app.post(['/api/leaves', '/api/leave-requests'], async (req, res) => {
       updatedAt: now
     };
 
-    const saved = await upsertDocument('leaveRequests', id, newLeave);
+    const saved = await saveWithPush('leaveRequests', id, newLeave);
     broadcastRealtimeChange('leaveRequests', id, 'upsert', saved);
     res.status(201).json(saved);
   } catch (err) {
@@ -762,7 +832,7 @@ app.put(['/api/leaves/:id', '/api/leave-requests/:id'], async (req, res) => {
       id,
       updatedAt: now
     };
-    const saved = await upsertDocument('leaveRequests', id, updateData);
+    const saved = await saveWithPush('leaveRequests', id, updateData);
     broadcastRealtimeChange('leaveRequests', id, 'upsert', saved);
     res.json(saved);
   } catch (err) {
@@ -854,7 +924,7 @@ app.post('/api/expenses', async (req, res) => {
       updatedAt: now
     };
 
-    const saved = await upsertDocument('expenses', id, newExpense);
+    const saved = await saveWithPush('expenses', id, newExpense);
     broadcastRealtimeChange('expenses', id, 'upsert', saved);
     res.status(201).json(saved);
   } catch (err) {
@@ -874,7 +944,7 @@ app.put('/api/expenses/:id', async (req, res) => {
     if (updateData.amount !== undefined) {
       updateData.amount = Number(updateData.amount) || 0;
     }
-    const saved = await upsertDocument('expenses', id, updateData);
+    const saved = await saveWithPush('expenses', id, updateData);
     broadcastRealtimeChange('expenses', id, 'upsert', saved);
     res.json(saved);
   } catch (err) {

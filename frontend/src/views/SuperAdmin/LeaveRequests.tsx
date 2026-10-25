@@ -345,6 +345,7 @@ export const LeaveRequests: React.FC = () => {
             <option value="all">All Roles</option>
             <option value="admin">Admins</option>
             <option value="field_employee">Field Employees</option>
+            <option value="sales_person">Sales Employees</option>
             <option value="inventory_manager">Inventory Managers</option>
             <option value="dealer">Dealers</option>
           </select>

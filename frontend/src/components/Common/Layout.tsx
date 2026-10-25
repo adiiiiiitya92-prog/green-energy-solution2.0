@@ -3,6 +3,7 @@ import { useAuthStore } from '../../store/authStore';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import logoImg from '../../assets/Green-Energy-Solution.png';
 import { PWAInstallPrompt } from './PWAInstallPrompt';
+import { NotificationToggle } from './NotificationToggle';
 
 const DeletionApprovalsModal = React.lazy(() => import('./DeletionApprovalsModal').then(m => ({ default: m.DeletionApprovalsModal })));
 const AiSupportBot = React.lazy(() => import('./AiSupportBot').then(m => ({ default: m.AiSupportBot })));
@@ -30,7 +31,9 @@ import {
   Sparkles,
   Wrench,
   Target,
-  ClipboardList
+  ClipboardList,
+  PhoneCall,
+  Landmark
 } from 'lucide-react';
 
 interface LayoutProps {
@@ -83,6 +86,15 @@ export const Layout: React.FC<LayoutProps> = ({ children }) => {
       return updated;
     });
   }, [location.pathname]);
+
+  useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    if (params.get('approvals') === '1' && currentRole === 'super_admin') {
+      setShowDeleteModal(true);
+      params.delete('approvals');
+      navigate({ pathname: location.pathname, search: params.toString() ? `?${params}` : '' }, { replace: true });
+    }
+  }, [location.search, currentRole]);
 
   const loadPendingCount = async () => {
     if (currentRole === 'super_admin' || currentRole === 'manager') {
@@ -158,13 +170,25 @@ export const Layout: React.FC<LayoutProps> = ({ children }) => {
     {
       name: 'Lead Pipeline',
       path: '/leads',
-      roles: ['super_admin', 'admin', 'field_employee', 'dealer'],
+      roles: ['super_admin', 'manager', 'admin', 'field_employee', 'dealer'],
       icon: Compass
+    },
+    {
+      name: 'Telecaller Panel',
+      path: '/telecaller',
+      roles: ['telecaller'],
+      icon: PhoneCall
+    },
+    {
+      name: 'Liaisoning Panel',
+      path: '/liaisoning',
+      roles: ['liaisoning', 'manager'],
+      icon: Landmark
     },
     {
       name: 'Raw Leads List',
       path: '/raw-leads',
-      roles: ['super_admin'],
+      roles: ['super_admin', 'manager', 'telecaller'],
       icon: ClipboardList
     },
     {
@@ -267,7 +291,7 @@ export const Layout: React.FC<LayoutProps> = ({ children }) => {
           name: 'KRA Management',
           path: '/kra',
           icon: Target,
-          roles: ['super_admin']
+          roles: ['super_admin', 'manager']
         }
       ]
     },
@@ -293,13 +317,13 @@ export const Layout: React.FC<LayoutProps> = ({ children }) => {
     {
       name: 'Leave Application',
       path: '/leave-application',
-      roles: ['admin', 'field_employee', 'inventory_manager', 'dealer'],
+      roles: ['admin', 'field_employee', 'inventory_manager', 'dealer', 'liaisoning'],
       icon: CalendarCheck
     },
     {
       name: 'Expense Tracker',
       path: '/expense-tracker',
-      roles: ['admin', 'field_employee', 'inventory_manager', 'dealer'],
+      roles: ['admin', 'field_employee', 'inventory_manager', 'dealer', 'liaisoning'],
       icon: Receipt
     },
     {
@@ -311,7 +335,7 @@ export const Layout: React.FC<LayoutProps> = ({ children }) => {
     {
       name: 'Setu AI Assistant',
       action: 'toggle-setu-ai',
-      roles: ['super_admin', 'admin', 'field_employee', 'inventory_manager', 'dealer'],
+      roles: ['super_admin', 'manager', 'admin', 'field_employee', 'inventory_manager', 'dealer'],
       icon: Bot,
       isAi: true
     },
@@ -417,6 +441,8 @@ export const Layout: React.FC<LayoutProps> = ({ children }) => {
               )}
             </button>
           )}
+
+          <NotificationToggle />
 
           {/* Setu AI Header Quick Trigger */}
           <button

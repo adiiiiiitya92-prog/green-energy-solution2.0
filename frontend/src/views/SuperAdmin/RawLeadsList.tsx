@@ -39,9 +39,19 @@ export const RawLeadsList: React.FC = () => {
 
   useEffect(() => {
     loadData();
-    const handler = () => loadData();
+    let timer: any = null;
+    const handler = (e: Event) => {
+      const detail = (e as CustomEvent).detail || {};
+      const col = detail.collectionName;
+      if (!detail.source && col !== 'leads' && col !== 'profiles' && col !== 'scheduledFieldVisits') return;
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(loadData, 1500);
+    };
     window.addEventListener('app-realtime-update', handler);
-    return () => window.removeEventListener('app-realtime-update', handler);
+    return () => {
+      if (timer) clearTimeout(timer);
+      window.removeEventListener('app-realtime-update', handler);
+    };
   }, []);
 
   const rawLeads = useMemo(() => leads.filter(l => l.status === 'new'), [leads]);

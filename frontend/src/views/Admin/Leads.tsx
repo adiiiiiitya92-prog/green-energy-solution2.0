@@ -36,12 +36,13 @@ const LazyDocLoader: React.FC = () => (
 );
 import { getCachedPdfBlob, ensurePdfBlobForQuotation } from '../../services/pdfCacheService';
 import { FollowUpReminders } from '../../components/Common/FollowUpReminders';
+import { DispatchNotifyCard } from '../../components/Common/DispatchNotifyCard';
 import {
   Search, Plus, Camera, CheckSquare, UploadCloud,
   ChevronLeft, Trash2, Send, Star, FileCheck, CheckCircle, Compass, X, Eye, Download,
   CreditCard, Wallet, Edit3, MessageSquare, Bell, Flame, FileText,
   BarChart3, FileSpreadsheet, Printer, Calendar, RotateCcw, Sparkles, Truck, AlertCircle,
-  Layers, Sun, Zap, Landmark, MapPin, Loader2, Lock, ExternalLink
+  Layers, Sun, Zap, Landmark, MapPin, Loader2, Lock, ExternalLink, Package
 } from 'lucide-react';
 import dayjs from 'dayjs';
 
@@ -529,6 +530,7 @@ export const Leads: React.FC = () => {
     employeeFilter,
     hotFilter,
     loanFilter,
+    loanPaymentFilter,
     dispatchFilter,
     rawFilter,
     balanceFilter,
@@ -802,6 +804,7 @@ export const Leads: React.FC = () => {
     employeeFilter,
     hotFilter,
     loanFilter,
+    loanPaymentFilter,
     dispatchFilter,
     rawFilter,
     balanceFilter,
@@ -2450,6 +2453,36 @@ export const Leads: React.FC = () => {
     setRegChecklist(reg || null);
   };
 
+  const [meterUploading, setMeterUploading] = useState(false);
+
+  const handleMeterUpload = async (files: FileList) => {
+    if (!selectedLead) return;
+    const leadId = selectedLead.id;
+    setMeterUploading(true);
+    let failed = 0;
+    try {
+      for (const file of Array.from(files)) {
+        if (!file.type.startsWith('image/')) { failed++; continue; }
+        try {
+          const updated = await orderService.uploadMeterPhoto(leadId, file, currentUser?.fullName || currentUser?.id || 'admin');
+          setRegChecklist(updated);
+        } catch (err) {
+          console.error('Meter photo upload error:', err);
+          failed++;
+        }
+      }
+      if (failed) alert(`⚠️ ${failed} meter photo(s) could not be uploaded to Backblaze. Please try again.`);
+    } finally {
+      setMeterUploading(false);
+    }
+  };
+
+  const handleMeterDelete = async (photoId: string) => {
+    if (!selectedLead || !confirm('Delete this meter photo?')) return;
+    const updated = await orderService.deleteMeterPhoto(selectedLead.id, photoId);
+    setRegChecklist(updated);
+  };
+
   const handleBankFileUpload = async (file: File) => {
     if (!selectedLead || !regChecklist) return;
 
@@ -2819,7 +2852,7 @@ export const Leads: React.FC = () => {
             )}
 
             {/* Confirm booking receipt */}
-            {['super_admin', 'admin', 'field_employee', 'dealer'].includes(currentRole) && (
+            {['super_admin', 'manager', 'admin', 'field_employee', 'dealer'].includes(currentRole) && (
               <button
                 onClick={() => switchTab('order')}
                 className={`py-3 px-4 border-b-2 cursor-pointer transition-all whitespace-nowrap flex items-center gap-1.5 ${
@@ -3158,6 +3191,10 @@ export const Leads: React.FC = () => {
                             )}
                           </div>
                         </div>
+
+                        {selectedLead && (currentRole === 'super_admin' || currentRole === 'admin' || currentRole === 'manager') && (
+                          <DispatchNotifyCard lead={selectedLead} totalPaid={totalPaid} orderTotal={orderSubtotal} />
+                        )}
 
                         {/* Payments Breakdown History List */}
                         <div className="space-y-3">
@@ -4006,7 +4043,7 @@ export const Leads: React.FC = () => {
                 </div>
 
                 {/* Capture photo input form */}
-                {['super_admin', 'admin', 'field_employee'].includes(currentRole) && (
+                {['super_admin', 'manager', 'admin', 'field_employee'].includes(currentRole) && (
                   <div className="bg-slate-50 border border-slate-200 rounded-xl p-5 space-y-4 max-w-lg">
                     <div className="grid grid-cols-2 gap-4">
                       <div>
@@ -4474,6 +4511,59 @@ export const Leads: React.FC = () => {
                   )}
                 </div>
 
+                {/* Meter photos */}
+                <div className="bg-white border border-slate-200 rounded-2xl p-5 space-y-4 shadow-xs">
+                  <div className="border-b border-slate-100 pb-3 flex justify-between items-start gap-2">
+                    <div>
+                      <h3 className="text-sm font-bold text-slate-800 uppercase tracking-wider">Meter Photos</h3>
+                      <p className="text-[10px] text-slate-400 font-medium mt-0.5">Net / solar meter images (saved to Backblaze).</p>
+                    </div>
+                    <span className="px-2 py-0.5 rounded-full bg-slate-100 text-slate-700 text-[10px] font-black shrink-0">
+                      {regChecklist?.meterPhotos?.length || 0}
+                    </span>
+                  </div>
+                  {(regChecklist?.meterPhotos?.length || 0) > 0 && (
+                    <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">
+                      {regChecklist!.meterPhotos!.map(p => (
+                        <div key={p.id} className="relative rounded-xl overflow-hidden border border-slate-200 bg-slate-50 aspect-square">
+                          <img
+                            src={getQuickB2Url(p.url)}
+                            alt="Meter"
+                            loading="lazy"
+                            onClick={async () => setPreviewDoc({ name: 'Meter Photo', url: await getFreshB2SignedUrl(p.url), type: 'image/webp' })}
+                            className="w-full h-full object-cover cursor-pointer"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => handleMeterDelete(p.id)}
+                            className="absolute top-1 right-1 p-1 rounded-md bg-white/90 text-rose-600 shadow cursor-pointer"
+                            title="Delete"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                          <span className="absolute bottom-0 inset-x-0 bg-black/50 text-white text-[9px] font-bold px-1.5 py-0.5 truncate">
+                            {dayjs(p.uploadedAt).format('DD MMM, hh:mm A')}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  <div className="relative overflow-hidden">
+                    <input
+                      type="file"
+                      accept="image/*"
+                      multiple
+                      disabled={meterUploading}
+                      onChange={(e) => { if (e.target.files?.length) handleMeterUpload(e.target.files); e.target.value = ''; }}
+                      className="absolute inset-0 opacity-0 cursor-pointer w-full z-10"
+                    />
+                    <div className="w-full py-2.5 px-3 bg-sky-600 hover:bg-sky-700 text-white rounded-xl text-xs font-bold text-center flex items-center justify-center gap-1.5">
+                      {meterUploading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Camera className="w-4 h-4" />}
+                      {meterUploading ? 'Uploading to Backblaze...' : 'Upload Meter Photo'}
+                    </div>
+                  </div>
+                </div>
+
                 {/* Release Dept documents */}
                 <div className="bg-white border border-slate-200 rounded-2xl p-5 space-y-4 shadow-xs">
                   <div className="border-b border-slate-100 pb-3 flex justify-between items-start gap-2">
@@ -4688,7 +4778,7 @@ export const Leads: React.FC = () => {
                   <span>🔔 Follow-up Reminders</span>
                 </button>
 
-                {currentRole !== 'field_employee' && (
+                {currentRole !== 'field_employee' && currentRole !== 'manager' && (
                   <button
                     type="button"
                     onClick={() => {
@@ -4707,7 +4797,7 @@ export const Leads: React.FC = () => {
                 )}
               </div>
 
-              {['super_admin', 'admin', 'field_employee', 'dealer'].includes(currentRole) && (
+              {['super_admin', 'manager', 'admin', 'field_employee', 'dealer'].includes(currentRole) && (
                 <button
                   onClick={() => setShowCreateModal(true)}
                   className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white font-bold text-xs rounded-xl shadow-md flex items-center gap-2 cursor-pointer transition-all"
@@ -6411,7 +6501,7 @@ export const Leads: React.FC = () => {
                   {filteredLeads.length === 0 && (
                     <div className="col-span-1 md:col-span-2 py-16 text-center text-slate-400 bg-white rounded-2xl border border-slate-200 space-y-3">
                       <p className="italic">No lead records found matching the current search, stage, and remaining balance filters.</p>
-                      {['super_admin', 'admin', 'field_employee', 'dealer'].includes(currentRole) && (
+                      {['super_admin', 'manager', 'admin', 'field_employee', 'dealer'].includes(currentRole) && (
                         <div>
                           <button
                             type="button"

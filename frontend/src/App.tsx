@@ -134,6 +134,8 @@ const KRAManagement = lazyWithRetry(() => import('./views/SuperAdmin/KRAManageme
 const RawLeadsList = lazyWithRetry(() => import('./views/SuperAdmin/RawLeadsList').then(m => ({ default: m.RawLeadsList })));
 const MyKRA = lazyWithRetry(() => import('./views/FieldEmployee/MyKRA').then(m => ({ default: m.MyKRA })));
 const MyFieldVisits = lazyWithRetry(() => import('./views/FieldEmployee/MyFieldVisits').then(m => ({ default: m.MyFieldVisits })));
+const TelecallerPanel = lazyWithRetry(() => import('./views/Telecaller/TelecallerPanel').then(m => ({ default: m.TelecallerPanel })));
+const LiaisoningPanel = lazyWithRetry(() => import('./views/Liaisoning/LiaisoningPanel').then(m => ({ default: m.LiaisoningPanel })));
 
 const PageLoader: React.FC = () => (
   <div className="min-h-[50vh] flex flex-col justify-center items-center py-16 text-slate-400">
@@ -220,6 +222,8 @@ export const App: React.FC = () => {
   const isDealer = currentRole === 'dealer';
   const isManager = currentRole === 'manager';
   const isInstallationSupervisor = currentRole === 'installation_supervisor';
+  const isTelecaller = currentRole === 'telecaller';
+  const isLiaisoning = currentRole === 'liaisoning';
 
   return (
     <BrowserRouter>
@@ -266,13 +270,27 @@ export const App: React.FC = () => {
                   <Route path="/my-field-visits" element={<MyFieldVisits />} />
                   <Route path="*" element={<Navigate to="/installation" replace />} />
                 </>
+              ) : isTelecaller ? (
+                <>
+                  <Route path="/telecaller" element={<TelecallerPanel />} />
+                  <Route path="/raw-leads" element={<RawLeadsList />} />
+                  <Route path="*" element={<Navigate to="/telecaller" replace />} />
+                </>
+              ) : isLiaisoning ? (
+                <>
+                  <Route path="/liaisoning" element={<LiaisoningPanel />} />
+                  <Route path="/leave-application" element={<LeaveApplication />} />
+                  <Route path="/expense-tracker" element={<ExpenseTracker />} />
+                  <Route path="*" element={<Navigate to="/liaisoning" replace />} />
+                </>
               ) : !isEmployee ? (
                 /* Admin / Super Admin / Manager Routes */
                 <>
+                  <Route path="/liaisoning" element={currentRole === 'admin' ? <Navigate to="/dashboard" replace /> : <LiaisoningPanel />} />
                   {/* Change 1: Manager is blocked from Dashboard, Lead Pipeline & Reports */}
-                  <Route path="/dashboard" element={isManager ? <Navigate to="/complaints" replace /> : <Dashboard />} />
-                  <Route path="/leads" element={isManager ? <Navigate to="/complaints" replace /> : <Leads />} />
-                  <Route path="/installation-report" element={currentRole === 'super_admin' ? <InstallationReport /> : <Navigate to={isManager ? '/complaints' : '/dashboard'} replace />} />
+                  <Route path="/dashboard" element={isManager ? <Navigate to="/leads" replace /> : <Dashboard />} />
+                  <Route path="/leads" element={<Leads />} />
+                  <Route path="/installation-report" element={currentRole === 'super_admin' ? <InstallationReport /> : <Navigate to="/leads" replace />} />
                   {/* Change 2 & 4 shared routes — Super Admin + Manager only (block plain admin) */}
                   <Route path="/product-challans" element={currentRole === 'admin' ? <Navigate to="/dashboard" replace /> : <ProductChallans />} />
                   <Route path="/installation-payments" element={currentRole === 'admin' ? <Navigate to="/dashboard" replace /> : <InstallationPayments />} />
@@ -281,9 +299,9 @@ export const App: React.FC = () => {
                   <Route path="/leave-application" element={<LeaveApplication />} />
                   <Route path="/leave-requests" element={<LeaveRequests />} />
                   <Route path="/hrms/leave-requests" element={<LeaveRequests />} />
-                  <Route path="/kra" element={currentRole === 'super_admin' ? <KRAManagement /> : <Navigate to="/dashboard" replace />} />
-                  <Route path="/hrms/kra" element={currentRole === 'super_admin' ? <KRAManagement /> : <Navigate to="/dashboard" replace />} />
-                  <Route path="/raw-leads" element={currentRole === 'super_admin' ? <RawLeadsList /> : <Navigate to="/dashboard" replace />} />
+                  <Route path="/kra" element={(currentRole === 'super_admin' || currentRole === 'manager') ? <KRAManagement /> : <Navigate to="/dashboard" replace />} />
+                  <Route path="/hrms/kra" element={(currentRole === 'super_admin' || currentRole === 'manager') ? <KRAManagement /> : <Navigate to="/dashboard" replace />} />
+                  <Route path="/raw-leads" element={(currentRole === 'super_admin' || currentRole === 'manager') ? <RawLeadsList /> : <Navigate to="/dashboard" replace />} />
                   <Route path="/my-field-visits" element={<MyFieldVisits />} />
                   <Route path="/expense-tracker" element={<ExpenseTracker />} />
                   <Route path="/expenses" element={(currentRole === 'super_admin' || currentRole === 'manager') ? <Expenses /> : <ExpenseTracker />} />
@@ -306,7 +324,7 @@ export const App: React.FC = () => {
                     <Route path="/settings" element={<Navigate to="/dashboard" replace />} />
                   )}
 
-                  <Route path="*" element={<Navigate to={isManager ? '/complaints' : '/dashboard'} replace />} />
+                  <Route path="*" element={<Navigate to={isManager ? '/leads' : '/dashboard'} replace />} />
                 </>
               ) : (
                 // Field Employee routes

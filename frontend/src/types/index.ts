@@ -6,7 +6,9 @@ export type UserRole =
   | 'dealer'
   | 'sales_person'
   | 'manager'
-  | 'installation_supervisor';
+  | 'installation_supervisor'
+  | 'telecaller'
+  | 'liaisoning';
 
 export interface Profile {
   id: string;
@@ -205,7 +207,15 @@ export interface ClientRegistration {
   bankFileUploaded: boolean;
   bankDocumentBlob?: Blob | string;
   loanStatus: 'pending' | 'approved' | 'rejected';
+  meterPhotos?: MeterPhoto[];
   updatedAt: string;
+}
+
+export interface MeterPhoto {
+  id: string;
+  url: string;
+  uploadedAt: string;
+  uploadedBy?: string;
 }
 
 export interface GeoLocation {
@@ -947,6 +957,31 @@ export interface KRAScore {
   reviewedByUserId?: string;
   reviewedByUserName?: string;
   reviewedAt?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type DispatchRequestStatus = 'pending' | 'acknowledged' | 'dispatched' | 'cancelled';
+
+export interface DispatchRequest {
+  id: string;
+  leadId: string;
+  leadName: string;
+  leadPhone?: string;
+  remark: string;
+  totalPaid: number;
+  orderTotal: number;
+  status: DispatchRequestStatus;
+  requestedById: string;
+  requestedByName: string;
+  requestedByRole: string;
+  acknowledgedAt?: string;
+  acknowledgedByName?: string;
+  dispatchedAt?: string;
+  challanId?: string;
+  challanNumber?: string;
+  cancelledAt?: string;
+  cancelledByName?: string;
   createdAt: string;
   updatedAt: string;
 }

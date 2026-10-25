@@ -2327,7 +2327,7 @@ const ComplaintDetailModal: React.FC<ComplaintDetailModalProps> = ({
                 className="w-full p-2 bg-slate-50 border border-slate-300 rounded-xl text-xs font-semibold"
               >
                 <option value="">-- Select Field Employee --</option>
-                {employees.filter(e => e.role === 'field_employee' || e.role === 'admin').map(emp => (
+                {employees.filter(e => e.role === 'field_employee' || e.role === 'sales_person' || e.role === 'admin').map(emp => (
                   <option key={emp.id} value={emp.id}>{emp.fullName}</option>
                 ))}
               </select>

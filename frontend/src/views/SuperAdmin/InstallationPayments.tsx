@@ -1,8 +1,12 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useMemo } from 'react';
+import dayjs from 'dayjs';
+import isBetween from 'dayjs/plugin/isBetween';
 import {
-  IndianRupee, Check, X, Receipt as ReceiptIcon, Download, Clock, Camera, Eye, MapPin,
-  ChevronDown, ChevronUp, ImageIcon, Package, Trash2
+  IndianRupee, Check, X, Receipt as ReceiptIcon, Download, Clock, Camera, Eye,
+  ChevronDown, ChevronUp, ImageIcon, Trash2, Calendar
 } from 'lucide-react';
+
+dayjs.extend(isBetween);
 import type { PaymentRequest, PaymentMethod, Receipt, InstallationPhoto, InstallationRecord } from '../../types';
 import { paymentRequestService, receiptService } from '../../services/paymentService';
 import { useAuthStore } from '../../store/authStore';
@@ -26,17 +30,87 @@ export const InstallationPayments: React.FC = () => {
   const [requests, setRequests] = useState<PaymentRequest[]>([]);
   const [approving, setApproving] = useState<PaymentRequest | null>(null);
   const [previewModal, setPreviewModal] = useState<{ url: string; title: string } | null>(null);
+  const [supervisorFilter, setSupervisorFilter] = useState<string>('all');
+  const [datePreset, setDatePreset] = useState<'all' | 'today' | 'week' | 'month' | 'custom'>('all');
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo] = useState('');
 
   const load = async () => setRequests(await paymentRequestService.getAll(true));
   useEffect(() => {
     load();
-    const h = () => load();
+    const h = (e?: any) => {
+      const col = (e as CustomEvent)?.detail?.collectionName;
+      if (col && col !== 'paymentRequests' && col !== 'receipts') return;
+      load();
+    };
     window.addEventListener('app-realtime-update', h);
     return () => window.removeEventListener('app-realtime-update', h);
   }, []);
 
+  const uniqueSupervisors = useMemo(() =>
+    Array.from(new Map(requests.filter(r => r.supervisorId).map(r => [r.supervisorId, r.supervisorName || 'Unknown'])).entries())
+      .sort((a, b) => a[1].localeCompare(b[1])),
+    [requests]
+  );
+
+  const getDateRange = (): [dayjs.Dayjs, dayjs.Dayjs] | null => {
+    if (datePreset === 'all') return null;
+    const now = dayjs();
+    if (datePreset === 'today') return [now.startOf('day'), now.endOf('day')];
+    if (datePreset === 'week') return [now.startOf('week'), now.endOf('week')];
+    if (datePreset === 'month') return [now.startOf('month'), now.endOf('month')];
+    if (datePreset === 'custom' && dateFrom && dateTo) return [dayjs(dateFrom).startOf('day'), dayjs(dateTo).endOf('day')];
+    return null;
+  };
+
+  const applyFilters = (list: PaymentRequest[]) => {
+    return list.filter(r => {
+      if (supervisorFilter !== 'all' && r.supervisorId !== supervisorFilter) return false;
+      const range = getDateRange();
+      if (range) {
+        const d = dayjs(r.createdAt);
+        if (!d.isValid() || !d.isBetween(range[0], range[1], null, '[]')) return false;
+      }
+      return true;
+    });
+  };
+
   const pending = requests.filter(r => r.status === 'pending');
-  const shown = tab === 'pending' ? pending : requests;
+  const baseList = tab === 'pending' ? pending : requests;
+  const shown = applyFilters(baseList);
+
+  const approvedInRange = applyFilters(requests.filter(r => r.status === 'approved'));
+  const totalApprovedAmount = approvedInRange.reduce((s, r) => s + (r.approvedAmount ?? r.requestedAmount), 0);
+  const totalRequested = shown.reduce((s, r) => s + r.requestedAmount, 0);
+
+  const handleDownloadReport = () => {
+    const rows = shown.map(r => ({
+      'Request #': r.requestNumber,
+      'Supervisor': r.supervisorName || '',
+      'Lead': r.leadName || '',
+      'Requested': r.requestedAmount,
+      'Approved': r.approvedAmount ?? '',
+      'Status': r.status,
+      'Method': r.method || '',
+      'Txn ID': r.transactionId || '',
+      'Date': r.createdAt ? dayjs(r.createdAt).format('DD-MM-YYYY HH:mm') : '',
+      'Decided At': r.decidedAt ? dayjs(r.decidedAt).format('DD-MM-YYYY HH:mm') : '',
+      'Decided By': r.decidedByName || ''
+    }));
+    if (rows.length === 0) return;
+    const headers = Object.keys(rows[0]);
+    const csv = [
+      headers.join(','),
+      ...rows.map(r => headers.map(h => `"${String((r as any)[h]).replace(/"/g, '""')}"`).join(','))
+    ].join('\n');
+    const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `Installation_Payments_${dayjs().format('DD-MMM-YYYY')}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
 
   const doReject = async (r: PaymentRequest) => {
     const reason = prompt('Rejection reason:');
@@ -98,19 +172,97 @@ export const InstallationPayments: React.FC = () => {
         <p className="text-xs text-slate-500 font-semibold">{pending.length} pending request(s)</p>
       </div>
 
-      <div className="flex gap-2">
-        <button
-          onClick={() => setTab('pending')}
-          className={`px-3 py-1.5 rounded-xl font-bold text-xs cursor-pointer ${tab === 'pending' ? 'bg-slate-900 text-white' : 'bg-slate-100 text-slate-600'}`}
-        >
-          Pending ({pending.length})
-        </button>
-        <button
-          onClick={() => setTab('all')}
-          className={`px-3 py-1.5 rounded-xl font-bold text-xs cursor-pointer ${tab === 'all' ? 'bg-slate-900 text-white' : 'bg-slate-100 text-slate-600'}`}
-        >
-          All ({requests.length})
-        </button>
+      {/* Tabs + Filters */}
+      <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-xs space-y-3">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex gap-2">
+            <button
+              onClick={() => setTab('pending')}
+              className={`px-3 py-1.5 rounded-xl font-bold text-xs cursor-pointer ${tab === 'pending' ? 'bg-slate-900 text-white' : 'bg-slate-100 text-slate-600'}`}
+            >
+              Pending ({pending.length})
+            </button>
+            <button
+              onClick={() => setTab('all')}
+              className={`px-3 py-1.5 rounded-xl font-bold text-xs cursor-pointer ${tab === 'all' ? 'bg-slate-900 text-white' : 'bg-slate-100 text-slate-600'}`}
+            >
+              All ({requests.length})
+            </button>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2">
+            <select
+              value={supervisorFilter}
+              onChange={e => setSupervisorFilter(e.target.value)}
+              className="bg-slate-50 border border-slate-200 rounded-xl px-3 py-1.5 text-xs font-bold text-slate-700 focus:outline-none focus:ring-2 focus:ring-emerald-500 cursor-pointer"
+            >
+              <option value="all">All Supervisors</option>
+              {uniqueSupervisors.map(([id, name]) => (
+                <option key={id} value={id}>{name}</option>
+              ))}
+            </select>
+          </div>
+        </div>
+
+        {/* Date Filters */}
+        <div className="flex flex-wrap items-center gap-2 border-t border-slate-100 pt-3">
+          <Calendar className="w-4 h-4 text-slate-400" />
+          <div className="flex items-center space-x-1 bg-slate-100 p-1 rounded-xl text-xs">
+            {([['all', 'All Time'], ['today', 'Today'], ['week', 'This Week'], ['month', 'This Month'], ['custom', 'Custom']] as const).map(([val, label]) => (
+              <button
+                key={val}
+                onClick={() => setDatePreset(val)}
+                type="button"
+                className={`px-3 py-1 rounded-lg font-bold transition-all cursor-pointer ${
+                  datePreset === val ? 'bg-white text-slate-900 shadow-xs' : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+          {datePreset === 'custom' && (
+            <div className="flex items-center gap-2">
+              <input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)} className="bg-slate-50 border border-slate-200 rounded-xl px-2.5 py-1.5 text-xs font-bold text-slate-700 focus:outline-none focus:ring-2 focus:ring-emerald-500" />
+              <span className="text-xs text-slate-400 font-bold">to</span>
+              <input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)} className="bg-slate-50 border border-slate-200 rounded-xl px-2.5 py-1.5 text-xs font-bold text-slate-700 focus:outline-none focus:ring-2 focus:ring-emerald-500" />
+            </div>
+          )}
+          <div className="ml-auto">
+            <button
+              type="button"
+              onClick={handleDownloadReport}
+              disabled={shown.length === 0}
+              className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-40 text-white font-extrabold text-xs rounded-xl flex items-center gap-1.5 cursor-pointer shadow-xs transition-all"
+            >
+              <Download className="w-3.5 h-3.5" />
+              <span>Download CSV</span>
+            </button>
+          </div>
+        </div>
+
+        {/* Summary Stats */}
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 border-t border-slate-100 pt-3">
+          <div className="bg-slate-50 rounded-xl p-3 text-center">
+            <p className="text-[10px] font-bold text-slate-400 uppercase">Showing</p>
+            <p className="text-lg font-black text-slate-800">{shown.length}</p>
+            <p className="text-[10px] text-slate-400">requests</p>
+          </div>
+          <div className="bg-amber-50 rounded-xl p-3 text-center">
+            <p className="text-[10px] font-bold text-amber-500 uppercase">Total Requested</p>
+            <p className="text-lg font-black text-amber-700">₹{totalRequested.toLocaleString('en-IN')}</p>
+          </div>
+          <div className="bg-emerald-50 rounded-xl p-3 text-center">
+            <p className="text-[10px] font-bold text-emerald-500 uppercase">Total Approved</p>
+            <p className="text-lg font-black text-emerald-700">₹{totalApprovedAmount.toLocaleString('en-IN')}</p>
+            <p className="text-[10px] text-emerald-500">{approvedInRange.length} approved</p>
+          </div>
+          <div className="bg-rose-50 rounded-xl p-3 text-center">
+            <p className="text-[10px] font-bold text-rose-500 uppercase">Pending</p>
+            <p className="text-lg font-black text-rose-700">{applyFilters(pending).length}</p>
+            <p className="text-[10px] text-rose-400">awaiting</p>
+          </div>
+        </div>
       </div>
 
       <div className="bg-white border border-slate-200 rounded-2xl divide-y divide-slate-100 overflow-hidden shadow-xs">

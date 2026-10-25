@@ -1,6 +1,6 @@
 import { db, markRecordAsDeleted, getDeletedRecordIdsSet } from './db';
-import type { OrderConfirmation, ClientDocument, ClientRegistration, InstallationPhoto, ReleaseDocument } from '../types';
-import { saveRecordToFirestore, deleteRecordFromFirestore, fetchCollectionFromFirestore } from './firebase';
+import type { OrderConfirmation, ClientDocument, ClientRegistration, InstallationPhoto, ReleaseDocument, MeterPhoto } from '../types';
+import { saveRecordToFirestore, deleteRecordFromFirestore, fetchCollectionFromFirestore, uploadImageToFirebase } from './firebase';
 import { getQuotationTotalAmount } from './quotationService';
 
 let lastOrderRemoteSync = 0;
@@ -223,6 +223,64 @@ export const orderService = {
       saveRecordToFirestore('leads', updatedLead.id, updatedLead);
     }
     saveRecordToFirestore('clientRegistrations', registration.leadId, registration);
+  },
+
+  // Merges the local record with the server copy so concurrent meter uploads from other devices aren't lost.
+  async getLatestClientRegistration(leadId: string): Promise<ClientRegistration> {
+    const local = await db.clientRegistrations.get(leadId);
+    let remote: ClientRegistration | undefined;
+    try {
+      const rows = await fetchCollectionFromFirestore<ClientRegistration>('clientRegistrations', 6000, { leadId });
+      remote = (rows || []).find(r => r.leadId === leadId);
+    } catch (err) {
+      console.warn('Remote registration fetch note:', err);
+    }
+    const base: ClientRegistration = {
+      leadId,
+      registrationDone: false,
+      fileMade: false,
+      bankFileUploaded: false,
+      loanStatus: 'pending',
+      updatedAt: new Date().toISOString()
+    };
+    const photos = new Map<string, MeterPhoto>();
+    [...(remote?.meterPhotos || []), ...(local?.meterPhotos || [])].forEach(p => p?.id && photos.set(p.id, p));
+    const newer = local && remote && (remote.updatedAt || '') > (local.updatedAt || '') ? { ...local, ...remote } : { ...remote, ...local };
+    return {
+      ...base,
+      ...newer,
+      bankDocumentBlob: local?.bankDocumentBlob || remote?.bankDocumentBlob,
+      meterPhotos: [...photos.values()].sort((a, b) => a.uploadedAt.localeCompare(b.uploadedAt))
+    } as ClientRegistration;
+  },
+
+  async uploadMeterPhoto(leadId: string, file: File | Blob, uploadedBy: string): Promise<ClientRegistration> {
+    const url = await uploadImageToFirebase(file, `meter/${leadId}/meter_${Date.now()}.webp`, {
+      isDocument: true,
+      maxSizeKB: 180,
+      maxWidthOrHeight: 1600
+    });
+    // uploadImageToFirebase falls back to base64 on failure; meter photos must live in Backblaze
+    if (!/^https?:\/\//i.test(url)) {
+      throw new Error('Backblaze upload failed. Please check your internet connection and try again.');
+    }
+    const reg = await this.getLatestClientRegistration(leadId);
+    const photo: MeterPhoto = {
+      id: 'mtr_' + Math.random().toString(36).substring(2, 11),
+      url,
+      uploadedAt: new Date().toISOString(),
+      uploadedBy
+    };
+    const updated = { ...reg, meterPhotos: [...(reg.meterPhotos || []), photo] };
+    await this.saveClientRegistration(updated);
+    return updated;
+  },
+
+  async deleteMeterPhoto(leadId: string, photoId: string): Promise<ClientRegistration> {
+    const reg = await this.getLatestClientRegistration(leadId);
+    const updated = { ...reg, meterPhotos: (reg.meterPhotos || []).filter(p => p.id !== photoId) };
+    await this.saveClientRegistration(updated);
+    return updated;
   },
 
   // Client Documents (Slots: PAN, Aadhar, Bill, Tax, Bank etc)

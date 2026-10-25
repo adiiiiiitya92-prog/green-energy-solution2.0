@@ -27,7 +27,8 @@ import type {
   SupervisorSummary,
   KRATemplate,
   KRAScore,
-  ScheduledFieldVisit
+  ScheduledFieldVisit,
+  DispatchRequest
 } from '../types';
 
 export interface DeletedRecord {
@@ -72,6 +73,7 @@ export class SolarCRMDatabase extends Dexie {
   kraTemplates!: Table<KRATemplate>;
   kraScores!: Table<KRAScore>;
   scheduledFieldVisits!: Table<ScheduledFieldVisit>;
+  dispatchRequests!: Table<DispatchRequest>;
 
   constructor() {
     super('GreenEnergyCRMDatabase');
@@ -317,6 +319,10 @@ export class SolarCRMDatabase extends Dexie {
       kraTemplates: 'id, role, isDefault, createdAt',
       kraScores: 'id, employeeId, year, month, status, createdAt',
       scheduledFieldVisits: 'id, leadId, assignedToId, scheduledDate, status, createdAt'
+    });
+
+    this.version(14).stores({
+      dispatchRequests: 'id, leadId, status, createdAt'
     });
   }
 }

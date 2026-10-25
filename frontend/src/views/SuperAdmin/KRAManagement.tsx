@@ -36,6 +36,7 @@ const ROLE_OPTIONS: Array<{ value: UserRole | 'all'; label: string }> = [
   { value: 'all', label: 'All Roles (Default)' },
   { value: 'field_employee', label: 'Field Employee' },
   { value: 'installation_supervisor', label: 'Installation Supervisor' },
+  { value: 'telecaller', label: 'Marketing / Telecaller' },
   { value: 'inventory_manager', label: 'Inventory Manager' },
   { value: 'admin', label: 'Admin' },
   { value: 'manager', label: 'Manager' },
@@ -225,6 +226,17 @@ export const KRAManagement: React.FC = () => {
     }
   };
 
+  const applyTemplate = (tplId: string) => {
+    const tpl = templates.find(t => t.id === tplId);
+    if (!tpl) return;
+    const hasData = sheetItems.some(k => (k.achievementPct || 0) > 0 || (k.actual || '').trim());
+    if (hasData && !confirm('Switching template will clear the values entered on this sheet. Continue?')) return;
+    setSheetTemplateId(tpl.id);
+    setSheetItems(tpl.kras.map(k => ({
+      name: k.name, weight: k.weight, target: k.target, actual: '', achievementPct: 0, score: 0, remarks: ''
+    })));
+  };
+
   const totalScore = useMemo(
     () => +sheetItems.reduce((s, k) => s + (k.weight * (k.achievementPct || 0)) / 100, 0).toFixed(2),
     [sheetItems]
@@ -397,7 +409,18 @@ export const KRAManagement: React.FC = () => {
                         {scoringEmp.designation || scoringEmp.role.replace(/_/g, ' ').toUpperCase()}
                       </p>
                     </div>
-                    <div className="flex items-center gap-2">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <select
+                        value={sheetTemplateId || ''}
+                        onChange={e => applyTemplate(e.target.value)}
+                        className="text-xs border border-slate-300 rounded px-2 py-1 max-w-[220px]"
+                        title="KRA template"
+                      >
+                        {!sheetTemplateId && <option value="">Select template…</option>}
+                        {templates.map(t => (
+                          <option key={t.id} value={t.id}>{t.title}</option>
+                        ))}
+                      </select>
                       <Calendar className="w-3.5 h-3.5 text-slate-400" />
                       <select
                         value={scoringMonth}

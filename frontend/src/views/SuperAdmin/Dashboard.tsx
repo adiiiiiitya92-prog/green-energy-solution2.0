@@ -737,20 +737,20 @@ export const Dashboard: React.FC = () => {
           </Link>
         </div>
 
-        <div className="grid grid-cols-3 gap-3">
-          <div className="bg-white/5 p-3 rounded-xl border border-white/10">
-            <span className="text-[10px] font-bold text-slate-300 uppercase block">Contract</span>
-            <h3 className="text-lg sm:text-xl font-black text-white mt-0.5">₹{processDoneStats.totalContract.toLocaleString('en-IN')}</h3>
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 sm:gap-3">
+          <div className="bg-white/5 p-3 rounded-xl border border-white/10 flex items-center justify-between sm:block">
+            <span className="text-[10px] font-bold text-slate-300 uppercase">Contract</span>
+            <h3 className="text-base sm:text-xl font-black text-white sm:mt-0.5 truncate">₹{processDoneStats.totalContract.toLocaleString('en-IN')}</h3>
           </div>
-          <div className="bg-emerald-500/10 p-3 rounded-xl border border-emerald-500/20">
-            <span className="text-[10px] font-bold text-emerald-400 uppercase block">Paid</span>
-            <h3 className="text-lg sm:text-xl font-black text-emerald-400 mt-0.5">₹{processDoneStats.totalPaid.toLocaleString('en-IN')}</h3>
+          <div className="bg-emerald-500/10 p-3 rounded-xl border border-emerald-500/20 flex items-center justify-between sm:block">
+            <span className="text-[10px] font-bold text-emerald-400 uppercase">Paid</span>
+            <h3 className="text-base sm:text-xl font-black text-emerald-400 sm:mt-0.5 truncate">₹{processDoneStats.totalPaid.toLocaleString('en-IN')}</h3>
           </div>
-          <div className="bg-amber-500/10 p-3 rounded-xl border border-amber-500/20">
-            <span className="text-[10px] font-bold text-amber-400 uppercase block flex items-center gap-1">
+          <div className="bg-amber-500/10 p-3 rounded-xl border border-amber-500/20 flex items-center justify-between sm:block">
+            <span className="text-[10px] font-bold text-amber-400 uppercase flex items-center gap-1">
               <Wallet className="w-3 h-3" /> Pending
             </span>
-            <h3 className="text-lg sm:text-xl font-black text-amber-400 mt-0.5">₹{processDoneStats.totalRemaining.toLocaleString('en-IN')}</h3>
+            <h3 className="text-base sm:text-xl font-black text-amber-400 sm:mt-0.5 truncate">₹{processDoneStats.totalRemaining.toLocaleString('en-IN')}</h3>
           </div>
         </div>
       </div>

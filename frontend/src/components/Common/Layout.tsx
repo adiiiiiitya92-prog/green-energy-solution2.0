@@ -97,7 +97,7 @@ export const Layout: React.FC<LayoutProps> = ({ children }) => {
   }, [location.search, currentRole]);
 
   useEffect(() => {
-    import('../../services/quotationTemplateService').then(m => m.loadQuotationTextOverrides()).catch(() => {});
+    import('../../services/quotationTemplateService').then(m => m.loadQuotationTemplate()).catch(() => {});
   }, []);
 
   const loadPendingCount = async () => {

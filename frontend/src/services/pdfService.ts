@@ -18,7 +18,7 @@ import paymentQrImg from '../assets/payment_qr.png';
 import { generateQuotationDocumentPDF } from './pdfOptimizationService';
 import { sortAndFormatBomItems, getBomCategoryIndex, getStandardCategoryName } from './quotationService';
 import { getFreshB2SignedUrl } from './firebase';
-import { applyQuotationTextOverrides } from './quotationTemplateService';
+import { applyQuotationTextOverrides, getQuotationImageOverrides, type QuotationImageOverrides } from './quotationTemplateService';
 
 let cachedLogoDataUrl: string | null = null;
 let cachedEngineerDataUrl: string | null = null;
@@ -217,17 +217,26 @@ function numberToWordsINR(num: number): string {
   return 'Indian Rupee ' + inWords(rounded) + ' Rupees Only';
 }
 
+export const getDefaultQuotationImages = (): Required<QuotationImageOverrides> => ({
+  logo: getAbsUrl(logoImg),
+  cover: getAbsUrl(qoutation1Img),
+  engineer: getAbsUrl(solarEngineerImg),
+  layout: getAbsUrl(customPage4Img),
+  stamp: getAbsUrl(stampImg),
+  paymentQr: getAbsUrl(paymentQrImg)
+});
+
 export function createNewQuotationProposalHtml(q: any, lead: any, creatorName: string): string {
   return applyQuotationTextOverrides(buildRawQuotationProposalHtml(q, lead, creatorName));
 }
 
-export function buildRawQuotationProposalHtml(q: any, lead: any, creatorName: string): string {
-  const logo = getAbsUrl(logoImg);
-  const engineer = getAbsUrl(solarEngineerImg);
-  const page4Img = getAbsUrl(customPage4Img);
-  const qoutationCover = getAbsUrl(qoutation1Img);
-  const stamp = getAbsUrl(stampImg);
-  const paymentQr = getAbsUrl(paymentQrImg);
+export function buildRawQuotationProposalHtml(q: any, lead: any, creatorName: string, images: QuotationImageOverrides = getQuotationImageOverrides()): string {
+  const logo = images.logo || getAbsUrl(logoImg);
+  const engineer = images.engineer || getAbsUrl(solarEngineerImg);
+  const page4Img = images.layout || getAbsUrl(customPage4Img);
+  const qoutationCover = images.cover || getAbsUrl(qoutation1Img);
+  const stamp = images.stamp || getAbsUrl(stampImg);
+  const paymentQr = images.paymentQr || getAbsUrl(paymentQrImg);
 
   const cName = q.consumerName || lead?.name || 'Valued Customer';
   const cMobile = q.consumerMobile || (lead?.phoneNumber ? `+91 ${lead.phoneNumber}` : '');

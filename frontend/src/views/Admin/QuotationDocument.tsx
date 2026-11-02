@@ -6,7 +6,7 @@ import { productService } from '../../services/productService';
 import { packageService } from '../../services/packageService';
 import { pdfService, createNewQuotationProposalHtml, printQuotationHTML } from '../../services/pdfService';
 import { generateQuotationDocumentPDF } from '../../services/pdfOptimizationService';
-import { loadQuotationTextOverrides, QUOTATION_TEMPLATE_EVENT } from '../../services/quotationTemplateService';
+import { loadQuotationTemplate, QUOTATION_TEMPLATE_EVENT } from '../../services/quotationTemplateService';
 import { uploadImageToFirebase, uploadPdfToFirebase } from '../../services/firebase';
 import { getCachedPdfBlob, setCachedPdfBlob, ensurePdfBlobForQuotation } from '../../services/pdfCacheService';
 import { useAuthStore } from '../../store/authStore';
@@ -57,7 +57,7 @@ export const QuotationDocument: React.FC<{
   useEffect(() => {
     const bump = () => setTemplateRev(r => r + 1);
     window.addEventListener(QUOTATION_TEMPLATE_EVENT, bump);
-    loadQuotationTextOverrides().catch(() => {});
+    loadQuotationTemplate().catch(() => {});
     return () => window.removeEventListener(QUOTATION_TEMPLATE_EVENT, bump);
   }, []);
   const [isViewOnlyMode, setIsViewOnlyMode] = useState<boolean>(viewOnly);

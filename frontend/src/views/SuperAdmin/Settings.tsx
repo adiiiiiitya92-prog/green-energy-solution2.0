@@ -3,9 +3,10 @@ import { useAuthStore } from '../../store/authStore';
 import { db } from '../../services/db';
 import { Trash2, Download, ServerCrash, CheckCircle2 } from 'lucide-react';
 import dayjs from 'dayjs';
+import { QuotationTemplateEditor } from '../../components/Settings/QuotationTemplateEditor';
 
 export const Settings: React.FC = () => {
-  const { resetAllData } = useAuthStore();
+  const { resetAllData, currentRole } = useAuthStore();
 
   const handleResetData = async () => {
     if (confirm('Are you sure you want to reset all data? This will clear the database and reload the demo mock values.')) {
@@ -129,6 +130,8 @@ export const Settings: React.FC = () => {
           </ul>
         </div>
       </div>
+
+      {currentRole === 'super_admin' && <QuotationTemplateEditor />}
     </div>
   );
 };

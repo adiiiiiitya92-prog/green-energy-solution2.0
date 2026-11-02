@@ -274,6 +274,10 @@ export const App: React.FC = () => {
                 <>
                   <Route path="/telecaller" element={<TelecallerPanel />} />
                   <Route path="/raw-leads" element={<RawLeadsList />} />
+                  <Route path="/leave-application" element={<LeaveApplication />} />
+                  <Route path="/expense-tracker" element={<ExpenseTracker />} />
+                  <Route path="/complaints" element={<Complaints />} />
+                  <Route path="/my-kra" element={<MyKRA />} />
                   <Route path="*" element={<Navigate to="/telecaller" replace />} />
                 </>
               ) : isLiaisoning ? (

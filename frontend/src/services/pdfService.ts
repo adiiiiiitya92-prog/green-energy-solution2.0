@@ -18,6 +18,7 @@ import paymentQrImg from '../assets/payment_qr.png';
 import { generateQuotationDocumentPDF } from './pdfOptimizationService';
 import { sortAndFormatBomItems, getBomCategoryIndex, getStandardCategoryName } from './quotationService';
 import { getFreshB2SignedUrl } from './firebase';
+import { applyQuotationTextOverrides } from './quotationTemplateService';
 
 let cachedLogoDataUrl: string | null = null;
 let cachedEngineerDataUrl: string | null = null;
@@ -217,6 +218,10 @@ function numberToWordsINR(num: number): string {
 }
 
 export function createNewQuotationProposalHtml(q: any, lead: any, creatorName: string): string {
+  return applyQuotationTextOverrides(buildRawQuotationProposalHtml(q, lead, creatorName));
+}
+
+export function buildRawQuotationProposalHtml(q: any, lead: any, creatorName: string): string {
   const logo = getAbsUrl(logoImg);
   const engineer = getAbsUrl(solarEngineerImg);
   const page4Img = getAbsUrl(customPage4Img);

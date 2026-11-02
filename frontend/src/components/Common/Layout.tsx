@@ -96,6 +96,10 @@ export const Layout: React.FC<LayoutProps> = ({ children }) => {
     }
   }, [location.search, currentRole]);
 
+  useEffect(() => {
+    import('../../services/quotationTemplateService').then(m => m.loadQuotationTextOverrides()).catch(() => {});
+  }, []);
+
   const loadPendingCount = async () => {
     if (currentRole === 'super_admin' || currentRole === 'manager') {
       try {
@@ -298,7 +302,7 @@ export const Layout: React.FC<LayoutProps> = ({ children }) => {
     {
       name: 'My KRA Score',
       path: '/my-kra',
-      roles: ['admin', 'field_employee', 'inventory_manager', 'dealer', 'installation_supervisor'],
+      roles: ['admin', 'field_employee', 'inventory_manager', 'dealer', 'installation_supervisor', 'telecaller'],
       icon: Target
     },
     {
@@ -317,19 +321,19 @@ export const Layout: React.FC<LayoutProps> = ({ children }) => {
     {
       name: 'Leave Application',
       path: '/leave-application',
-      roles: ['admin', 'field_employee', 'inventory_manager', 'dealer', 'liaisoning'],
+      roles: ['admin', 'field_employee', 'inventory_manager', 'dealer', 'liaisoning', 'telecaller'],
       icon: CalendarCheck
     },
     {
       name: 'Expense Tracker',
       path: '/expense-tracker',
-      roles: ['admin', 'field_employee', 'inventory_manager', 'dealer', 'liaisoning'],
+      roles: ['admin', 'field_employee', 'inventory_manager', 'dealer', 'liaisoning', 'telecaller'],
       icon: Receipt
     },
     {
       name: 'Complaint Box',
       path: '/complaints',
-      roles: ['super_admin', 'manager', 'admin', 'field_employee', 'inventory_manager', 'dealer', 'installation_supervisor'],
+      roles: ['super_admin', 'manager', 'admin', 'field_employee', 'inventory_manager', 'dealer', 'installation_supervisor', 'telecaller'],
       icon: ShieldAlert
     },
     {

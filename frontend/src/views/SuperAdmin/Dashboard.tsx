@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { roleLabel } from '../../utils/roleLabel';
 import { Link } from 'react-router-dom';
 import { db, getDeletedRecordIdsSet } from '../../services/db';
 import { leadService, filterLeadsForUser } from '../../services/leadService';
@@ -351,7 +352,7 @@ export const Dashboard: React.FC = () => {
         return {
           id: s.id,
           name: s.employeeName || emp?.fullName || 'Unknown',
-          role: (s.employeeRole || emp?.role || '').replace(/_/g, ' '),
+          role: roleLabel(s.employeeRole || emp?.role, ''),
           total: s.totalScore,
           grade: s.grade,
           incentive: s.incentivePct || 0,
@@ -571,7 +572,7 @@ export const Dashboard: React.FC = () => {
                         )}
                       </div>
                       <div className="text-[10px] text-slate-400 flex items-center gap-2 flex-wrap">
-                        <span className="uppercase text-rose-300 font-bold">{(req.requestedByUserRole || 'user').replace(/_/g, ' ')}</span>
+                        <span className="uppercase text-rose-300 font-bold">{roleLabel(req.requestedByUserRole, 'user')}</span>
                         {req.requestedByUserPhone && <span>• 📞 +91 {req.requestedByUserPhone}</span>}
                       </div>
                     </div>

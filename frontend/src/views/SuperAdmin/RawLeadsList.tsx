@@ -1,4 +1,5 @@
 import React, { useEffect, useState, useMemo } from 'react';
+import { roleLabel } from '../../utils/roleLabel';
 import { leadService } from '../../services/leadService';
 import { employeeService } from '../../services/employeeService';
 import { fieldVisitScheduleService } from '../../services/fieldVisitScheduleService';
@@ -286,7 +287,7 @@ export const RawLeadsList: React.FC = () => {
               >
                 <option value="">Select Employee...</option>
                 {employees.filter(e => e.isActive !== false).map(e => (
-                  <option key={e.id} value={e.id}>{e.fullName} ({(e.role || '').replace(/_/g, ' ')})</option>
+                  <option key={e.id} value={e.id}>{e.fullName} ({roleLabel(e.role, '')})</option>
                 ))}
               </select>
             </div>

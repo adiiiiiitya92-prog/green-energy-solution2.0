@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { roleLabel } from '../../utils/roleLabel';
 import { useAuthStore } from '../../store/authStore';
 import { expenseService, resolveExpenseReceiptUrl, normalizeReceiptUrl } from '../../services/expenseService';
 import type { ExpenseClaim, ExpenseCategory, ExpensePaymentMode } from '../../types';
@@ -297,7 +298,7 @@ export const ExpenseTracker: React.FC = () => {
               <p className="text-[10px] text-emerald-300 font-extrabold uppercase tracking-wider">Employee Profile</p>
               <p className="text-sm font-extrabold text-white">{currentUser.fullName}</p>
               <div className="pt-1.5 border-t border-white/10 text-[11px] text-emerald-100 flex items-center justify-between">
-                <span>Role: <strong>{(currentRole || 'user').replace(/_/g, ' ').toUpperCase()}</strong></span>
+                <span>Role: <strong>{roleLabel(currentRole, 'user').toUpperCase()}</strong></span>
                 <span>Phone: {currentUser.phone || 'N/A'}</span>
               </div>
             </div>

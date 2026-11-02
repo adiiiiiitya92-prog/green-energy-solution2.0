@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { roleLabel } from '../../utils/roleLabel';
 import { useAuthStore } from '../../store/authStore';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import logoImg from '../../assets/Green-Energy-Solution.png';
@@ -266,7 +267,7 @@ export const Layout: React.FC<LayoutProps> = ({ children }) => {
     {
       name: 'Field Visits',
       path: '/visits',
-      roles: ['super_admin', 'manager', 'field_employee', 'dealer'],
+      roles: ['super_admin', 'manager', 'field_employee'],
       icon: MapPin
     },
     {
@@ -302,13 +303,13 @@ export const Layout: React.FC<LayoutProps> = ({ children }) => {
     {
       name: 'My KRA Score',
       path: '/my-kra',
-      roles: ['admin', 'field_employee', 'inventory_manager', 'dealer', 'installation_supervisor', 'telecaller'],
+      roles: ['admin', 'field_employee', 'inventory_manager', 'installation_supervisor', 'telecaller'],
       icon: Target
     },
     {
       name: 'My Field Visits',
       path: '/my-field-visits',
-      roles: ['field_employee', 'admin', 'inventory_manager', 'dealer', 'installation_supervisor'],
+      roles: ['field_employee', 'admin', 'inventory_manager', 'installation_supervisor'],
       icon: MapPin
     },
     {
@@ -321,7 +322,7 @@ export const Layout: React.FC<LayoutProps> = ({ children }) => {
     {
       name: 'Leave Application',
       path: '/leave-application',
-      roles: ['admin', 'field_employee', 'inventory_manager', 'dealer', 'liaisoning', 'telecaller'],
+      roles: ['admin', 'field_employee', 'inventory_manager', 'liaisoning', 'telecaller'],
       icon: CalendarCheck
     },
     {
@@ -382,7 +383,7 @@ export const Layout: React.FC<LayoutProps> = ({ children }) => {
         <div className="bg-amber-500 text-white font-black text-xs px-4 py-2 flex items-center justify-between shadow-sm select-none shrink-0 z-50 animate-fade-in">
           <div className="flex items-center space-x-2">
             <span className="text-sm">⚠️</span>
-            <span>Impersonating Account: <strong>{currentUser?.fullName}</strong> ({(currentRole || 'user').replace(/_/g, ' ')})</span>
+            <span>Impersonating Account: <strong>{currentUser?.fullName}</strong> ({roleLabel(currentRole, 'user')})</span>
           </div>
           <button
             onClick={async () => {
@@ -471,7 +472,7 @@ export const Layout: React.FC<LayoutProps> = ({ children }) => {
                 {currentUser.fullName}
               </span>
               <span className="text-[9px] bg-emerald-100 text-emerald-800 font-extrabold px-1.5 py-0.5 rounded uppercase">
-                {(currentRole || 'user').replace(/_/g, ' ')}
+                {roleLabel(currentRole, 'user')}
               </span>
             </div>
           )}

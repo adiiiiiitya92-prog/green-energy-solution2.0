@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { roleLabel } from '../../utils/roleLabel';
 import type { Profile, UserRole } from '../../types';
 import { employeeService } from '../../services/employeeService';
 import { Plus, Search, UserCheck, UserX, User, Trash2, ShieldOff, ShieldCheck, Pencil, X } from 'lucide-react';
@@ -27,7 +28,7 @@ export const Employees: React.FC = () => {
   const [isUpdating, setIsUpdating] = useState(false);
 
   const handleImpersonateClick = async (emp: Profile) => {
-    if (confirm(`Do you want to log in as "${emp.fullName}" (${(emp.role || 'employee').replace(/_/g, ' ')}) without a password?`)) {
+    if (confirm(`Do you want to log in as "${emp.fullName}" (${roleLabel(emp.role, 'employee')}) without a password?`)) {
       await impersonateUser(emp);
       const { defaultRouteForRole } = await import('../../services/permissions');
       navigate(defaultRouteForRole(emp.role));
@@ -227,7 +228,7 @@ export const Employees: React.FC = () => {
                 <div className="truncate min-w-0">
                   <h4 className="text-sm font-bold text-slate-900 truncate">{emp.fullName}</h4>
                   <div className="flex items-center gap-1 flex-wrap mt-0.5">
-                    <span className="text-[9px] text-slate-500 font-extrabold uppercase bg-slate-100 px-1.5 py-0.5 rounded">{(emp.role || 'employee').replace(/_/g, ' ')}</span>
+                    <span className="text-[9px] text-slate-500 font-extrabold uppercase bg-slate-100 px-1.5 py-0.5 rounded">{roleLabel(emp.role, 'employee')}</span>
                     {emp.designation && (
                       <span className="text-[8px] text-emerald-700 bg-emerald-50 border border-emerald-100/60 font-black px-1 rounded uppercase tracking-wider truncate max-w-[110px]" title={emp.designation}>{emp.designation}</span>
                     )}
@@ -386,7 +387,7 @@ export const Employees: React.FC = () => {
                   >
                     <option value="field_employee">Field Employee</option>
                     <option value="sales_person">Sales Employee</option>
-                    <option value="dealer">Dealer Partner / Franchise</option>
+                    <option value="dealer">Channel Partner / Franchise</option>
                     <option value="inventory_manager">Inventory Manager (Store & Stock Only)</option>
                     <option value="installation_supervisor">Installation Supervisor</option>
                     <option value="telecaller">Marketing / Telecaller</option>
@@ -579,7 +580,7 @@ export const Employees: React.FC = () => {
                 >
                   <option value="field_employee">Field Employee</option>
                   <option value="sales_person">Sales Employee</option>
-                  <option value="dealer">Dealer Partner / Franchise</option>
+                  <option value="dealer">Channel Partner / Franchise</option>
                   <option value="inventory_manager">Inventory Manager (Store & Stock Only)</option>
                   {(currentRole === 'super_admin' || currentRole === 'manager' || originalUser?.role === 'super_admin' || originalUser?.role === 'manager') && (
                     <option value="installation_supervisor">Installation Supervisor</option>

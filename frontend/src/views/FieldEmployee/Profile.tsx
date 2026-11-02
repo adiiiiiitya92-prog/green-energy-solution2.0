@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { roleLabel } from '../../utils/roleLabel';
 import { useAuthStore } from '../../store/authStore';
 import { leadService } from '../../services/leadService';
 import { visitService } from '../../services/visitService';
@@ -40,7 +41,7 @@ export const ProfileView: React.FC = () => {
           </div>
           <div>
             <h3 className="text-base font-extrabold text-slate-900">{currentUser.fullName || 'User'}</h3>
-            <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">{(currentRole || 'user').replace(/_/g, ' ')}</span>
+            <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">{roleLabel(currentRole, 'user')}</span>
           </div>
         </div>
 

@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { roleLabel } from '../../utils/roleLabel';
 import type { DeletionRequest } from '../../types';
 import { deletionRequestService } from '../../services/deletionRequestService';
 import {
@@ -126,7 +127,7 @@ export const DeletionApprovalsModal: React.FC<DeletionApprovalsModalProps> = ({ 
       case 'admin_panel':
         return 'Main Admin CRM Panel';
       case 'dealer_panel':
-        return 'Dealer Network Panel';
+        return 'Channel Partner Panel';
       default:
         return 'CRM Panel';
     }
@@ -404,7 +405,7 @@ export const DeletionApprovalsModal: React.FC<DeletionApprovalsModalProps> = ({ 
                           Requested By Employee Information
                         </span>
                         <span className={`text-[10px] font-black uppercase px-2 py-0.5 rounded-full border ${getRoleBadgeStyle(req.requestedByUserRole)}`}>
-                          {(req.requestedByUserRole || 'user').replace(/_/g, ' ')}
+                          {roleLabel(req.requestedByUserRole, 'user')}
                         </span>
                       </div>
 

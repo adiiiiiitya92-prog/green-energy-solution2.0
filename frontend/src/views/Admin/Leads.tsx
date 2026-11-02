@@ -1455,7 +1455,7 @@ export const Leads: React.FC = () => {
         createdBy: currentUser?.fullName || currentUser?.id || 'Admin',
         createdByDealer: isDealer || undefined,
         dealerId: isDealer ? currentUser?.id : undefined,
-        dealerName: isDealer ? (currentUser?.fullName || 'Authorized Dealer') : undefined,
+        dealerName: isDealer ? (currentUser?.fullName || 'Authorized Channel Partner') : undefined,
         status: 'new',
         isHot: leadIsHot,
         clientRating: leadIsHot ? 5 : 3,
@@ -1481,7 +1481,7 @@ export const Leads: React.FC = () => {
         createdBy: currentUser?.fullName || currentUser?.id || 'Admin',
         createdByDealer: isDealer || undefined,
         dealerId: isDealer ? currentUser?.id : undefined,
-        dealerName: isDealer ? (currentUser?.fullName || 'Authorized Dealer') : undefined,
+        dealerName: isDealer ? (currentUser?.fullName || 'Authorized Channel Partner') : undefined,
         status: 'new',
         isHot: leadIsHot,
         clientRating: leadIsHot ? 5 : 3,
@@ -1870,7 +1870,7 @@ export const Leads: React.FC = () => {
   // 2. Booking order confirmation
   const handleConfirmOrder = async () => {
     if (currentRole === 'field_employee' || currentRole === 'dealer' || currentUser?.role === 'dealer') {
-      alert('⚠️ Access Restricted: Dealers and field employees are not authorized to collect or record payments.');
+      alert('⚠️ Access Restricted: Channel partners and field employees are not authorized to collect or record payments.');
       return;
     }
     if (!selectedLead) return;
@@ -2060,7 +2060,7 @@ export const Leads: React.FC = () => {
   const handleRecordSubsequentPayment = async (e: React.FormEvent) => {
     e.preventDefault();
     if (currentRole === 'field_employee' || currentRole === 'dealer' || currentUser?.role === 'dealer') {
-      alert('⚠️ Access Restricted: Dealers and field employees are not authorized to collect or record payments.');
+      alert('⚠️ Access Restricted: Channel partners and field employees are not authorized to collect or record payments.');
       return;
     }
     if (!selectedLead || !existingOc || !hasAdminQuotation) {
@@ -2719,7 +2719,7 @@ export const Leads: React.FC = () => {
               {getStatusBadge(selectedLead.status)}
               {(selectedLead.createdByDealer || selectedLead.dealerName) && (
                 <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black bg-purple-100 text-purple-800 border border-purple-300 shadow-2xs">
-                  🏪 CREATED BY DEALER: {selectedLead.dealerName || selectedLead.createdBy}
+                  🏪 CREATED BY CHANNEL PARTNER: {selectedLead.dealerName || selectedLead.createdBy}
                 </span>
               )}
               {selectedLead.isLoan && (
@@ -3354,7 +3354,7 @@ export const Leads: React.FC = () => {
                                     Installment Collection Restricted
                                   </h4>
                                   <p className="text-[11px] text-amber-900/80 font-medium mt-0.5">
-                                    Client has a remaining balance of <strong className="text-amber-950 font-black">₹{remainingBalance.toLocaleString('en-IN')}</strong>. {currentRole === 'dealer' || currentUser?.role === 'dealer' ? 'Dealers' : 'Field employees'} cannot record installment payments. Only Admin / Accounts team can collect payments.
+                                    Client has a remaining balance of <strong className="text-amber-950 font-black">₹{remainingBalance.toLocaleString('en-IN')}</strong>. {currentRole === 'dealer' || currentUser?.role === 'dealer' ? 'Channel partners' : 'Field employees'} cannot record installment payments. Only Admin / Accounts team can collect payments.
                                   </p>
                                 </div>
                               </div>
@@ -3627,10 +3627,10 @@ export const Leads: React.FC = () => {
                             <Lock className="w-5 h-5 text-amber-700" />
                           </div>
                           <h4 className="text-sm font-black text-slate-800 uppercase tracking-wider">
-                            Payment Collection Restricted for {currentRole === 'dealer' || currentUser?.role === 'dealer' ? 'Dealers' : 'Field Employees'}
+                            Payment Collection Restricted for {currentRole === 'dealer' || currentUser?.role === 'dealer' ? 'Channel partners' : 'Field Employees'}
                           </h4>
                           <p className="text-xs text-slate-600 font-medium max-w-md mx-auto leading-relaxed">
-                            {currentRole === 'dealer' || currentUser?.role === 'dealer' ? 'Dealers' : 'Field employees'} cannot collect or record order booking advance payments. Please contact the Admin or Accounts team to confirm order booking and record the payment deposit.
+                            {currentRole === 'dealer' || currentUser?.role === 'dealer' ? 'Channel partners' : 'Field employees'} cannot collect or record order booking advance payments. Please contact the Admin or Accounts team to confirm order booking and record the payment deposit.
                           </p>
                           <div className="text-[11px] text-slate-500 font-semibold pt-1">
                             Contract Value: <strong className="text-slate-800 font-bold">₹{orderSubtotal.toLocaleString('en-IN')}</strong> (Ready for Office Booking)
@@ -6247,9 +6247,9 @@ export const Leads: React.FC = () => {
                                 {(lead.createdByDealer || lead.dealerName) && (
                                   <span
                                     className="px-2.5 py-0.5 rounded-full text-[10px] font-black flex items-center gap-1 bg-purple-100 text-purple-800 border border-purple-300 shadow-2xs"
-                                    title={`Lead created by Dealer Partner: ${lead.dealerName || lead.createdBy}`}
+                                    title={`Lead created by Channel Partner: ${lead.dealerName || lead.createdBy}`}
                                   >
-                                    <span>🏪 CREATED BY DEALER: {lead.dealerName || lead.createdBy}</span>
+                                    <span>🏪 CREATED BY CHANNEL PARTNER: {lead.dealerName || lead.createdBy}</span>
                                   </span>
                                 )}
 

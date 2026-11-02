@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { roleLabel } from '../../utils/roleLabel';
 import dayjs from 'dayjs';
 import relativeTime from 'dayjs/plugin/relativeTime';
 import { BellRing, Truck, Eye, Phone, Loader2, Inbox, User } from 'lucide-react';
@@ -168,7 +169,7 @@ export const DispatchRequestsBoard: React.FC<{ onCreateChallan: (leadId: string)
 
                 <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] text-slate-500 font-semibold">
                   <span className="inline-flex items-center gap-1">
-                    <User className="w-3 h-3" /> {r.requestedByName} ({(r.requestedByRole || '').replace(/_/g, ' ')})
+                    <User className="w-3 h-3" /> {r.requestedByName} ({roleLabel(r.requestedByRole, '')})
                   </span>
                   <span title={dayjs(r.createdAt).format('DD MMM YYYY, hh:mm A')}>{dayjs(r.createdAt).fromNow()}</span>
                   <span>Paid ₹{(r.totalPaid || 0).toLocaleString('en-IN')} / ₹{(r.orderTotal || 0).toLocaleString('en-IN')}</span>

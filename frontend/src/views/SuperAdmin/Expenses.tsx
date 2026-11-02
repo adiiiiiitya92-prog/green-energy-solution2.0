@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { roleLabel } from '../../utils/roleLabel';
 import { Link } from 'react-router-dom';
 import { useAuthStore } from '../../store/authStore';
 import { expenseService, resolveExpenseReceiptUrl, normalizeReceiptUrl } from '../../services/expenseService';
@@ -236,7 +237,7 @@ export const Expenses: React.FC = () => {
       'Expense #': c.expenseNumber,
       'Employee': c.employeeName,
       'Phone': c.employeePhone,
-      'Role': (c.employeeRole || '').replace(/_/g, ' '),
+      'Role': roleLabel(c.employeeRole, ''),
       'Category': formatCategoryLabel(c.category),
       'Title': c.title,
       'Expense Date': dayjs(c.expenseDate).format('DD-MM-YYYY'),
@@ -463,7 +464,7 @@ export const Expenses: React.FC = () => {
               <option value="sales_person">Sales Employees</option>
               <option value="admin">Admins</option>
               <option value="inventory_manager">Inventory Managers</option>
-              <option value="dealer">Dealers</option>
+              <option value="dealer">Channel Partners</option>
             </select>
 
             <select
@@ -562,7 +563,7 @@ export const Expenses: React.FC = () => {
                       {claim.expenseNumber}
                     </span>
                     <span className="text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded bg-emerald-100 text-emerald-800">
-                      {(claim.employeeRole || 'employee').replace(/_/g, ' ')}
+                      {roleLabel(claim.employeeRole, 'employee')}
                     </span>
                     {claim.reapplicationCount && claim.reapplicationCount > 0 ? (
                       <span className="text-[9px] font-extrabold px-1.5 py-0.2 rounded bg-amber-100 text-amber-800">

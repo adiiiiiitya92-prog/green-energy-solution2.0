@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { roleLabel } from '../../utils/roleLabel';
 import { useAuthStore } from '../../store/authStore';
 import { leaveService } from '../../services/leaveService';
 import type { LeaveRequest } from '../../types';
@@ -212,7 +213,7 @@ export const LeaveRequests: React.FC = () => {
             </div>
             <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight">Staff Leave Requests & Sanctions</h1>
             <p className="text-xs sm:text-sm text-slate-300 max-w-2xl leading-relaxed">
-              Review and act on leave applications submitted by Admins, Field Engineers, Inventory Managers, and Dealers.
+              Review and act on leave applications submitted by Admins, Field Engineers, Inventory Managers, and Channel Partners.
               Approvals generate official signed letters, and rejections provide structured feedback allowing employees to reapply.
             </p>
           </div>
@@ -347,7 +348,7 @@ export const LeaveRequests: React.FC = () => {
             <option value="field_employee">Field Employees</option>
             <option value="sales_person">Sales Employees</option>
             <option value="inventory_manager">Inventory Managers</option>
-            <option value="dealer">Dealers</option>
+            <option value="dealer">Channel Partners</option>
           </select>
         </div>
       </div>
@@ -388,7 +389,7 @@ export const LeaveRequests: React.FC = () => {
                       {req.leaveNumber}
                     </span>
                     <span className="text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded bg-emerald-100 text-emerald-800">
-                      {(req.employeeRole || 'employee').replace(/_/g, ' ')}
+                      {roleLabel(req.employeeRole, 'employee')}
                     </span>
                     {req.reapplicationCount && req.reapplicationCount > 0 ? (
                       <span className="text-[9px] font-extrabold px-1.5 py-0.2 rounded bg-amber-100 text-amber-800">

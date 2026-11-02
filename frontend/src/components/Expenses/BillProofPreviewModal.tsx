@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { roleLabel } from '../../utils/roleLabel';
 import type { ExpenseClaim } from '../../types';
 import { resolveExpenseReceiptUrl, normalizeReceiptUrl } from '../../services/expenseService';
 import { getFreshB2SignedUrl } from '../../services/firebase';
@@ -104,7 +105,7 @@ const BillProofPreviewModalContent: React.FC<BillProofPreviewModalInnerProps> = 
             <div>
               <h3 className="text-sm font-bold tracking-tight">Bill / Receipt Proof Verification</h3>
               <p className="text-[10px] text-slate-300">
-                {claim.expenseNumber} • {claim.employeeName} ({(claim.employeeRole || 'employee').replace(/_/g, ' ').toUpperCase()})
+                {claim.expenseNumber} • {claim.employeeName} ({roleLabel(claim.employeeRole, 'employee').toUpperCase()})
               </p>
             </div>
           </div>

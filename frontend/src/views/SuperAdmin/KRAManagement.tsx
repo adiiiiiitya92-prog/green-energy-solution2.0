@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
+import { roleLabel } from '../../utils/roleLabel';
 import { useAuthStore } from '../../store/authStore';
 import { employeeService } from '../../services/employeeService';
 import { kraService, DEFAULT_FIELD_KRA } from '../../services/kraService';
@@ -40,7 +41,7 @@ const ROLE_OPTIONS: Array<{ value: UserRole | 'all'; label: string }> = [
   { value: 'inventory_manager', label: 'Inventory Manager' },
   { value: 'admin', label: 'Admin' },
   { value: 'manager', label: 'Manager' },
-  { value: 'dealer', label: 'Dealer' },
+  { value: 'dealer', label: 'Channel Partner' },
   { value: 'sales_person', label: 'Sales Person' }
 ];
 
@@ -377,7 +378,7 @@ export const KRAManagement: React.FC = () => {
                         <div>
                           <p className="text-xs font-semibold text-slate-800">{emp.fullName}</p>
                           <p className="text-[10px] text-slate-500 uppercase tracking-wide">
-                            {emp.role.replace(/_/g, ' ')}
+                            {roleLabel(emp.role)}
                           </p>
                         </div>
                         {latest && (
@@ -406,7 +407,7 @@ export const KRAManagement: React.FC = () => {
                     <div>
                       <h3 className="text-sm font-bold text-slate-800">{scoringEmp.fullName}</h3>
                       <p className="text-[11px] text-slate-500">
-                        {scoringEmp.designation || scoringEmp.role.replace(/_/g, ' ').toUpperCase()}
+                        {scoringEmp.designation || roleLabel(scoringEmp.role).toUpperCase()}
                       </p>
                     </div>
                     <div className="flex flex-wrap items-center gap-2">
@@ -634,7 +635,7 @@ export const KRAManagement: React.FC = () => {
                     <tr key={s.id} className="border-t border-slate-100">
                       <td className="px-3 py-2 text-slate-500">{i + 1}</td>
                       <td className="px-3 py-2 font-semibold text-slate-800">{s.employeeName}</td>
-                      <td className="px-3 py-2 text-slate-500 uppercase text-[10px]">{s.employeeRole.replace(/_/g, ' ')}</td>
+                      <td className="px-3 py-2 text-slate-500 uppercase text-[10px]">{roleLabel(s.employeeRole)}</td>
                       <td className="px-3 py-2 text-center font-bold text-emerald-700">{s.totalScore}</td>
                       <td className="px-3 py-2 text-center">
                         <span className={`text-[10px] font-bold px-2 py-0.5 rounded border ${gradeColor(s.grade)}`}>
@@ -685,7 +686,7 @@ export const KRAManagement: React.FC = () => {
                     <div>
                       <p className="text-sm font-bold text-slate-800">{t.title}</p>
                       <p className="text-[10px] text-slate-500 uppercase tracking-wide">
-                        Role: {String(t.role).replace(/_/g, ' ')} {t.isDefault && '• Default'}
+                        Role: {t.role === 'all' ? 'all' : roleLabel(String(t.role))} {t.isDefault && '• Default'}
                       </p>
                     </div>
                     <div className="flex items-center gap-1">

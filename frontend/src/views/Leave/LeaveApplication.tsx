@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { roleLabel } from '../../utils/roleLabel';
 import { useAuthStore } from '../../store/authStore';
 import { leaveService, calculateLeaveDays } from '../../services/leaveService';
 import type { LeaveRequest, LeaveType, LeaveDurationType } from '../../types';
@@ -239,7 +240,7 @@ export const LeaveApplication: React.FC = () => {
                 </div>
                 <div>
                   <p className="font-extrabold text-white">{currentUser.fullName || 'User'}</p>
-                  <p className="text-[10px] text-emerald-200 uppercase tracking-wider">{(currentRole || 'user').replace(/_/g, ' ')}</p>
+                  <p className="text-[10px] text-emerald-200 uppercase tracking-wider">{roleLabel(currentRole, 'user')}</p>
                 </div>
               </div>
               <div className="pt-1.5 border-t border-white/10 text-[11px] text-emerald-100 space-y-0.5">

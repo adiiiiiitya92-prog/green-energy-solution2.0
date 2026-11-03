@@ -424,6 +424,17 @@ export const leadService = {
     }
   },
 
+  async assignChannelPartner(leadId: string, dealerId?: string, dealerName?: string): Promise<void> {
+    const lead = await db.leads.get(leadId);
+    if (lead) {
+      lead.dealerId = dealerId;
+      lead.dealerName = dealerId ? dealerName : undefined;
+      lead.updatedAt = new Date().toISOString();
+      await db.leads.put(lead);
+      saveRecordToFirestore('leads', leadId, lead);
+    }
+  },
+
   async updateLeadStatus(leadId: string, status: Lead['status']): Promise<void> {
     const lead = await db.leads.get(leadId);
     if (lead) {

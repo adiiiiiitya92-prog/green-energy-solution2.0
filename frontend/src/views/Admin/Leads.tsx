@@ -1697,6 +1697,16 @@ export const Leads: React.FC = () => {
     }
   };
 
+  const handleAssignChannelPartner = async (dealerId: string) => {
+    if (selectedLead) {
+      const dealer = employees.find(e => e.id === dealerId);
+      await leadService.assignChannelPartner(selectedLead.id, dealerId || undefined, dealer?.fullName);
+      const updated = await leadService.getLeadById(selectedLead.id);
+      if (updated) setSelectedLead(updated);
+      loadData();
+    }
+  };
+
   // Open Staff WhatsApp reminder modal (for Sales Person or Admin Person)
   const handleOpenStaffWhatsappReminder = (
     lead: Lead,
@@ -2719,7 +2729,7 @@ export const Leads: React.FC = () => {
               {getStatusBadge(selectedLead.status)}
               {(selectedLead.createdByDealer || selectedLead.dealerName) && (
                 <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black bg-purple-100 text-purple-800 border border-purple-300 shadow-2xs">
-                  🏪 CREATED BY CHANNEL PARTNER: {selectedLead.dealerName || selectedLead.createdBy}
+                  🏪 {selectedLead.createdByDealer ? 'CREATED BY CHANNEL PARTNER' : 'CHANNEL PARTNER'}: {selectedLead.dealerName || selectedLead.createdBy}
                 </span>
               )}
               {selectedLead.isLoan && (
@@ -2824,6 +2834,26 @@ export const Leads: React.FC = () => {
                     ))}
                   </select>
                 </div>
+                {(currentRole === 'super_admin' || currentRole === 'admin' || currentRole === 'manager') && (
+                  <div className="space-y-1 sm:col-span-2">
+                    <label className="block text-[11px] font-bold text-slate-500 uppercase tracking-wider">🤝 Channel Partner</label>
+                    <select
+                      value={selectedLead.dealerId || ''}
+                      onChange={(e) => handleAssignChannelPartner(e.target.value)}
+                      className="w-full border border-slate-200 rounded-xl p-2 bg-slate-50 text-xs font-bold focus:outline-none cursor-pointer text-slate-700"
+                    >
+                      <option value="">-- No Channel Partner --</option>
+                      {employees
+                        .filter(emp => emp.role === 'dealer' && (emp.isActive !== false || emp.id === selectedLead.dealerId))
+                        .map(emp => (
+                          <option key={emp.id} value={emp.id}>{emp.fullName}</option>
+                        ))}
+                      {selectedLead.dealerId && !employees.some(emp => emp.id === selectedLead.dealerId) && (
+                        <option value={selectedLead.dealerId}>{selectedLead.dealerName || 'Channel Partner'}</option>
+                      )}
+                    </select>
+                  </div>
+                )}
               </div>
             )}
           </div>
@@ -6247,9 +6277,9 @@ export const Leads: React.FC = () => {
                                 {(lead.createdByDealer || lead.dealerName) && (
                                   <span
                                     className="px-2.5 py-0.5 rounded-full text-[10px] font-black flex items-center gap-1 bg-purple-100 text-purple-800 border border-purple-300 shadow-2xs"
-                                    title={`Lead created by Channel Partner: ${lead.dealerName || lead.createdBy}`}
+                                    title={`${lead.createdByDealer ? 'Lead created by' : 'Assigned to'} Channel Partner: ${lead.dealerName || lead.createdBy}`}
                                   >
-                                    <span>🏪 CREATED BY CHANNEL PARTNER: {lead.dealerName || lead.createdBy}</span>
+                                    <span>🏪 {lead.createdByDealer ? 'CREATED BY CHANNEL PARTNER' : 'CHANNEL PARTNER'}: {lead.dealerName || lead.createdBy}</span>
                                   </span>
                                 )}
 

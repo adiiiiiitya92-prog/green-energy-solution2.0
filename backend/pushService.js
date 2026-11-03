@@ -114,7 +114,7 @@ export async function notifyRole(role, payload, excludeUserId) {
 
 export const PUSH_WATCHED = new Set(['leads', 'leaveRequests', 'paymentRequests', 'deletionRequests', 'expenses', 'dispatchRequests']);
 
-const LEAD_ASSIGN_FIELDS = ['assignedSalesPersonId', 'assignedAdminId', 'assignedEmployeeId'];
+const LEAD_ASSIGN_FIELDS = ['assignedSalesPersonId', 'assignedAdminId', 'assignedEmployeeId', 'dealerId'];
 const FRESH_MS = 3 * 24 * 3600 * 1000;
 
 // Records first seen by the server long after creation are usually offline/reconciliation re-syncs, not new events.
@@ -139,7 +139,7 @@ export async function handlePushTriggers(collection, prev, next) {
       .filter(uid => uid && !LEAD_ASSIGN_FIELDS.some(f => prev?.[f] === uid));
     if (!newlyAssigned.length) return;
     if (!prev && !isFresh(next.createdAt)) return;
-    const recipients = newlyAssigned.filter(uid => prev || uid !== next.createdBy);
+    const recipients = newlyAssigned.filter(uid => prev || (uid !== next.createdBy && !(next.createdByDealer && uid === next.dealerId)));
     await notifyUsers(recipients, {
       title: '🆕 New Lead Assigned',
       body: `${next.name || 'Customer'}${next.phoneNumber ? ` • ${next.phoneNumber}` : ''}${next.requirement ? ` • ${next.requirement}` : ''}`,

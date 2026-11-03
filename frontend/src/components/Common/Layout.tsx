@@ -34,7 +34,8 @@ import {
   Target,
   ClipboardList,
   PhoneCall,
-  Landmark
+  Landmark,
+  Handshake
 } from 'lucide-react';
 
 interface LayoutProps {
@@ -311,6 +312,18 @@ export const Layout: React.FC<LayoutProps> = ({ children }) => {
       path: '/my-field-visits',
       roles: ['field_employee', 'admin', 'inventory_manager', 'installation_supervisor'],
       icon: MapPin
+    },
+    {
+      name: 'Channel Partner Incentives',
+      path: '/channel-partner-incentives',
+      roles: ['super_admin', 'manager'],
+      icon: Handshake
+    },
+    {
+      name: 'My Incentives',
+      path: '/channel-partner-incentives',
+      roles: ['dealer'],
+      icon: Handshake
     },
     {
       name: 'Expenses',

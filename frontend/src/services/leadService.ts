@@ -435,6 +435,19 @@ export const leadService = {
     }
   },
 
+  async setChannelPartnerRate(leadId: string, rate: number | undefined, gstPct: number, updatedBy?: string): Promise<Lead | undefined> {
+    const lead = await db.leads.get(leadId);
+    if (!lead) return undefined;
+    lead.channelPartnerRate = rate && rate > 0 ? rate : undefined;
+    lead.channelPartnerGstPct = gstPct;
+    lead.channelPartnerRateUpdatedAt = new Date().toISOString();
+    lead.channelPartnerRateUpdatedBy = updatedBy;
+    lead.updatedAt = new Date().toISOString();
+    await db.leads.put(lead);
+    saveRecordToFirestore('leads', leadId, lead);
+    return lead;
+  },
+
   async updateLeadStatus(leadId: string, status: Lead['status']): Promise<void> {
     const lead = await db.leads.get(leadId);
     if (lead) {

@@ -41,6 +41,10 @@ export interface Lead {
   createdByDealer?: boolean;
   dealerId?: string;
   dealerName?: string;
+  channelPartnerRate?: number; // price Green Energy Solution charges the channel partner
+  channelPartnerGstPct?: number; // GST % deducted from the partner's margin
+  channelPartnerRateUpdatedAt?: string;
+  channelPartnerRateUpdatedBy?: string;
   status: 'new' | 'quotation_sent' | 'confirmed' | 'registered' | 'installed' | 'closed' | 'lost';
   clientRating?: 1 | 2 | 3 | 4 | 5;
   isHot?: boolean;

@@ -135,6 +135,7 @@ const RawLeadsList = lazyWithRetry(() => import('./views/SuperAdmin/RawLeadsList
 const MyKRA = lazyWithRetry(() => import('./views/FieldEmployee/MyKRA').then(m => ({ default: m.MyKRA })));
 const MyFieldVisits = lazyWithRetry(() => import('./views/FieldEmployee/MyFieldVisits').then(m => ({ default: m.MyFieldVisits })));
 const TelecallerPanel = lazyWithRetry(() => import('./views/Telecaller/TelecallerPanel').then(m => ({ default: m.TelecallerPanel })));
+const ChannelPartnerIncentives = lazyWithRetry(() => import('./views/ChannelPartner/ChannelPartnerIncentives').then(m => ({ default: m.ChannelPartnerIncentives })));
 const LiaisoningPanel = lazyWithRetry(() => import('./views/Liaisoning/LiaisoningPanel').then(m => ({ default: m.LiaisoningPanel })));
 
 const PageLoader: React.FC = () => (
@@ -235,6 +236,7 @@ export const App: React.FC = () => {
               {isDealer ? (
                 <>
                   <Route path="/dashboard" element={<Dashboard />} />
+                  <Route path="/channel-partner-incentives" element={<ChannelPartnerIncentives />} />
                   <Route path="/leads" element={<Leads />} />
                   <Route path="/leave-application" element={<LeaveApplication />} />
                   <Route path="/expense-tracker" element={<ExpenseTracker />} />
@@ -307,6 +309,7 @@ export const App: React.FC = () => {
                   <Route path="/kra" element={(currentRole === 'super_admin' || currentRole === 'manager') ? <KRAManagement /> : <Navigate to="/dashboard" replace />} />
                   <Route path="/hrms/kra" element={(currentRole === 'super_admin' || currentRole === 'manager') ? <KRAManagement /> : <Navigate to="/dashboard" replace />} />
                   <Route path="/raw-leads" element={(currentRole === 'super_admin' || currentRole === 'manager') ? <RawLeadsList /> : <Navigate to="/dashboard" replace />} />
+                  <Route path="/channel-partner-incentives" element={(currentRole === 'super_admin' || currentRole === 'manager') ? <ChannelPartnerIncentives /> : <Navigate to="/dashboard" replace />} />
                   <Route path="/my-field-visits" element={<MyFieldVisits />} />
                   <Route path="/expense-tracker" element={<ExpenseTracker />} />
                   <Route path="/expenses" element={(currentRole === 'super_admin' || currentRole === 'manager') ? <Expenses /> : <ExpenseTracker />} />

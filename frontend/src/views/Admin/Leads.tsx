@@ -3,6 +3,8 @@ import { useSearchParams, useNavigate } from 'react-router-dom';
 import { db, getDeletedRecordIdsSet } from '../../services/db';
 import { useAuthStore } from '../../store/authStore';
 import { leadService, filterLeadsForUser } from '../../services/leadService';
+import { leadIncentive } from '../../services/channelPartnerIncentive';
+import { ChannelPartnerRateModal } from '../../components/ChannelPartner/ChannelPartnerRateModal';
 import { challanService } from '../../services/challanService';
 import { quotationService, getCleanWhatsAppPhone, getQuotationTotalAmount } from '../../services/quotationService';
 import { shareQuotationViaWhatsapp } from '../../services/quotationShareService';
@@ -93,6 +95,7 @@ export const Leads: React.FC = () => {
   const { currentRole, currentUser } = useAuthStore();
   const [searchParams, setSearchParams] = useSearchParams();
   const [leads, setLeads] = useState<Lead[]>([]);
+  const [cpRateLead, setCpRateLead] = useState<Lead | null>(null);
   const [employees, setEmployees] = useState<Profile[]>([]);
   const [employeeNames, setEmployeeNames] = useState<Record<string, string>>({});
   const [employeeProfiles, setEmployeeProfiles] = useState<Record<string, Profile>>({});
@@ -6445,6 +6448,43 @@ export const Leads: React.FC = () => {
                               </span>
                             </div>
                           )}
+
+                          {lead.dealerId && (() => {
+                            const canSetRate = currentRole === 'super_admin' || currentRole === 'admin' || currentRole === 'manager';
+                            const inc = leadIncentive(lead, fin?.totalValue || 0);
+                            return (
+                              <div className="mt-2 p-2.5 bg-purple-50 border border-purple-200 rounded-xl space-y-1 text-[11px]">
+                                <div className="flex items-center justify-between gap-2">
+                                  <span className="font-black text-purple-800 truncate">🤝 {lead.dealerName || 'Channel Partner'}</span>
+                                  {canSetRate && (
+                                    <button
+                                      type="button"
+                                      onClick={(e) => { e.stopPropagation(); setCpRateLead(lead); }}
+                                      className="shrink-0 px-2 py-0.5 rounded-md bg-purple-700 hover:bg-purple-800 text-white font-bold text-[10px] cursor-pointer"
+                                    >
+                                      {lead.channelPartnerRate ? 'Edit Rate' : 'Set Partner Rate'}
+                                    </button>
+                                  )}
+                                </div>
+                                {inc ? (
+                                  <>
+                                    <div className="flex justify-between text-purple-900/80 font-semibold">
+                                      <span>Partner rate</span><span className="font-black">₹{inc.rate.toLocaleString('en-IN')}</span>
+                                    </div>
+                                    <div className="flex justify-between text-purple-900/80 font-semibold">
+                                      <span>Margin − GST {inc.gstPct}%</span>
+                                      <span className="font-black">₹{inc.margin.toLocaleString('en-IN')} − ₹{inc.gst.toLocaleString('en-IN')}</span>
+                                    </div>
+                                    <div className="flex justify-between text-emerald-700 font-black pt-1 border-t border-purple-200">
+                                      <span>Partner Incentive</span><span>₹{inc.incentive.toLocaleString('en-IN')}</span>
+                                    </div>
+                                  </>
+                                ) : (
+                                  <p className="text-purple-700/80 font-semibold italic">Partner rate not set yet</p>
+                                )}
+                              </div>
+                            );
+                          })()}
                         </div>
 
                         <div className="mt-4 pt-4 border-t border-slate-100 flex flex-wrap justify-between items-center text-[10px] text-slate-500 font-bold gap-2">
@@ -8016,6 +8056,19 @@ export const Leads: React.FC = () => {
             </div>
           </div>
         </div>
+      )}
+
+      {cpRateLead && (
+        <ChannelPartnerRateModal
+          lead={cpRateLead}
+          customerPrice={leadFinancialMap[cpRateLead.id]?.totalValue || 0}
+          updatedBy={currentUser?.fullName}
+          onClose={() => setCpRateLead(null)}
+          onSaved={(updated) => {
+            setLeads(prev => prev.map(l => (l.id === updated.id ? updated : l)));
+            if (selectedLead?.id === updated.id) setSelectedLead(updated);
+          }}
+        />
       )}
     </div>
   );

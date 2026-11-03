@@ -234,6 +234,7 @@ export const App: React.FC = () => {
               {/* Dealer Dedicated Panel & Routes */}
               {isDealer ? (
                 <>
+                  <Route path="/dashboard" element={<Dashboard />} />
                   <Route path="/leads" element={<Leads />} />
                   <Route path="/leave-application" element={<LeaveApplication />} />
                   <Route path="/expense-tracker" element={<ExpenseTracker />} />

@@ -169,7 +169,7 @@ export const Layout: React.FC<LayoutProps> = ({ children }) => {
     {
       name: 'Dashboard',
       path: '/dashboard',
-      roles: ['super_admin', 'admin'],
+      roles: ['super_admin', 'admin', 'dealer'],
       icon: LayoutDashboard
     },
     {

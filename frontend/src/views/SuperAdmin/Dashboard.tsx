@@ -24,6 +24,7 @@ export const Dashboard: React.FC = () => {
   const desigStr = (currentUser?.designation || '').toLowerCase();
   const isSuperAdmin = roleStr === 'super_admin';
   const hasFullAccess = isSuperAdmin || roleStr === 'operations_admin' || desigStr.includes('operations admin') || desigStr.includes('ops admin');
+  const isChannelPartner = roleStr === 'dealer';
 
   const [leads, setLeads] = useState<Lead[]>([]);
   const [allCompanyLeads, setAllCompanyLeads] = useState<Lead[]>([]);
@@ -290,7 +291,7 @@ export const Dashboard: React.FC = () => {
   };
 
   // 1b. Ordered funnel stages (exact company-wide CRM numbers)
-  const funnelSource = allCompanyLeads.length > 0 ? allCompanyLeads : leads;
+  const funnelSource = !isChannelPartner && allCompanyLeads.length > 0 ? allCompanyLeads : leads;
   const funnelCount = (status: Lead['status']) => funnelSource.filter(l => l.status === status).length;
   const funnelStages = [
     { label: 'New Leads', count: funnelCount('new') },
@@ -482,7 +483,7 @@ export const Dashboard: React.FC = () => {
     { label: 'Overdue customer payments (₹)', count: overduePaymentTotal, color: 'text-red-700', bg: 'bg-red-50', isAmount: true },
     { label: 'Leave requests to approve', count: pendingLeaveCount, color: 'text-blue-600', bg: 'bg-blue-50', link: '/leave-requests' },
     { label: 'Expense claims to approve', count: pendingExpenseCount, color: 'text-indigo-600', bg: 'bg-indigo-50', link: '/expenses' },
-    { label: 'Products low on stock', count: lowStockProducts.length, color: 'text-rose-600', bg: 'bg-rose-50', link: '/products' },
+    { label: 'Products low on stock', count: isChannelPartner ? 0 : lowStockProducts.length, color: 'text-rose-600', bg: 'bg-rose-50', link: '/products' },
   ].filter(i => i.count > 0);
 
   return (
@@ -490,8 +491,10 @@ export const Dashboard: React.FC = () => {
       {/* Page Header */}
       <div className="flex items-center justify-between gap-3">
         <div>
-          <h1 className="text-xl sm:text-2xl font-black tracking-tight text-slate-900">Executive Analytics</h1>
-          <p className="text-xs sm:text-sm text-slate-500 font-medium">Real-time pipeline metrics & revenue insights</p>
+          <h1 className="text-xl sm:text-2xl font-black tracking-tight text-slate-900">{isChannelPartner ? 'My Leads Dashboard' : 'Executive Analytics'}</h1>
+          <p className="text-xs sm:text-sm text-slate-500 font-medium">
+            {isChannelPartner ? 'Pipeline, booking and payment status of your leads' : 'Real-time pipeline metrics & revenue insights'}
+          </p>
         </div>
         <div className="text-[10px] font-bold text-slate-400 bg-slate-100 px-3 py-1.5 rounded-xl hidden sm:block">
           {dayjs().format('DD MMM YYYY')}
@@ -872,6 +875,7 @@ export const Dashboard: React.FC = () => {
       </div>
 
       {/* Main Grid: Sales Leaderboard + Field Operations */}
+      {!isChannelPartner && (
       <div className={`grid grid-cols-1 gap-4 ${currentRole === 'super_admin' ? 'lg:grid-cols-3' : ''}`}>
         {currentRole === 'super_admin' && (
         <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs lg:col-span-2">
@@ -939,10 +943,12 @@ export const Dashboard: React.FC = () => {
           </div>
         </div>
       </div>
+      )}
 
       {/* Employee Performance Rankings */}
       <FollowUpReminders />
 
+      {!isChannelPartner && (
       <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-xs">
         <div className="flex items-center justify-between mb-4 border-b border-slate-100 pb-4">
           <h3 className="font-bold text-slate-800 text-sm uppercase tracking-wider flex items-center gap-2">
@@ -1015,6 +1021,7 @@ export const Dashboard: React.FC = () => {
           </table>
         </div>
       </div>
+      )}
 
       {/* Deletion & Action Approvals Modal */}
       <DeletionApprovalsModal

@@ -1,4 +1,4 @@
-import type { Lead, OrderConfirmation, Quotation } from '../types';
+import type { Lead, OrderConfirmation, Profile, Quotation } from '../types';
 import { getQuotationTotalAmount } from './quotationService';
 
 export const DEFAULT_CP_GST_PCT = 8.9;
@@ -19,7 +19,24 @@ export function computeIncentive(customerPrice: number, rate: number, gstPct = D
   return { customerPrice: customerPrice || 0, rate: rate || 0, margin, gstPct: gstPct || 0, gst, incentive: margin - gst };
 }
 
-export const leadIncentive = (lead: Lead, customerPrice: number): IncentiveBreakdown | null =>
+// Partners were historically assigned through the Sales/Admin person dropdowns or by creating the lead themselves,
+// so the explicit dealerId is only one of several links.
+export function resolveChannelPartner(lead: Lead, dealers: Pick<Profile, 'id' | 'fullName'>[]): { id: string; name: string } | null {
+  const byId = new Map(dealers.map(d => [d.id, d]));
+  if (lead.dealerId) return { id: lead.dealerId, name: byId.get(lead.dealerId)?.fullName || lead.dealerName || 'Channel Partner' };
+  for (const id of [lead.assignedSalesPersonId, lead.assignedAdminId, lead.assignedEmployeeId]) {
+    const d = id ? byId.get(id) : undefined;
+    if (d) return { id: d.id, name: d.fullName };
+  }
+  const creator = (lead.createdBy || '').toLowerCase().trim();
+  if (creator) {
+    const d = dealers.find(x => x.id === lead.createdBy || (x.fullName || '').toLowerCase().trim() === creator);
+    if (d) return { id: d.id, name: d.fullName };
+  }
+  return null;
+}
+
+export const leadIncentive =(lead: Lead, customerPrice: number): IncentiveBreakdown | null =>
   lead.channelPartnerRate && lead.channelPartnerRate > 0
     ? computeIncentive(customerPrice, lead.channelPartnerRate, lead.channelPartnerGstPct ?? DEFAULT_CP_GST_PCT)
     : null;

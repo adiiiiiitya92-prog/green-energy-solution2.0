@@ -6,7 +6,7 @@ import { leadService } from '../../services/leadService';
 import { quotationService } from '../../services/quotationService';
 import { orderService } from '../../services/orderService';
 import { employeeService } from '../../services/employeeService';
-import { buildContractValueMap, leadIncentive, type IncentiveBreakdown } from '../../services/channelPartnerIncentive';
+import { buildContractValueMap, leadIncentive, resolveChannelPartner, type IncentiveBreakdown } from '../../services/channelPartnerIncentive';
 import { ChannelPartnerRateModal } from '../../components/ChannelPartner/ChannelPartnerRateModal';
 import type { Lead, OrderConfirmation, Profile } from '../../types';
 
@@ -39,7 +39,7 @@ export const ChannelPartnerIncentives: React.FC = () => {
   const [rateLead, setRateLead] = useState<Lead | null>(null);
 
   const [partnerFilter, setPartnerFilter] = useState('all');
-  const [year, setYear] = useState<string>(String(dayjs().year()));
+  const [year, setYear] = useState<string>('all');
   const [month, setMonth] = useState<string>('all');
   const [rateFilter, setRateFilter] = useState<'all' | 'set' | 'pending'>('all');
   const [search, setSearch] = useState('');
@@ -52,8 +52,7 @@ export const ChannelPartnerIncentives: React.FC = () => {
         orderService.getAllOrderConfirmations().catch(() => []),
         employeeService.getEmployees().catch(() => [] as Profile[])
       ]);
-      const mine = allLeads.filter(l => l.dealerId && (!isPartner || l.dealerId === currentUser?.id));
-      setLeads(mine);
+      setLeads(allLeads);
       setContractMap(buildContractValueMap(quotes, ocs));
       const om: Record<string, OrderConfirmation> = {};
       ocs.forEach(oc => { if (oc.leadId) om[oc.leadId] = oc; });
@@ -77,20 +76,23 @@ export const ChannelPartnerIncentives: React.FC = () => {
     return () => { clearTimeout(t); window.removeEventListener('app-realtime-update', onUpdate); };
   }, [load]);
 
-  const partnerName = useCallback((id: string, fallback?: string) =>
-    partners.find(p => p.id === id)?.fullName || fallback || 'Channel Partner', [partners]);
-
-  const allRows: Row[] = useMemo(() => leads.map(lead => {
-    const customerPrice = contractMap[lead.id] || 0;
-    return {
-      lead,
-      partnerId: lead.dealerId!,
-      partnerName: partnerName(lead.dealerId!, lead.dealerName),
-      date: bookingDate(lead, ocMap[lead.id]),
-      customerPrice,
-      inc: leadIncentive(lead, customerPrice)
-    };
-  }).sort((a, b) => (b.date || '').localeCompare(a.date || '')), [leads, contractMap, ocMap, partnerName]);
+  const allRows: Row[] = useMemo(() => {
+    const out: Row[] = [];
+    for (const lead of leads) {
+      const partner = resolveChannelPartner(lead, partners);
+      if (!partner || (isPartner && partner.id !== currentUser?.id)) continue;
+      const customerPrice = contractMap[lead.id] || 0;
+      out.push({
+        lead,
+        partnerId: partner.id,
+        partnerName: partner.name,
+        date: bookingDate(lead, ocMap[lead.id]),
+        customerPrice,
+        inc: leadIncentive(lead, customerPrice)
+      });
+    }
+    return out.sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+  }, [leads, partners, contractMap, ocMap, isPartner, currentUser?.id]);
 
   const years = useMemo(() => {
     const ys = new Set<string>([String(dayjs().year())]);
@@ -329,6 +331,7 @@ export const ChannelPartnerIncentives: React.FC = () => {
       {rateLead && (
         <ChannelPartnerRateModal
           lead={rateLead}
+          partnerName={resolveChannelPartner(rateLead, partners)?.name}
           customerPrice={contractMap[rateLead.id] || 0}
           updatedBy={currentUser?.fullName}
           onClose={() => setRateLead(null)}

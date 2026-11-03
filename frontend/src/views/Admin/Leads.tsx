@@ -3,7 +3,7 @@ import { useSearchParams, useNavigate } from 'react-router-dom';
 import { db, getDeletedRecordIdsSet } from '../../services/db';
 import { useAuthStore } from '../../store/authStore';
 import { leadService, filterLeadsForUser } from '../../services/leadService';
-import { leadIncentive } from '../../services/channelPartnerIncentive';
+import { leadIncentive, resolveChannelPartner } from '../../services/channelPartnerIncentive';
 import { ChannelPartnerRateModal } from '../../components/ChannelPartner/ChannelPartnerRateModal';
 import { challanService } from '../../services/challanService';
 import { quotationService, getCleanWhatsAppPhone, getQuotationTotalAmount } from '../../services/quotationService';
@@ -99,6 +99,11 @@ export const Leads: React.FC = () => {
   const [employees, setEmployees] = useState<Profile[]>([]);
   const [employeeNames, setEmployeeNames] = useState<Record<string, string>>({});
   const [employeeProfiles, setEmployeeProfiles] = useState<Record<string, Profile>>({});
+  const dealerProfiles = React.useMemo(() => {
+    const map = new Map<string, Profile>();
+    [...employees, ...Object.values(employeeProfiles)].forEach(p => { if (p?.role === 'dealer') map.set(p.id, p); });
+    return [...map.values()];
+  }, [employees, employeeProfiles]);
   const [catalogProducts, setCatalogProducts] = useState<Product[]>([]);
 
   // Staff WhatsApp Reminder Modal State (for Sales Person or Admin Person)
@@ -6449,13 +6454,15 @@ export const Leads: React.FC = () => {
                             </div>
                           )}
 
-                          {lead.dealerId && (() => {
+                          {(() => {
+                            const partner = resolveChannelPartner(lead, dealerProfiles);
+                            if (!partner) return null;
                             const canSetRate = currentRole === 'super_admin' || currentRole === 'admin' || currentRole === 'manager';
                             const inc = leadIncentive(lead, fin?.totalValue || 0);
                             return (
                               <div className="mt-2 p-2.5 bg-purple-50 border border-purple-200 rounded-xl space-y-1 text-[11px]">
                                 <div className="flex items-center justify-between gap-2">
-                                  <span className="font-black text-purple-800 truncate">🤝 {lead.dealerName || 'Channel Partner'}</span>
+                                  <span className="font-black text-purple-800 truncate">🤝 {partner.name}</span>
                                   {canSetRate && (
                                     <button
                                       type="button"
@@ -8061,6 +8068,7 @@ export const Leads: React.FC = () => {
       {cpRateLead && (
         <ChannelPartnerRateModal
           lead={cpRateLead}
+          partnerName={resolveChannelPartner(cpRateLead, dealerProfiles)?.name}
           customerPrice={leadFinancialMap[cpRateLead.id]?.totalValue || 0}
           updatedBy={currentUser?.fullName}
           onClose={() => setCpRateLead(null)}

@@ -9,10 +9,11 @@ const inr = (n: number) => `₹${Math.round(n).toLocaleString('en-IN')}`;
 export const ChannelPartnerRateModal: React.FC<{
   lead: Lead;
   customerPrice: number;
+  partnerName?: string;
   updatedBy?: string;
   onClose: () => void;
   onSaved: (lead: Lead) => void;
-}> = ({ lead, customerPrice, updatedBy, onClose, onSaved }) => {
+}> = ({ lead, customerPrice, partnerName, updatedBy, onClose, onSaved }) => {
   const [rate, setRate] = useState<string>(lead.channelPartnerRate ? String(lead.channelPartnerRate) : '');
   const [gstPct, setGstPct] = useState<string>(String(lead.channelPartnerGstPct ?? DEFAULT_CP_GST_PCT));
   const [saving, setSaving] = useState(false);
@@ -49,7 +50,7 @@ export const ChannelPartnerRateModal: React.FC<{
         <div className="px-5 py-4 bg-gradient-to-r from-purple-700 to-indigo-700 text-white flex items-start justify-between gap-3">
           <div>
             <h3 className="text-sm font-black flex items-center gap-2"><Handshake className="w-4 h-4" /> Channel Partner Rate</h3>
-            <p className="text-[11px] text-purple-100 mt-0.5">{lead.name} • {lead.dealerName || 'Channel Partner'}</p>
+            <p className="text-[11px] text-purple-100 mt-0.5">{lead.name} • {partnerName || lead.dealerName || 'Channel Partner'}</p>
           </div>
           <button type="button" onClick={onClose} className="p-1 rounded-lg hover:bg-white/15 cursor-pointer"><X className="w-4 h-4" /></button>
         </div>

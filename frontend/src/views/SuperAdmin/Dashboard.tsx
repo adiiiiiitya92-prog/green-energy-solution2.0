@@ -872,7 +872,8 @@ export const Dashboard: React.FC = () => {
       </div>
 
       {/* Main Grid: Sales Leaderboard + Field Operations */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+      <div className={`grid grid-cols-1 gap-4 ${currentRole === 'super_admin' ? 'lg:grid-cols-3' : ''}`}>
+        {currentRole === 'super_admin' && (
         <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs lg:col-span-2">
           <div className="flex items-center justify-between mb-3 border-b border-slate-100 pb-3">
             <h3 className="font-bold text-slate-800 text-xs sm:text-sm uppercase tracking-wider flex items-center gap-2">
@@ -912,6 +913,7 @@ export const Dashboard: React.FC = () => {
             </table>
           </div>
         </div>
+        )}
 
         <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs flex flex-col justify-between">
           <div className="space-y-3">

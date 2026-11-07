@@ -6,7 +6,7 @@ import { leadService, filterLeadsForUser } from '../../services/leadService';
 import { leadIncentive, resolveChannelPartner } from '../../services/channelPartnerIncentive';
 import { ChannelPartnerRateModal } from '../../components/ChannelPartner/ChannelPartnerRateModal';
 import { challanService } from '../../services/challanService';
-import { quotationService, getCleanWhatsAppPhone, getQuotationTotalAmount } from '../../services/quotationService';
+import { quotationService, getCleanWhatsAppPhone, getQuotationTotalAmount, latestByLead } from '../../services/quotationService';
 import { shareQuotationViaWhatsapp } from '../../services/quotationShareService';
 import { orderService } from '../../services/orderService';
 import { installationService } from '../../services/installationService';
@@ -102,6 +102,11 @@ export const Leads: React.FC = () => {
   const dealerProfiles = React.useMemo(() => {
     const map = new Map<string, Profile>();
     [...employees, ...Object.values(employeeProfiles)].forEach(p => { if (p?.role === 'dealer') map.set(p.id, p); });
+    return [...map.values()];
+  }, [employees, employeeProfiles]);
+  const liaisoningProfiles = React.useMemo(() => {
+    const map = new Map<string, Profile>();
+    [...employees, ...Object.values(employeeProfiles)].forEach(p => { if (p?.role === 'liaisoning') map.set(p.id, p); });
     return [...map.values()];
   }, [employees, employeeProfiles]);
   const [catalogProducts, setCatalogProducts] = useState<Product[]>([]);
@@ -1015,12 +1020,8 @@ export const Leads: React.FC = () => {
 
         const filteredList = filterLeadsForUser(validLeads, currentUser, currentRole);
         
-        const qMap: Record<string, Quotation> = {};
-        validQuotes.forEach(q => {
-          if (q.leadId && (!qMap[q.leadId] || (q.items && q.items.length > 0))) {
-            qMap[q.leadId] = q;
-          }
-        });
+        // Newest quotation per lead, same as the lead detail page
+        const qMap: Record<string, Quotation> = latestByLead(validQuotes.filter(q => q.items && q.items.length > 0));
 
         const ocMap: Record<string, OrderConfirmation> = {};
         validOcs.forEach(oc => {
@@ -1112,14 +1113,8 @@ export const Leads: React.FC = () => {
         });
       }
 
-      const qMap: Record<string, Quotation> = {};
-      if (allQuotes && allQuotes.length > 0) {
-        allQuotes.forEach(q => {
-          if (q.leadId && (!qMap[q.leadId] || (q.items && q.items.length > 0))) {
-            qMap[q.leadId] = q;
-          }
-        });
-      }
+      // Newest quotation per lead, same as the lead detail page
+      const qMap: Record<string, Quotation> = latestByLead((allQuotes || []).filter(q => q.items && q.items.length > 0));
 
       let activeChallans = Array.isArray(challans) ? challans : [];
       if (activeChallans.length === 0) {
@@ -1709,6 +1704,16 @@ export const Leads: React.FC = () => {
     if (selectedLead) {
       const dealer = employees.find(e => e.id === dealerId);
       await leadService.assignChannelPartner(selectedLead.id, dealerId || undefined, dealer?.fullName);
+      const updated = await leadService.getLeadById(selectedLead.id);
+      if (updated) setSelectedLead(updated);
+      loadData();
+    }
+  };
+
+  const handleAssignLiaisoning = async (userId: string) => {
+    if (selectedLead) {
+      const person = liaisoningProfiles.find(e => e.id === userId);
+      await leadService.assignLiaisoning(selectedLead.id, userId || undefined, person?.fullName);
       const updated = await leadService.getLeadById(selectedLead.id);
       if (updated) setSelectedLead(updated);
       loadData();
@@ -2843,7 +2848,7 @@ export const Leads: React.FC = () => {
                   </select>
                 </div>
                 {(currentRole === 'super_admin' || currentRole === 'admin' || currentRole === 'manager') && (
-                  <div className="space-y-1 sm:col-span-2">
+                  <div className="space-y-1">
                     <label className="block text-[11px] font-bold text-slate-500 uppercase tracking-wider">🤝 Channel Partner</label>
                     <select
                       value={selectedLead.dealerId || ''}
@@ -2858,6 +2863,26 @@ export const Leads: React.FC = () => {
                         ))}
                       {selectedLead.dealerId && !employees.some(emp => emp.id === selectedLead.dealerId) && (
                         <option value={selectedLead.dealerId}>{selectedLead.dealerName || 'Channel Partner'}</option>
+                      )}
+                    </select>
+                  </div>
+                )}
+                {(currentRole === 'super_admin' || currentRole === 'admin' || currentRole === 'manager') && (
+                  <div className="space-y-1">
+                    <label className="block text-[11px] font-bold text-slate-500 uppercase tracking-wider">🏛️ Liaisoning</label>
+                    <select
+                      value={selectedLead.liaisoningId || ''}
+                      onChange={(e) => handleAssignLiaisoning(e.target.value)}
+                      className="w-full border border-slate-200 rounded-xl p-2 bg-slate-50 text-xs font-bold focus:outline-none cursor-pointer text-slate-700"
+                    >
+                      <option value="">-- No Liaisoning --</option>
+                      {liaisoningProfiles
+                        .filter(emp => emp.isActive !== false || emp.id === selectedLead.liaisoningId)
+                        .map(emp => (
+                          <option key={emp.id} value={emp.id}>{emp.fullName}</option>
+                        ))}
+                      {selectedLead.liaisoningId && !liaisoningProfiles.some(emp => emp.id === selectedLead.liaisoningId) && (
+                        <option value={selectedLead.liaisoningId}>{selectedLead.liaisoningName || 'Liaisoning'}</option>
                       )}
                     </select>
                   </div>

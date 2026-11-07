@@ -1,5 +1,5 @@
 import type { Lead, OrderConfirmation, Profile, Quotation } from '../types';
-import { getQuotationTotalAmount } from './quotationService';
+import { getQuotationTotalAmount, latestByLead } from './quotationService';
 
 export const DEFAULT_CP_GST_PCT = 8.9;
 
@@ -43,14 +43,8 @@ export const leadIncentive =(lead: Lead, customerPrice: number): IncentiveBreakd
 
 // Same "Total Contract" rule as the lead card: main quotation total, else the order confirmation value, else amount paid.
 export function buildContractValueMap(quotes: Quotation[], ocs: OrderConfirmation[]): Record<string, number> {
-  const qMap: Record<string, Quotation> = {};
-  quotes.forEach(q => {
-    if (q.leadId && (!qMap[q.leadId] || (q.items && q.items.length > 0))) qMap[q.leadId] = q;
-  });
-  const ocMap: Record<string, OrderConfirmation> = {};
-  ocs.forEach(oc => {
-    if (oc.leadId) ocMap[oc.leadId] = oc;
-  });
+  const qMap = latestByLead(quotes.filter(q => q.items && q.items.length > 0));
+  const ocMap = latestByLead(ocs);
   const out: Record<string, number> = {};
   for (const leadId of new Set([...Object.keys(qMap), ...Object.keys(ocMap)])) {
     const q = qMap[leadId];

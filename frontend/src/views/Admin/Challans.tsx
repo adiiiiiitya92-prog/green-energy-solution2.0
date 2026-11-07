@@ -3,7 +3,7 @@ import { useLocation } from 'react-router-dom';
 import { db, getDeletedRecordIdsSet } from '../../services/db';
 import type { Challan, Lead, Profile, Product, ChallanItem, B2BBusiness, StockTransaction, Quotation, OrderConfirmation, Package } from '../../types';
 import { challanService } from '../../services/challanService';
-import { leadService } from '../../services/leadService';
+import { leadService, isLeadConfirmed, NOT_CONFIRMED_DISPATCH_MSG } from '../../services/leadService';
 import { employeeService } from '../../services/employeeService';
 import { productService } from '../../services/productService';
 import { b2bBusinessService } from '../../services/b2bBusinessService';
@@ -12,7 +12,7 @@ import { quotationService } from '../../services/quotationService';
 import { orderService } from '../../services/orderService';
 import { packageService } from '../../services/packageService';
 import { pdfService } from '../../services/pdfService';
-import { getItemDispatchCategory } from '../../services/dispatchHelper';
+import { getItemDispatchCategory, isSerialTrackedName, isSerialTrackedProduct } from '../../services/dispatchHelper';
 import { useAuthStore } from '../../store/authStore';
 import { SearchableProductSelect } from '../../components/Common/SearchableProductSelect';
 import {
@@ -327,6 +327,7 @@ export const Challans: React.FC = () => {
       const leadId = location.state.prefillLeadId || location.state.prefillLead?.id;
       leadService.getLeadById(leadId).then(targetLead => {
         if (targetLead) {
+          if (!isLeadConfirmed(targetLead)) { alert(`${targetLead.name}: ${NOT_CONFIRMED_DISPATCH_MSG}`); return; }
           handleSelectLead(targetLead);
           setShowAddModal(true);
         }
@@ -762,7 +763,8 @@ export const Challans: React.FC = () => {
 
   const getAvailableSerialsForProduct = (prodId: string, currentChallan?: Challan | null) => {
     const p = products.find(prod => prod.id === prodId);
-    if (!p) return [];
+    // Only panels & inverters carry serial numbers; everything else is dispatched by quantity alone.
+    if (!p || !isSerialTrackedProduct(p)) return [];
 
     const existingInChallan = currentChallan?.items.find(i => i.productId === prodId)?.serialNumbers || [];
 
@@ -1697,7 +1699,7 @@ export const Challans: React.FC = () => {
                           <tr key={idx} className="border-b border-slate-100 last:border-0">
                             <td className="py-2 text-slate-800 font-bold">
                               <div>{item.productName}</div>
-                              {item.serialNumbers && item.serialNumbers.length > 0 && (
+                              {item.serialNumbers && item.serialNumbers.length > 0 && isSerialTrackedName(item.productName) && (
                                 <div className="text-[10px] text-emerald-700 font-semibold mt-1 flex flex-wrap items-center gap-1">
                                   <span className="text-slate-400 font-sans">Serial Nos:</span>
                                   {item.serialNumbers.map(sn => (
@@ -2000,8 +2002,14 @@ export const Challans: React.FC = () => {
                               {filteredLeads.slice(0, 30).map(l => (
                                 <div
                                   key={l.id}
-                                  onClick={() => handleSelectLead(l)}
-                                  className={`p-3 hover:bg-emerald-50/80 cursor-pointer transition-colors flex items-center justify-between gap-3 ${
+                                  onClick={() => {
+                                    if (!isLeadConfirmed(l)) { alert(NOT_CONFIRMED_DISPATCH_MSG); return; }
+                                    handleSelectLead(l);
+                                  }}
+                                  title={isLeadConfirmed(l) ? undefined : 'Not confirmed — cannot dispatch'}
+                                  className={`p-3 transition-colors flex items-center justify-between gap-3 ${
+                                    isLeadConfirmed(l) ? 'hover:bg-emerald-50/80 cursor-pointer' : 'opacity-50 cursor-not-allowed'
+                                  } ${
                                     selectedLeadId === l.id ? 'bg-emerald-50 border-l-4 border-emerald-600' : ''
                                   }`}
                                 >
@@ -2416,7 +2424,7 @@ export const Challans: React.FC = () => {
                 </div>
 
                 {/* Serial Numbers Picker UI with Search & Fast Selection */}
-                {currentProductId && (() => {
+                {currentProductId && isSerialTrackedProduct(products.find(p => p.id === currentProductId)) && (() => {
                   const allAvailable = getAvailableSerialsForProduct(currentProductId, null);
                   const isTracked = allAvailable.length > 0;
                   const query = serialSearchTerm.trim().toLowerCase();
@@ -2632,7 +2640,7 @@ export const Challans: React.FC = () => {
                           <tr key={idx} className="border-b border-slate-100 last:border-0 font-bold">
                             <td className="px-3 py-2.5 text-slate-800">
                               <div>{item.productName}</div>
-                              {item.serialNumbers && item.serialNumbers.length > 0 && (
+                              {item.serialNumbers && item.serialNumbers.length > 0 && isSerialTrackedName(item.productName) && (
                                 <div className="text-[9.5px] font-mono text-emerald-700 font-semibold mt-1 flex flex-wrap gap-1">
                                   {item.serialNumbers.map(sn => (
                                     <span key={sn} className="bg-emerald-50 text-emerald-800 border border-emerald-200 px-1.5 py-0.2 rounded">
@@ -2956,7 +2964,7 @@ export const Challans: React.FC = () => {
                 </div>
 
                 {/* Serial Numbers Picker UI with Search & Fast Selection */}
-                {currentEditProductId && (() => {
+                {currentEditProductId && isSerialTrackedProduct(products.find(p => p.id === currentEditProductId)) && (() => {
                   const allAvailable = getAvailableSerialsForProduct(currentEditProductId, editingChallan);
                   const isTracked = allAvailable.length > 0;
                   const query = editSerialSearchTerm.trim().toLowerCase();
@@ -3172,7 +3180,7 @@ export const Challans: React.FC = () => {
                           <tr key={idx} className="border-b border-slate-100 last:border-0 font-bold">
                             <td className="px-3 py-2.5 text-slate-800">
                               <div>{item.productName}</div>
-                              {item.serialNumbers && item.serialNumbers.length > 0 && (
+                              {item.serialNumbers && item.serialNumbers.length > 0 && isSerialTrackedName(item.productName) && (
                                 <div className="text-[9.5px] font-mono text-emerald-700 font-semibold mt-1 flex flex-wrap gap-1">
                                   {item.serialNumbers.map(sn => (
                                     <span key={sn} className="bg-emerald-50 text-emerald-800 border border-emerald-200 px-1.5 py-0.2 rounded">

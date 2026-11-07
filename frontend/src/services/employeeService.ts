@@ -6,7 +6,7 @@ let lastProfileRemoteSync = 0;
 const PROFILE_SYNC_INTERVAL = 15 * 60 * 1000;
 
 export const employeeService = {
-  async getEmployees(): Promise<Profile[]> {
+  async getEmployees(forceFresh: boolean = false): Promise<Profile[]> {
     const deletedIds = await getDeletedRecordIdsSet();
     const localProfiles = await db.profiles.where('role').anyOf(['admin', 'field_employee', 'inventory_manager', 'dealer', 'manager', 'installation_supervisor', 'telecaller', 'liaisoning', 'sales_person']).toArray();
     const validLocal = localProfiles.filter(p => !deletedIds.has(p.id));
@@ -27,7 +27,7 @@ export const employeeService = {
       }
     };
 
-    if (validLocal.length === 0) {
+    if (validLocal.length === 0 || forceFresh) {
       await syncRemote();
       const freshDeleted = await getDeletedRecordIdsSet();
       const refreshed = await db.profiles.where('role').anyOf(['admin', 'field_employee', 'inventory_manager', 'dealer', 'manager', 'installation_supervisor', 'telecaller', 'liaisoning', 'sales_person']).toArray();

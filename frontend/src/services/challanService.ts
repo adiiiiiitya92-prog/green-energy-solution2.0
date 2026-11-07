@@ -3,6 +3,7 @@ import type { Challan, Product, ProductUnit } from '../types';
 import { saveRecordToFirestore, fetchCollectionFromFirestore } from './firebase';
 import { b2bBusinessService } from './b2bBusinessService';
 import { stockTransactionService } from './stockTransactionService';
+import { isLeadConfirmed, NOT_CONFIRMED_DISPATCH_MSG } from './leadService';
 
 const DEFAULT_VPS_BACKEND = 'https://solar.187.126.120.54.sslip.io';
 const BACKEND_URL = import.meta.env.DEV ? '' : (import.meta.env.VITE_BACKEND_URL || DEFAULT_VPS_BACKEND);
@@ -12,6 +13,32 @@ const CHALLAN_SYNC_INTERVAL = 30 * 1000; // 30 seconds fresh sync throttle
 let activeChallanSyncPromise: Promise<void> | null = null;
 
 let lastReconciliationTime = 0;
+
+/**
+ * Puts `qty` dispatched units back in stock for an item that was dispatched by quantity (no serials picked).
+ * Units noted with this challan's number go back first, so another challan's units are not freed by mistake.
+ */
+function revertQtyUnits(units: ProductUnit[], qty: number, challanNumber?: string): void {
+  let remaining = qty;
+  const isOut = (u: ProductUnit) => u.status === 'sold' || u.status === 'dispatched';
+  const release = (u: ProductUnit) => {
+    u.status = 'available';
+    u.dispatchedAt = undefined;
+    if (challanNumber && u.notes) {
+      // Drop this challan's "Dispatched via …" note so the self-heal check does not treat the unit as still dispatched
+      u.notes = u.notes.split(`Dispatched via ${challanNumber}`).join('').replace(/^[\s•]+|[\s•]+$/g, '') || undefined;
+    }
+    remaining--;
+  };
+  if (challanNumber) {
+    for (let i = units.length - 1; i >= 0 && remaining > 0; i--) {
+      if (isOut(units[i]) && (units[i].notes || '').includes(challanNumber)) release(units[i]);
+    }
+  }
+  for (let i = units.length - 1; i >= 0 && remaining > 0; i--) {
+    if (isOut(units[i])) release(units[i]);
+  }
+}
 
 export const challanService = {
 
@@ -237,6 +264,11 @@ export const challanService = {
   },
 
   async createChallan(cData: Omit<Challan, 'id' | 'createdAt' | 'challanNumber'>): Promise<string> {
+    if (cData.type !== 'b2b' && cData.leadId) {
+      const lead = await db.leads.get(cData.leadId);
+      if (!isLeadConfirmed(lead)) throw new Error(NOT_CONFIRMED_DISPATCH_MSG);
+    }
+
     // 1. Stock Check Validation (Warning for low stock, skip custom items)
     for (const item of cData.items) {
       if (!item.productId || item.productId.startsWith('custom_')) continue;
@@ -476,14 +508,7 @@ export const challanService = {
           return u;
         });
       } else if (units.length > 0) {
-        let remainingToRevert = oldItem.qty;
-        for (let i = units.length - 1; i >= 0 && remainingToRevert > 0; i--) {
-          if (units[i].status === 'sold' || units[i].status === 'dispatched') {
-            units[i].status = 'available';
-            units[i].dispatchedAt = undefined;
-            remainingToRevert--;
-          }
-        }
+        revertQtyUnits(units, oldItem.qty, oldChallan.challanNumber);
       }
 
       const availCount = units.length > 0
@@ -700,14 +725,7 @@ export const challanService = {
             return u;
           });
         } else if (units.length > 0) {
-          let remainingToRevert = item.qty;
-          for (let i = units.length - 1; i >= 0 && remainingToRevert > 0; i--) {
-            if (units[i].status === 'sold' || units[i].status === 'dispatched') {
-              units[i].status = 'available';
-              units[i].dispatchedAt = undefined;
-              remainingToRevert--;
-            }
-          }
+          revertQtyUnits(units, item.qty, challan.challanNumber);
         }
 
         const availCount = units.length > 0

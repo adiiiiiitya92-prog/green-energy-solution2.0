@@ -3,6 +3,7 @@ import dayjs from 'dayjs';
 import { Truck, Send, CheckCircle, Clock, Eye, XCircle, Loader2, BellRing } from 'lucide-react';
 import { useAuthStore } from '../../store/authStore';
 import { dispatchRequestService } from '../../services/dispatchRequestService';
+import { isLeadConfirmed, NOT_CONFIRMED_DISPATCH_MSG } from '../../services/leadService';
 import type { DispatchRequest, Lead } from '../../types';
 
 interface Props {
@@ -110,6 +111,10 @@ export const DispatchNotifyCard: React.FC<Props> = ({ lead, totalPaid, orderTota
       {loading ? (
         <div className="flex items-center gap-2 text-[11px] text-slate-400">
           <Loader2 className="w-3.5 h-3.5 animate-spin" /> Loading dispatch status…
+        </div>
+      ) : !active && !isLeadConfirmed(lead) ? (
+        <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-[11px] font-bold text-amber-800">
+          🔒 {NOT_CONFIRMED_DISPATCH_MSG}
         </div>
       ) : active ? (
         <div className="bg-white border border-slate-200 rounded-xl p-3.5 space-y-2">

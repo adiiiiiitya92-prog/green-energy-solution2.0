@@ -14,6 +14,8 @@ import { kraService } from '../../services/kraService';
 import { useAuthStore } from '../../store/authStore';
 import { FollowUpReminders } from '../../components/Common/FollowUpReminders';
 import { DeletionApprovalsModal } from '../../components/Common/DeletionApprovalsModal';
+import { PartnerIncentiveSummary } from '../../components/ChannelPartner/PartnerIncentiveSummary';
+import { BusinessOverview } from '../../components/Dashboard/BusinessOverview';
 import type { Lead, Quotation, OrderConfirmation, Profile, Product, PaymentInstallment, DeletionRequest, KRAScore } from '../../types';
 import dayjs from 'dayjs';
 import { Award, ShieldAlert, Check, X, AlertCircle, ChevronRight, Wallet, ChevronDown, ChevronUp, Eye, MessageSquareWarning, Target, Users, Filter, Clock } from 'lucide-react';
@@ -500,6 +502,8 @@ export const Dashboard: React.FC = () => {
           {dayjs().format('DD MMM YYYY')}
         </div>
       </div>
+
+      {isChannelPartner && currentUser?.id && <PartnerIncentiveSummary partnerId={currentUser.id} />}
 
       {/* Pending Complaints widget (Super Admin) */}
       {isSuperAdmin && pendingComplaintsCount > 0 && (
@@ -1022,6 +1026,9 @@ export const Dashboard: React.FC = () => {
         </div>
       </div>
       )}
+
+      {/* Business Overview: installed kW, system cost, monthly & yearly profit (Super Admin) */}
+      {isSuperAdmin && <BusinessOverview />}
 
       {/* Deletion & Action Approvals Modal */}
       <DeletionApprovalsModal

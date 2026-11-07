@@ -1,6 +1,7 @@
 import jsPDF from 'jspdf';
 import type { Lead, Quotation, OrderConfirmation, PaymentInstallment, Product } from '../types';
 import dayjs from 'dayjs';
+import { isSerialTrackedName } from './dispatchHelper';
 
 export interface ProductReportOptions {
   title?: string;
@@ -199,7 +200,7 @@ function renderPageFooter(pageNum: number): string {
   `;
 }
 
-function numberToWordsINR(num: number): string {
+export function numberToWordsINR(num: number): string {
   const a = ['', 'One', 'Two', 'Three', 'Four', 'Five', 'Six', 'Seven', 'Eight', 'Nine', 'Ten', 'Eleven', 'Twelve', 'Thirteen', 'Fourteen', 'Fifteen', 'Sixteen', 'Seventeen', 'Eighteen', 'Nineteen'];
   const b = ['', '', 'Twenty', 'Thirty', 'Forty', 'Fifty', 'Sixty', 'Seventy', 'Eighty', 'Ninety'];
 
@@ -2071,7 +2072,8 @@ export const pdfService = {
       const qtyNum = Number(item.qty) || 0;
       totalItemsCount += qtyNum;
 
-      const hasSerials = item.serialNumbers && item.serialNumbers.length > 0;
+      // Only panels & inverters print serial numbers; other items are shown by quantity only
+      const hasSerials = item.serialNumbers && item.serialNumbers.length > 0 && isSerialTrackedName(item.productName);
       let snLines: string[] = [];
 
       if (hasSerials) {
@@ -2905,7 +2907,7 @@ export const pdfService = {
       const serialCount = (p.productUnits && p.productUnits.length > 0)
         ? p.productUnits.length
         : (p.serialNumbers ? p.serialNumbers.length : 0);
-      const hasSerials = includeSerials && serialCount > 0;
+      const hasSerials = includeSerials && serialCount > 0 && isSerialTrackedName(p.name);
       const rowHeight = hasSerials ? 12 : 9;
 
       if (currentY + rowHeight > 270) {
@@ -3101,11 +3103,12 @@ export const exportProductCatalogToCSV = (
       status = 'Low Stock Alert';
     }
 
-    const serials = (p.productUnits && p.productUnits.length > 0)
+    const tracked = isSerialTrackedName(p.name);
+    const serials = !tracked ? '' : (p.productUnits && p.productUnits.length > 0)
       ? p.productUnits.map(u => u.serialNumber).filter(Boolean).join('; ')
       : (p.serialNumbers ? p.serialNumbers.join('; ') : '');
 
-    const serialCount = (p.productUnits && p.productUnits.length > 0)
+    const serialCount = !tracked ? 0 : (p.productUnits && p.productUnits.length > 0)
       ? p.productUnits.length
       : (p.serialNumbers ? p.serialNumbers.length : 0);
 

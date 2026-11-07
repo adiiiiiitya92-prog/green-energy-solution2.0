@@ -112,9 +112,9 @@ export async function notifyRole(role, payload, excludeUserId) {
 
 // ---------- Change-driven triggers ----------
 
-export const PUSH_WATCHED = new Set(['leads', 'leaveRequests', 'paymentRequests', 'deletionRequests', 'expenses', 'dispatchRequests']);
+export const PUSH_WATCHED = new Set(['leads', 'leaveRequests', 'paymentRequests', 'deletionRequests', 'expenses', 'dispatchRequests', 'channelPartnerPayouts']);
 
-const LEAD_ASSIGN_FIELDS = ['assignedSalesPersonId', 'assignedAdminId', 'assignedEmployeeId', 'dealerId'];
+const LEAD_ASSIGN_FIELDS = ['assignedSalesPersonId', 'assignedAdminId', 'assignedEmployeeId', 'dealerId', 'liaisoningId'];
 const FRESH_MS = 3 * 24 * 3600 * 1000;
 
 // Records first seen by the server long after creation are usually offline/reconciliation re-syncs, not new events.
@@ -145,6 +145,19 @@ export async function handlePushTriggers(collection, prev, next) {
       body: `${next.name || 'Customer'}${next.phoneNumber ? ` • ${next.phoneNumber}` : ''}${next.requirement ? ` • ${next.requirement}` : ''}`,
       url: '/leads',
       tag: `lead-${next.id}`
+    });
+    return;
+  }
+
+  // Incentive paid → tell the channel partner, once, when the payout record is first created
+  if (collection === 'channelPartnerPayouts') {
+    if (prev && !prev.isDeleted) return;
+    if (!isFresh(next.createdAt)) return;
+    await notifyUsers([next.partnerId], {
+      title: '💰 Incentive Paid',
+      body: `${inr(next.amount)} paid for ${next.leadName || 'your lead'}${next.receiptNo ? ` • Receipt ${next.receiptNo}` : ''}`,
+      url: '/channel-partner-incentives',
+      tag: `cp-payout-${next.id}`
     });
     return;
   }

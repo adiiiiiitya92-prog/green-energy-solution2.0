@@ -2,6 +2,7 @@ import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import './index.css'
 import App from './App.tsx'
+import { SearchableSelectEnhancer } from './components/Common/SearchableSelectEnhancer'
 
 // Auto-recover in production when a new version is deployed and a chunk hash changed
 if (!import.meta.env.DEV) {
@@ -18,6 +19,7 @@ if (!import.meta.env.DEV) {
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <App />
+    <SearchableSelectEnhancer />
   </StrictMode>,
 )
 

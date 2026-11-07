@@ -1,5 +1,5 @@
 import { db, markRecordAsDeleted, getDeletedRecordIdsSet } from './db';
-import type { ScheduledFieldVisit } from '../types';
+import type { ScheduledFieldVisit, FieldVisitReschedule } from '../types';
 import {
   saveRecordToFirestore,
   fetchCollectionFromFirestore,
@@ -79,6 +79,45 @@ export const fieldVisitScheduleService = {
     };
     await db.scheduledFieldVisits.put(updated);
     saveRecordToFirestore('scheduledFieldVisits', id, updated);
+    window.dispatchEvent(new CustomEvent('app-realtime-update'));
+    return updated;
+  },
+
+  /** Moves a scheduled or missed visit to a new date (and optionally a new employee), keeping the old slot and the reason in its history. */
+  async reschedule(
+    id: string,
+    input: { date: string; time?: string; assignedToId: string; assignedToName: string; remarks: string; byId?: string; byName?: string }
+  ): Promise<ScheduledFieldVisit> {
+    const existing = await db.scheduledFieldVisits.get(id);
+    if (!existing) throw new Error('Scheduled visit not found');
+    if (existing.status === 'done') throw new Error('This visit is already done and cannot be rescheduled.');
+    if (!input.remarks.trim()) throw new Error('Please write the reason for rescheduling.');
+    const entry: FieldVisitReschedule = {
+      fromDate: existing.scheduledDate,
+      fromTime: existing.scheduledTime,
+      fromAssigneeName: existing.assignedToName,
+      fromStatus: existing.status,
+      toDate: input.date,
+      toTime: input.time || undefined,
+      toAssigneeName: input.assignedToName,
+      remarks: input.remarks.trim(),
+      at: new Date().toISOString(),
+      byId: input.byId,
+      byName: input.byName
+    };
+    const updated: ScheduledFieldVisit = {
+      ...existing,
+      scheduledDate: input.date,
+      scheduledTime: input.time || undefined,
+      assignedToId: input.assignedToId,
+      assignedToName: input.assignedToName,
+      status: 'scheduled',
+      rescheduleHistory: [...(existing.rescheduleHistory || []), entry],
+      updatedAt: entry.at
+    };
+    await db.scheduledFieldVisits.put(updated);
+    // A cleared time must reach the server as null, otherwise the old time would come back on the next sync.
+    saveRecordToFirestore('scheduledFieldVisits', id, { ...updated, scheduledTime: updated.scheduledTime ?? null });
     window.dispatchEvent(new CustomEvent('app-realtime-update'));
     return updated;
   },

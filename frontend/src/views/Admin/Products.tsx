@@ -1,6 +1,7 @@
 import React, { useEffect, useState, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { isMeterUnit, type Product, type ProductUnit } from '../../types';
+import { isSerialTrackedName, isSerialTrackedProduct } from '../../services/dispatchHelper';
 import { db } from '../../services/db';
 import { productService } from '../../services/productService';
 import { challanService } from '../../services/challanService';
@@ -105,7 +106,7 @@ const normalizeProductUnits = (p: Product): ProductUnit[] => {
       availableUnits.push({
         id: `unit_${uNum}_${Date.now()}_${Math.random().toString(36).substring(2, 5)}`,
         unitNumber: uNum,
-        serialNumber: isMeter ? String(uNum) : `${brandPrefix}-${year}-${numStr}`,
+        serialNumber: isMeter || !isSerialTrackedProduct(p) ? String(uNum) : `${brandPrefix}-${year}-${numStr}`,
         status: 'available',
         addedAt: nowIso
       });
@@ -301,7 +302,8 @@ export const Products: React.FC = () => {
     const tempName = name;
     const finalStock = Number(stockQuantity) || 0;
     const productUnitsList: ProductUnit[] = [];
-    const isMeter = isMeterUnit(unit);
+    // Only panels & inverters get serial codes; other items get running numbers and are shown by quantity only
+    const isMeter = isMeterUnit(unit) || !isSerialTrackedName(name);
     const defaultPrefix = (brand || name || 'GES').substring(0, 3).toUpperCase().replace(/[^A-Z0-9]/g, '') + '-';
     const year = new Date().getFullYear();
 
@@ -1119,7 +1121,7 @@ export const Products: React.FC = () => {
                       <th className="py-3 px-4 text-right">Standard Rate</th>
                       <th className="py-3 px-4 text-center">In-Hand Stock</th>
                       {activeTab === 'commercial' && (
-                        <th className="py-3 px-4 text-center">Serials</th>
+                        <th className="py-3 px-4 text-center">Stock</th>
                       )}
                       <th className="py-3 px-4 text-right">Total Valuation</th>
                       <th className="py-3 px-4 text-center w-24">Actions</th>
@@ -1225,7 +1227,7 @@ export const Products: React.FC = () => {
                           {activeTab === 'commercial' && (
                             <td className="py-3.5 px-4 text-center whitespace-nowrap">
                               <div className="flex items-center justify-center gap-1.5">
-                                <button
+                                {isSerialTrackedProduct(p) && <button
                                   type="button"
                                   onClick={() => handleOpenManageSerialsModal(p)}
                                   className="inline-flex items-center gap-1 px-2 py-1 bg-blue-50 hover:bg-blue-100 text-blue-700 font-extrabold text-[10.5px] rounded-lg border border-blue-200 transition-colors cursor-pointer"
@@ -1233,7 +1235,7 @@ export const Products: React.FC = () => {
                                 >
                                   <Barcode className="w-3.5 h-3.5" />
                                   <span>Serials ({totalUnits})</span>
-                                </button>
+                                </button>}
                                 <button
                                   type="button"
                                   onClick={() => setQuickInwardProduct(p)}
@@ -1388,14 +1390,14 @@ export const Products: React.FC = () => {
 
                         {p.category !== 'bom_item' && (
                           <div className="flex items-center gap-1.5">
-                            <button
+                            {isSerialTrackedProduct(p) && <button
                               onClick={() => handleOpenManageSerialsModal(p)}
                               className="px-2 py-1 bg-blue-50 hover:bg-blue-100 text-blue-700 font-extrabold text-[10px] rounded-lg border border-blue-200 transition-colors flex items-center gap-1 cursor-pointer"
                               title="Manage serial numbers"
                             >
                               <Barcode className="w-3 h-3" />
                               <span>Serials ({totalUnits})</span>
-                            </button>
+                            </button>}
                             <button
                               onClick={() => setQuickInwardProduct(p)}
                               className="px-2 py-1 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 font-extrabold text-[10px] rounded-lg border border-emerald-200 transition-colors flex items-center gap-1 cursor-pointer"
@@ -1596,8 +1598,8 @@ export const Products: React.FC = () => {
                 </div>
               </div>
 
-              {/* Serial Numbers Configuration Section */}
-              {Number(stockQuantity) > 0 && (
+              {/* Serial Numbers Configuration Section (panels & inverters only) */}
+              {Number(stockQuantity) > 0 && isSerialTrackedName(name) && (
                 <div className="bg-slate-50 border border-slate-200 rounded-xl p-3.5 space-y-3">
                   <div className="flex items-center justify-between">
                     <div className="flex items-center space-x-2">

@@ -1,6 +1,6 @@
 import React from 'react';
 import type { Lead, Challan, Quotation } from '../../types';
-import type { LeadDispatchSummary } from '../../services/dispatchHelper';
+import { getItemDispatchCategory, isSerialTrackedName, type LeadDispatchSummary, type DispatchedItemSummary } from '../../services/dispatchHelper';
 import { pdfService } from '../../services/pdfService';
 import {
   X,
@@ -102,6 +102,19 @@ export const LeadDispatchModal: React.FC<LeadDispatchModalProps> = ({
   };
 
   const challans = summary.challans || [];
+
+  // Names of what was sent in a category, merged across challans: "WAAREE 620 WATT DCR PANEL ×8"
+  const itemList = (items: DispatchedItemSummary[]) => {
+    const m = new Map<string, number>();
+    items.forEach(i => m.set(i.productName.trim(), (m.get(i.productName.trim()) || 0) + i.qty));
+    return [...m.entries()].map(([n, q]) => `${n} ×${q}`);
+  };
+  const ItemNames: React.FC<{ items: DispatchedItemSummary[] }> = ({ items }) => (
+    <ul className="mt-1 space-y-0.5 text-[9.5px] font-semibold opacity-80">
+      {itemList(items).slice(0, 3).map(t => <li key={t} className="truncate" title={t}>• {t}</li>)}
+      {itemList(items).length > 3 && <li>+{itemList(items).length - 3} more</li>}
+    </ul>
+  );
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 backdrop-blur-xs p-3 sm:p-4 overflow-y-auto animate-fade-in">
@@ -212,6 +225,7 @@ export const LeadDispatchModal: React.FC<LeadDispatchModalProps> = ({
                       <div className="text-amber-700/80 text-[9.5px] mt-0.5">
                         {summary.structureItems.reduce((s, i) => s + i.qty, 0)} items dispatched
                       </div>
+                      <ItemNames items={summary.structureItems} />
                     </>
                   ) : (
                     <span className="text-slate-400 italic">Not dispatched yet</span>
@@ -245,6 +259,7 @@ export const LeadDispatchModal: React.FC<LeadDispatchModalProps> = ({
                       <div className="text-indigo-700/80 text-[9.5px] mt-0.5">
                         {summary.inverterItems.reduce((s, i) => s + i.qty, 0)} unit(s) dispatched
                       </div>
+                      <ItemNames items={summary.inverterItems} />
                     </>
                   ) : (
                     <span className="text-slate-400 italic">Not dispatched yet</span>
@@ -278,6 +293,7 @@ export const LeadDispatchModal: React.FC<LeadDispatchModalProps> = ({
                       <div className="text-emerald-700/80 text-[9.5px] mt-0.5">
                         {summary.systemItems.reduce((s, i) => s + i.qty, 0)} panels dispatched
                       </div>
+                      <ItemNames items={summary.systemItems} />
                     </>
                   ) : (
                     <span className="text-slate-400 italic">Not dispatched yet</span>
@@ -311,6 +327,7 @@ export const LeadDispatchModal: React.FC<LeadDispatchModalProps> = ({
                       <div className="text-slate-600 text-[9.5px] mt-0.5">
                         {summary.bosItems.reduce((s, i) => s + i.qty, 0)} items dispatched
                       </div>
+                      <ItemNames items={summary.bosItems} />
                     </>
                   ) : (
                     <span className="text-slate-400 italic">Not dispatched yet</span>
@@ -419,16 +436,16 @@ export const LeadDispatchModal: React.FC<LeadDispatchModalProps> = ({
                         </thead>
                         <tbody className="divide-y divide-slate-100 font-semibold">
                           {ch.items.map((item, iIdx) => {
-                            const nameLower = item.productName.toLowerCase();
-                            const isStruct = nameLower.includes('structure') || nameLower.includes('hdgi') || nameLower.includes('ladder') || nameLower.includes('mounting') || nameLower.includes('walkway');
-                            const isInv = nameLower.includes('inverter');
-                            const isSys = nameLower.includes('panel') || nameLower.includes('module') || nameLower.includes('system');
+                            const cat = getItemDispatchCategory({ productName: item.productName }).category;
+                            const isStruct = cat === 'structure';
+                            const isInv = cat === 'inverter';
+                            const isSys = cat === 'system';
 
                             return (
                               <tr key={iIdx} className="hover:bg-slate-50/50">
                                 <td className="px-3 py-2 text-slate-800">
                                   <div>{item.productName}</div>
-                                  {item.serialNumbers && item.serialNumbers.length > 0 && (
+                                  {item.serialNumbers && item.serialNumbers.length > 0 && isSerialTrackedName(item.productName) && (
                                     <div className="text-[9.5px] font-mono text-emerald-700 font-semibold mt-0.5 flex flex-wrap gap-1">
                                       {item.serialNumbers.map(sn => (
                                         <span key={sn} className="bg-emerald-50 text-emerald-800 border border-emerald-200 px-1.5 py-0.2 rounded">

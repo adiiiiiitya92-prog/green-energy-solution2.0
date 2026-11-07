@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { isMeterUnit, type StockTransaction, type Product } from '../../types';
+import { isSerialTrackedName } from '../../services/dispatchHelper';
 import { stockTransactionService } from '../../services/stockTransactionService';
 import {
   Calendar, Clock, Search, Filter, ArrowUpRight, ArrowDownLeft,
@@ -591,7 +592,7 @@ export const ProductHistoryView: React.FC<ProductHistoryViewProps> = ({ products
                             )}
 
                             {/* Serial Numbers / Meter Numbers Range preview */}
-                            {t.serialNumbers && t.serialNumbers.length > 0 && (
+                            {t.serialNumbers && t.serialNumbers.length > 0 && isSerialTrackedName(t.productName) && (
                               <div className="mt-1.5 flex items-center gap-1.5 flex-wrap">
                                 <span className="text-[10px] font-bold text-slate-400">
                                   {isMeterUnit(t.unit) ? 'Numbers (Meters):' : 'Serials:'}

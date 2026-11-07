@@ -49,7 +49,9 @@ const openUrl = async (rawUrl: string, downloadName?: string) => {
 };
 
 export const LiaisoningPanel: React.FC = () => {
-  const { currentUser } = useAuthStore();
+  const { currentUser, currentRole } = useAuthStore();
+  // Liaisoning staff only see dispatched leads assigned to them from the lead page; managers / super admin see all dispatched.
+  const assignedOnlyId = (currentRole || currentUser?.role) === 'liaisoning' ? currentUser?.id : undefined;
   const [leads, setLeads] = useState<Lead[]>([]);
   const [dispatchMap, setDispatchMap] = useState<Record<string, DispatchInfo>>({});
   const [regMap, setRegMap] = useState<Record<string, ClientRegistration>>({});
@@ -124,7 +126,7 @@ export const LiaisoningPanel: React.FC = () => {
         }
       });
       setDispatchMap(dMap);
-      setLeads((allLeads || []).filter(l => l && dMap[l.id]));
+      setLeads((allLeads || []).filter(l => l && dMap[l.id] && (!assignedOnlyId || l.liaisoningId === assignedOnlyId)));
       await refreshStatusMaps();
     } catch (err) {
       console.error('Liaisoning panel load error', err);
@@ -408,7 +410,7 @@ export const LiaisoningPanel: React.FC = () => {
         </div>
       ) : visibleLeads.length === 0 ? (
         <div className="py-16 text-center text-slate-400 text-xs font-bold bg-white rounded-2xl border border-dashed border-slate-200">
-          No dispatched leads found.
+          {assignedOnlyId ? 'No dispatched leads assigned to you yet.' : 'No dispatched leads found.'}
         </div>
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
@@ -444,6 +446,11 @@ export const LiaisoningPanel: React.FC = () => {
                     <FileCheck2 className="w-3 h-3" /> Checklist {done}/3
                   </span>
                   {l.isLoan && <span className="px-2 py-0.5 rounded-md bg-amber-50 text-amber-800 border border-amber-200">🏦 Loan</span>}
+                  {!assignedOnlyId && (
+                    <span className={`px-2 py-0.5 rounded-md border ${l.liaisoningId ? 'bg-emerald-50 text-emerald-800 border-emerald-200' : 'bg-rose-50 text-rose-700 border-rose-200'}`}>
+                      🏛️ {l.liaisoningId ? (l.liaisoningName || 'Assigned') : 'Not assigned'}
+                    </span>
+                  )}
                 </div>
               </button>
             );

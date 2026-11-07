@@ -1,6 +1,7 @@
 import { db, getDeletedRecordIdsSet } from './db';
 import { saveRecordToFirestore, fetchCollectionFromFirestore } from './firebase';
 import { challanService } from './challanService';
+import { isLeadConfirmed, NOT_CONFIRMED_DISPATCH_MSG } from './leadService';
 import type { DispatchRequest, Lead, Profile, Challan } from '../types';
 
 const COL = 'dispatchRequests';
@@ -78,6 +79,8 @@ export const dispatchRequestService = {
   },
 
   async create(params: { lead: Lead; remark: string; totalPaid: number; orderTotal: number; user: Profile; role: string }): Promise<DispatchRequest> {
+    const latest = (await db.leads.get(params.lead.id)) || params.lead;
+    if (!isLeadConfirmed(latest)) throw new Error(NOT_CONFIRMED_DISPATCH_MSG);
     const existing = (await this.getForLead(params.lead.id)).find(isActive);
     if (existing) throw new Error('A dispatch request is already open for this lead.');
     const now = new Date().toISOString();

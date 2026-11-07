@@ -5,7 +5,7 @@ import { employeeService } from '../../services/employeeService';
 import { fieldVisitScheduleService } from '../../services/fieldVisitScheduleService';
 import { useAuthStore } from '../../store/authStore';
 import type { Lead, Profile, ScheduledFieldVisit } from '../../types';
-import { ClipboardList, Clock, MapPin, CalendarPlus, UserCheck, RefreshCw } from 'lucide-react';
+import { ClipboardList, Clock, MapPin, CalendarPlus, UserCheck, RefreshCw, CalendarClock, History } from 'lucide-react';
 
 export const RawLeadsList: React.FC = () => {
   const { currentUser } = useAuthStore();
@@ -14,8 +14,17 @@ export const RawLeadsList: React.FC = () => {
   const [scheduledVisits, setScheduledVisits] = useState<ScheduledFieldVisit[]>([]);
   const [loading, setLoading] = useState(false);
 
-  const [visitModal, setVisitModal] = useState<{ open: boolean; leadId: string; leadName: string }>({ open: false, leadId: '', leadName: '' });
-  const [visitForm, setVisitForm] = useState({ assignedToId: '', scheduledDate: '', scheduledTime: '', purpose: '' });
+  // rescheduleOf set = moving an existing visit instead of creating a new one
+  const [visitModal, setVisitModal] = useState<{ open: boolean; leadId: string; leadName: string; rescheduleOf?: ScheduledFieldVisit }>({ open: false, leadId: '', leadName: '' });
+  const [visitForm, setVisitForm] = useState({ assignedToId: '', scheduledDate: '', scheduledTime: '', purpose: '', remarks: '' });
+  const [visitError, setVisitError] = useState('');
+  const [savingVisit, setSavingVisit] = useState(false);
+  const closeVisitModal = () => { setVisitModal({ open: false, leadId: '', leadName: '' }); setVisitError(''); };
+  const openReschedule = (l: Lead, v: ScheduledFieldVisit) => {
+    setVisitModal({ open: true, leadId: l.id, leadName: l.name, rescheduleOf: v });
+    setVisitForm({ assignedToId: v.assignedToId, scheduledDate: '', scheduledTime: v.scheduledTime || '', purpose: v.purpose || '', remarks: '' });
+    setVisitError('');
+  };
   const [targetModal, setTargetModal] = useState<{ open: boolean; leadId: string; leadName: string; current?: number }>({ open: false, leadId: '', leadName: '' });
   const [targetDaysInput, setTargetDaysInput] = useState('');
 
@@ -55,7 +64,16 @@ export const RawLeadsList: React.FC = () => {
     };
   }, []);
 
-  const rawLeads = useMemo(() => leads.filter(l => l.status === 'new'), [leads]);
+  // Overdue leads (target deadline passed) first, most overdue on top; the rest keep their usual order.
+  const rawLeads = useMemo(() => {
+    const now = Date.now();
+    const deadlineOf = (l: Lead) =>
+      l.targetDays && l.targetSetAt ? new Date(l.targetSetAt).getTime() + l.targetDays * 86400000 : NaN;
+    const isOverdue = (l: Lead) => deadlineOf(l) <= now;
+    const list = leads.filter(l => l.status === 'new');
+    const overdue = list.filter(isOverdue).sort((a, b) => deadlineOf(a) - deadlineOf(b));
+    return [...overdue, ...list.filter(l => !isOverdue(l))];
+  }, [leads]);
   const empsById = useMemo(() => new Map(employees.map(e => [e.id, e])), [employees]);
   const today = new Date().toISOString().slice(0, 10);
 
@@ -139,6 +157,12 @@ export const RawLeadsList: React.FC = () => {
                     const targetInfo = getTargetInfo(l);
                     const visits = leadVisitsMap.get(l.id) || [];
                     const upcomingVisit = visits.find(v => v.status === 'scheduled' && v.scheduledDate >= today);
+                    // Latest visit that did not happen (missed, or past its date and not yet auto-marked)
+                    const missedVisit = upcomingVisit ? undefined : visits
+                      .filter(v => v.status === 'missed' || (v.status === 'scheduled' && v.scheduledDate < today))
+                      .sort((a, b) => b.scheduledDate.localeCompare(a.scheduledDate))[0];
+                    const shownVisit = upcomingVisit || missedVisit;
+                    const lastReschedule = shownVisit?.rescheduleHistory?.[shownVisit.rescheduleHistory.length - 1];
                     return (
                       <tr key={l.id} className="border-b border-slate-50 last:border-0 hover:bg-slate-50/50 transition-colors">
                         <td className="px-4 py-3 text-slate-500 font-semibold">{i + 1}</td>
@@ -202,19 +226,32 @@ export const RawLeadsList: React.FC = () => {
                           )}
                         </td>
                         <td className="px-4 py-3 text-center">
-                          {upcomingVisit ? (
-                            <div className="text-[10px]">
-                              <span className="font-bold text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded">
+                          {shownVisit ? (
+                            <div className="text-[10px] space-y-0.5">
+                              <span className={`font-bold px-1.5 py-0.5 rounded inline-block ${upcomingVisit ? 'text-emerald-700 bg-emerald-50' : 'text-red-700 bg-red-50'}`}>
                                 <MapPin className="w-3 h-3 inline mr-0.5" />
-                                {upcomingVisit.scheduledDate}
+                                {upcomingVisit ? '' : 'Missed • '}{shownVisit.scheduledDate}{shownVisit.scheduledTime ? ` ${shownVisit.scheduledTime}` : ''}
                               </span>
-                              <p className="text-[9px] text-slate-400 mt-0.5">{upcomingVisit.assignedToName}</p>
+                              <p className="text-[9px] text-slate-400">{shownVisit.assignedToName}</p>
+                              {lastReschedule && (
+                                <p className="text-[9px] text-amber-700 italic max-w-[160px] mx-auto truncate" title={`Moved from ${lastReschedule.fromDate}: ${lastReschedule.remarks}`}>
+                                  <History className="w-2.5 h-2.5 inline mr-0.5" />
+                                  {shownVisit.rescheduleHistory!.length}x rescheduled • {lastReschedule.remarks}
+                                </p>
+                              )}
+                              <button
+                                onClick={() => openReschedule(l, shownVisit)}
+                                className="text-[10px] font-bold text-amber-700 hover:text-amber-900 bg-amber-50 hover:bg-amber-100 px-2 py-0.5 rounded transition"
+                              >
+                                <CalendarClock className="w-3 h-3 inline mr-0.5" /> Reschedule
+                              </button>
                             </div>
                           ) : (
                             <button
                               onClick={() => {
                                 setVisitModal({ open: true, leadId: l.id, leadName: l.name });
-                                setVisitForm({ assignedToId: '', scheduledDate: '', scheduledTime: '', purpose: '' });
+                                setVisitForm({ assignedToId: '', scheduledDate: '', scheduledTime: '', purpose: '', remarks: '' });
+                                setVisitError('');
                               }}
                               className="text-[10px] font-bold text-emerald-600 hover:text-emerald-800 bg-emerald-50 hover:bg-emerald-100 px-2 py-1 rounded transition"
                             >
@@ -273,10 +310,25 @@ export const RawLeadsList: React.FC = () => {
 
       {/* Schedule Field Visit Modal */}
       {visitModal.open && (
-        <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4" onClick={() => setVisitModal({ open: false, leadId: '', leadName: '' })}>
+        <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4" onClick={closeVisitModal}>
           <div className="bg-white rounded-2xl p-6 w-full max-w-sm shadow-xl space-y-3" onClick={e => e.stopPropagation()}>
-            <h3 className="text-sm font-bold text-slate-800">Schedule Field Visit</h3>
+            <h3 className="text-sm font-bold text-slate-800">{visitModal.rescheduleOf ? 'Reschedule Field Visit' : 'Schedule Field Visit'}</h3>
             <p className="text-[11px] text-slate-500">{visitModal.leadName}</p>
+            {visitModal.rescheduleOf && (
+              <div className="bg-amber-50 border border-amber-200 rounded-lg p-2.5 text-[11px] text-amber-900 space-y-1">
+                <p>
+                  <span className="font-bold">Current:</span> {visitModal.rescheduleOf.scheduledDate}
+                  {visitModal.rescheduleOf.scheduledTime ? ` ${visitModal.rescheduleOf.scheduledTime}` : ''} • {visitModal.rescheduleOf.assignedToName}
+                  {visitModal.rescheduleOf.status === 'missed' || visitModal.rescheduleOf.scheduledDate < today ? ' (missed)' : ''}
+                </p>
+                {(visitModal.rescheduleOf.rescheduleHistory || []).slice().reverse().map((h, i) => (
+                  <p key={i} className="text-[10px] text-amber-800">
+                    <History className="w-3 h-3 inline mr-0.5" />
+                    {h.fromDate} to {h.toDate} • "{h.remarks}"{h.byName ? ` (${h.byName})` : ''}
+                  </p>
+                ))}
+              </div>
+            )}
 
             <div>
               <label className="text-[10px] font-bold text-slate-500 uppercase mb-1 block">Field Employee</label>
@@ -293,9 +345,10 @@ export const RawLeadsList: React.FC = () => {
             </div>
 
             <div>
-              <label className="text-[10px] font-bold text-slate-500 uppercase mb-1 block">Visit Date</label>
+              <label className="text-[10px] font-bold text-slate-500 uppercase mb-1 block">{visitModal.rescheduleOf ? 'New Visit Date' : 'Visit Date'}</label>
               <input
                 type="date"
+                min={today}
                 value={visitForm.scheduledDate}
                 onChange={e => setVisitForm(f => ({ ...f, scheduledDate: e.target.value }))}
                 className="w-full border border-slate-300 rounded-lg px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-emerald-500"
@@ -323,17 +376,61 @@ export const RawLeadsList: React.FC = () => {
               />
             </div>
 
+            {visitModal.rescheduleOf && (
+              <div>
+                <label className="text-[10px] font-bold text-slate-500 uppercase mb-1 block">Reason / Remarks (Required)</label>
+                <textarea
+                  rows={2}
+                  placeholder="e.g. Customer not available, asked to come on Monday"
+                  value={visitForm.remarks}
+                  onChange={e => setVisitForm(f => ({ ...f, remarks: e.target.value }))}
+                  className="w-full border border-slate-300 rounded-lg px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-amber-500"
+                />
+              </div>
+            )}
+
+            {visitError && <p className="text-[11px] font-bold text-red-600">{visitError}</p>}
+
             <div className="flex gap-2 pt-2">
               <button
-                onClick={() => setVisitModal({ open: false, leadId: '', leadName: '' })}
+                onClick={closeVisitModal}
                 className="flex-1 text-xs font-bold text-slate-600 bg-slate-100 hover:bg-slate-200 px-3 py-2 rounded-lg"
               >
                 Cancel
               </button>
               <button
+                disabled={savingVisit}
                 onClick={async () => {
-                  if (!visitForm.assignedToId || !visitForm.scheduledDate) return;
+                  if (!visitForm.assignedToId || !visitForm.scheduledDate) { setVisitError('Select the employee and the visit date.'); return; }
+                  if (visitForm.scheduledDate < today) { setVisitError('Visit date cannot be in the past.'); return; }
                   const emp = employees.find(e => e.id === visitForm.assignedToId);
+                  const original = visitModal.rescheduleOf;
+                  if (original) {
+                    if (!visitForm.remarks.trim()) { setVisitError('Please write the reason for rescheduling.'); return; }
+                    if (visitForm.scheduledDate === original.scheduledDate && (visitForm.scheduledTime || '') === (original.scheduledTime || '') && visitForm.assignedToId === original.assignedToId) {
+                      setVisitError('Choose a different date, time or employee.');
+                      return;
+                    }
+                    setSavingVisit(true);
+                    try {
+                      await fieldVisitScheduleService.reschedule(original.id, {
+                        date: visitForm.scheduledDate,
+                        time: visitForm.scheduledTime || undefined,
+                        assignedToId: visitForm.assignedToId,
+                        assignedToName: emp?.fullName || original.assignedToName,
+                        remarks: visitForm.remarks,
+                        byId: currentUser?.id,
+                        byName: currentUser?.fullName
+                      });
+                      closeVisitModal();
+                      loadData();
+                    } catch (err: any) {
+                      setVisitError(err?.message || 'Could not reschedule the visit.');
+                    } finally {
+                      setSavingVisit(false);
+                    }
+                    return;
+                  }
                   await fieldVisitScheduleService.create({
                     leadId: visitModal.leadId,
                     leadName: visitModal.leadName,
@@ -352,7 +449,7 @@ export const RawLeadsList: React.FC = () => {
                 className="flex-1 text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-700 px-3 py-2 rounded-lg"
               >
                 <UserCheck className="w-3.5 h-3.5 inline mr-1" />
-                Schedule Visit
+                {visitModal.rescheduleOf ? (savingVisit ? 'Saving...' : 'Reschedule Visit') : 'Schedule Visit'}
               </button>
             </div>
           </div>

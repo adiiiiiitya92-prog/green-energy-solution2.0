@@ -53,6 +53,20 @@ export const filterLeadsForUser = (
   });
 };
 
+// Material can only be dispatched for a lead that is confirmed or has moved past confirmation.
+const CONFIRMED_STATUSES: Lead['status'][] = ['confirmed', 'registered', 'installed', 'closed'];
+export const isLeadConfirmed = (lead?: Pick<Lead, 'status'> | null): boolean =>
+  !!lead && CONFIRMED_STATUSES.includes(lead.status);
+export const NOT_CONFIRMED_DISPATCH_MSG = 'This lead is not confirmed yet. Confirm the lead (with at least ₹1 payment) before dispatching material.';
+
+// The server merges saves field by field and JSON drops undefined, so a field cleared locally would keep its
+// old value on the server and come back on the next sync. Send cleared fields as null so they really get removed.
+const withClearedFields = <T extends object>(record: T, keys: (keyof T)[]): T => {
+  const out: any = { ...record };
+  keys.forEach(k => { if (out[k] === undefined || out[k] === '') out[k] = null; });
+  return out;
+};
+
 let lastLeadRemoteSync = 0;
 const LEAD_SYNC_INTERVAL = 30 * 1000; // 30 seconds fresh sync throttle
 let activeLeadSyncPromise: Promise<void> | null = null;
@@ -420,7 +434,7 @@ export const leadService = {
       lead.assignedEmployeeId = salesPersonId || adminId || undefined;
       lead.updatedAt = new Date().toISOString();
       await db.leads.put(lead);
-      saveRecordToFirestore('leads', leadId, lead);
+      saveRecordToFirestore('leads', leadId, withClearedFields(lead, ['assignedSalesPersonId', 'assignedAdminId', 'assignedEmployeeId']));
     }
   },
 
@@ -431,7 +445,18 @@ export const leadService = {
       lead.dealerName = dealerId ? dealerName : undefined;
       lead.updatedAt = new Date().toISOString();
       await db.leads.put(lead);
-      saveRecordToFirestore('leads', leadId, lead);
+      saveRecordToFirestore('leads', leadId, withClearedFields(lead, ['dealerId', 'dealerName']));
+    }
+  },
+
+  async assignLiaisoning(leadId: string, userId?: string, userName?: string): Promise<void> {
+    const lead = await db.leads.get(leadId);
+    if (lead) {
+      lead.liaisoningId = userId;
+      lead.liaisoningName = userId ? userName : undefined;
+      lead.updatedAt = new Date().toISOString();
+      await db.leads.put(lead);
+      saveRecordToFirestore('leads', leadId, withClearedFields(lead, ['liaisoningId', 'liaisoningName']));
     }
   },
 
@@ -444,7 +469,7 @@ export const leadService = {
     lead.channelPartnerRateUpdatedBy = updatedBy;
     lead.updatedAt = new Date().toISOString();
     await db.leads.put(lead);
-    saveRecordToFirestore('leads', leadId, lead);
+    saveRecordToFirestore('leads', leadId, withClearedFields(lead, ['channelPartnerRate']));
     return lead;
   },
 

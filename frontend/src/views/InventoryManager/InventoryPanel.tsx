@@ -3,6 +3,7 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import { Products } from '../Admin/Products';
 import { Challans } from '../Admin/Challans';
 import { DispatchRequestsBoard } from './DispatchRequestsBoard';
+import { PaymentReadyDispatchBoard } from './PaymentReadyDispatchBoard';
 import { Package, Truck, ShieldCheck } from 'lucide-react';
 
 export const InventoryPanel: React.FC = () => {
@@ -72,6 +73,8 @@ export const InventoryPanel: React.FC = () => {
       </div>
 
       <DispatchRequestsBoard onCreateChallan={openChallanForLead} />
+
+      <PaymentReadyDispatchBoard onCreateChallan={openChallanForLead} />
 
       {/* Tab Navigation Navigation Pills (Mobile / Secondary) */}
       <div className="flex border-b border-slate-200 gap-6 text-xs font-black">

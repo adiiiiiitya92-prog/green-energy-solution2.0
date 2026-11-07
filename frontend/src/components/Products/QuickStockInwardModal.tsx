@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { isMeterUnit, type Product, type ProductUnit } from '../../types';
 import { productService } from '../../services/productService';
+import { isSerialTrackedProduct } from '../../services/dispatchHelper';
 import { stockTransactionService } from '../../services/stockTransactionService';
 import { useAuthStore } from '../../store/authStore';
 import {
@@ -92,7 +93,8 @@ const QuickStockInwardModalContent: React.FC<QuickStockInwardModalInnerProps> = 
       const newUnits: ProductUnit[] = [];
       const newSerialStrings: string[] = [];
 
-      const isMeter = isMeterUnit(product.unit);
+      // Only panels & inverters get serial codes; other items just get running numbers (shown as quantity only)
+      const isMeter = isMeterUnit(product.unit) || !isSerialTrackedProduct(product);
       for (let i = 0; i < qtyToAdd; i++) {
         const uNum = currentMaxNum + i + 1;
         const sn = pastedLines[i] || (isMeter ? String(uNum) : `${cleanPrefix}${year}-${String(uNum).padStart(3, '0')}`);
@@ -141,7 +143,7 @@ const QuickStockInwardModalContent: React.FC<QuickStockInwardModalInnerProps> = 
         quantityAdded: qtyToAdd,
         previousStock: currentStock,
         newStock: newTotalStock,
-        serialNumbers: newSerialStrings,
+        serialNumbers: isSerialTrackedProduct(product) ? newSerialStrings : undefined,
         notes: noteText,
         user: userSummary,
         timestamp: dateIso
@@ -246,7 +248,15 @@ const QuickStockInwardModalContent: React.FC<QuickStockInwardModalInnerProps> = 
           </div>
 
           {/* Serial Number Prefix / Meter Numbering Info */}
-          {isMeterUnit(product.unit) ? (
+          {!isSerialTrackedProduct(product) ? (
+            <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 text-xs text-slate-700 flex items-center gap-2.5">
+              <span className="text-lg">🔢</span>
+              <div>
+                <p className="font-extrabold text-slate-800">Quantity only</p>
+                <p className="text-[10.5px] text-slate-500 font-medium">Serial numbers are kept only for solar panels and inverters. This item's stock is tracked by quantity.</p>
+              </div>
+            </div>
+          ) : isMeterUnit(product.unit) ? (
             <div className="bg-blue-50 border border-blue-200 rounded-xl p-3 text-xs text-blue-900 flex items-center gap-2.5">
               <span className="text-lg">📏</span>
               <div>
@@ -273,8 +283,8 @@ const QuickStockInwardModalContent: React.FC<QuickStockInwardModalInnerProps> = 
             </div>
           )}
 
-          {/* Optional: Paste Custom Serials Toggle */}
-          <div>
+          {/* Optional: Paste Custom Serials Toggle (panels & inverters only) */}
+          {isSerialTrackedProduct(product) && <div>
             <button
               type="button"
               onClick={() => setShowPasteSerials(!showPasteSerials)}
@@ -303,7 +313,7 @@ const QuickStockInwardModalContent: React.FC<QuickStockInwardModalInnerProps> = 
                 </p>
               </div>
             )}
-          </div>
+          </div>}
 
           {/* Inward Notes / Invoice Reference */}
           <div>

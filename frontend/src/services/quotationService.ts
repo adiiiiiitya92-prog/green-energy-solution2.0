@@ -133,6 +133,24 @@ export function getQuotationTotalAmount(q: any): number {
   return 0;
 }
 
+const recordTime = (r: any): number => {
+  const t = new Date(r?.createdAt || 0).getTime();
+  return isFinite(t) ? t : 0;
+};
+
+/** One record per lead: the newest created one, matching the lead detail page (a revised quotation replaces the old one). */
+export function latestByLead<T extends { leadId?: string }>(records: T[]): Record<string, T> {
+  const out: Record<string, T> = {};
+  for (const r of records || []) {
+    if (!r?.leadId) continue;
+    const cur = out[r.leadId];
+    // Ties broken by id so the pick never depends on the order records arrive in.
+    const tr = recordTime(r), tc = cur ? recordTime(cur) : -1;
+    if (!cur || tr > tc || (tr === tc && String((r as any).id || '') > String((cur as any).id || ''))) out[r.leadId] = r;
+  }
+  return out;
+}
+
 export function sanitizeQuotationRecord(q: Quotation): Quotation {
   if (!q) return q;
   const tot = getQuotationTotalAmount(q);

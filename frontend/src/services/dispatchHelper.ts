@@ -54,8 +54,19 @@ export interface LeadDispatchSummary {
   allItems: DispatchedItemSummary[];
 }
 
+// Name patterns, written against the real product names used in challans (with their common misspellings).
+const INVERTER_RE = /invert|inveter|invertor|inverer|\bgrid[\s-]?tie\b|data\s*logger|wifi\s*stick/;
+const PANEL_WORD_RE = /pa+n+[ae]+l|panles|\bmodules?\b|pv\s*module|bi\s*f[ai]+c[ai]+l|bificial|top\s*con|mono\s*perc|\bn[\s-]?type\b|\bn?[\s-]?dcr\b|\bg2g\b/;
+// A bare 3-digit wattage like "540 WATT", "625W", "615Wp" (panels are 300-750 W; "600 VOLT" is not a wattage)
+const PANEL_WATT_RE = /\b([3-7]\d{2})\s*(?:w|wp|watt|watts)\b/;
+const PANEL_BRAND_RE = /waa?ree|adani|premier|panasonic|crompton|cromton|tata\s*power|vikram|goldi|rayzon|renewsys|loom|saatvik|emmvee/;
+const SYSTEM_RE = /(solar\s*)?roof\s*top\s*(solar\s*)?system|solar\s*system|on\s*grid\s*system|kw\s*kit/;
+const BOS_RE = /acdb|dcdb|cable|wire|earth|earting|lightn?ing|arr?e+st[eo]r|\bla\b|\bspd\b|\bmcb\b|fuse|conduit|battery|accessor|\blugs?\b|mc4|connector|elbow|\btee\b|insulation|tape|pvc|tray|zink|zinc|chemical|down\s*conductor|junction|cabel|meter|merer/;
+const STRUCTURE_RE = /structure|hdgi|mounting|purlin|rafter|ladder|walk\s*way|\blegs?\b|strut|\brails?\b|\bc[\s-]?type\b|\bc[\s-]?channel\b|\bl[\s-]?foot\b|\b(mid|end)\s*clamp/;
+
 /**
- * Detect the dispatch category of an item based on its name and/or product category
+ * Detect the dispatch category of an item from its name (and catalog category only for items whose name says nothing).
+ * The catalog category is not trusted first: many BOS items (DCDB, earthing rod, cable tray…) are saved as "solar_panel".
  */
 export function getItemDispatchCategory(item: { productName?: string; category?: string } | null | undefined): {
   category: DispatchCategory;
@@ -65,88 +76,45 @@ export function getItemDispatchCategory(item: { productName?: string; category?:
     return { category: 'other', categoryLabel: 'General Items' };
   }
 
-  const name = (item.productName || '').toLowerCase().trim();
+  const name = (item.productName || '').toLowerCase().replace(/\s+/g, ' ').trim();
   const rawCat = (item.category || '').toLowerCase().trim();
 
-  // 1. Structure
-  if (
-    rawCat === 'structure' ||
-    name.includes('structure') ||
-    name.includes('hdgi') ||
-    name.includes('mounting') ||
-    name.includes('purlin') ||
-    name.includes('rafter') ||
-    name.includes('ladder') ||
-    name.includes('walkway') ||
-    name.includes('walk way') ||
-    name.includes('leg') ||
-    name.includes('strut') ||
-    name.includes('rail') ||
-    name.includes('clamp') ||
-    name.includes('mid clamp') ||
-    name.includes('end clamp') ||
-    name.includes('c type') ||
-    name.includes('l foot')
-  ) {
-    return { category: 'structure', categoryLabel: 'Structure & Mounting' };
-  }
+  // 1. Inverter first: "Tata 3 kw inverter WITH AC/DC DB" is an inverter, not BOS
+  if (INVERTER_RE.test(name)) return { category: 'inverter', categoryLabel: 'Solar Inverter' };
 
-  // 2. Inverter
-  if (
-    rawCat === 'inverter' ||
-    name.includes('inverter') ||
-    name.includes('string inverter') ||
-    name.includes('micro inverter') ||
-    name.includes('hybrid inverter') ||
-    name.includes('solar inverter') ||
-    name.includes('grid tie') ||
-    name.includes('data logger') ||
-    name.includes('wifi stick')
-  ) {
-    return { category: 'inverter', categoryLabel: 'Solar Inverter' };
-  }
+  // 2. Structure ("u clip pvc pipe clamp" is a conduit clip, not structure)
+  if (STRUCTURE_RE.test(name) && !/pvc|u\s*clip/.test(name)) return { category: 'structure', categoryLabel: 'Structure & Mounting' };
 
-  // 3. Solar Panels / Solar System
-  if (
-    rawCat === 'solar_panel' ||
-    name.includes('solar panel') ||
-    name.includes('pv module') ||
-    name.includes('solar module') ||
-    name.includes('mono perc') ||
-    name.includes('bifacial') ||
-    name.includes('dcr module') ||
-    name.includes('topcon') ||
-    name.includes('watt panel') ||
-    name.includes('solar system') ||
-    name.includes('panel')
-  ) {
-    return { category: 'system', categoryLabel: 'Solar Panels / System' };
-  }
+  // 3. Solar panels / complete system
+  const isPanel =
+    PANEL_WORD_RE.test(name) ||
+    SYSTEM_RE.test(name) ||
+    (PANEL_WATT_RE.test(name) && !BOS_RE.test(name)) ||
+    (PANEL_BRAND_RE.test(name) && /\b[3-7]\d{2}\b/.test(name) && !BOS_RE.test(name));
+  if (isPanel && !BOS_RE.test(name.replace(/dcr/g, ''))) return { category: 'system', categoryLabel: 'Solar Panels / System' };
 
-  // 4. Protection, Cables, Earthing & BOS
-  if (
-    rawCat === 'bom_item' ||
-    rawCat === 'battery' ||
-    name.includes('acdb') ||
-    name.includes('dcdb') ||
-    name.includes('cable') ||
-    name.includes('wire') ||
-    name.includes('earthing') ||
-    name.includes('lightning') ||
-    name.includes('arrestor') ||
-    name.includes('spd') ||
-    name.includes('mcb') ||
-    name.includes('fuse') ||
-    name.includes('conduit') ||
-    name.includes('battery') ||
-    name.includes('accessories') ||
-    name.includes('lug')
-  ) {
-    return { category: 'bos', categoryLabel: 'Protection & BOS' };
-  }
+  // 4. Protection, cables, earthing & BOS
+  if (BOS_RE.test(name) || rawCat === 'bom_item' || rawCat === 'battery') return { category: 'bos', categoryLabel: 'Protection & BOS' };
+
+  // 5. Name gives no hint: fall back to the catalog category
+  if (rawCat === 'inverter') return { category: 'inverter', categoryLabel: 'Solar Inverter' };
+  if (rawCat === 'structure') return { category: 'structure', categoryLabel: 'Structure & Mounting' };
 
   return { category: 'other', categoryLabel: 'Other Equipment' };
 }
+
+/**
+ * Only solar panels and inverters are tracked by serial number; every other item (pipes, cables, structure, BOS…)
+ * is tracked by quantity alone. A whole "rooftop solar system" / kit line is not a single serialised unit either.
+ */
+export function isSerialTrackedName(productName?: string | null): boolean {
+  const name = (productName || '').toLowerCase();
+  const { category } = getItemDispatchCategory({ productName: name });
+  if (category === 'inverter') return true;
+  return category === 'system' && !SYSTEM_RE.test(name);
+}
+
+export const isSerialTrackedProduct = (p?: { name?: string } | null): boolean => !!p && isSerialTrackedName(p.name);
 
 /**
  * Computes a detailed dispatch summary for a specific lead

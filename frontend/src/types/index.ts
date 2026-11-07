@@ -41,6 +41,8 @@ export interface Lead {
   createdByDealer?: boolean;
   dealerId?: string;
   dealerName?: string;
+  liaisoningId?: string; // liaisoning user handling registration & release; they see the lead once dispatched
+  liaisoningName?: string;
   channelPartnerRate?: number; // price Green Energy Solution charges the channel partner
   channelPartnerGstPct?: number; // GST % deducted from the partner's margin
   channelPartnerRateUpdatedAt?: string;
@@ -75,10 +77,25 @@ export interface ScheduledFieldVisit {
   status: 'scheduled' | 'done' | 'missed';
   completedAt?: string;
   completionNotes?: string;
+  rescheduleHistory?: FieldVisitReschedule[];
   createdBy: string;
   createdByName?: string;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface FieldVisitReschedule {
+  fromDate: string;
+  fromTime?: string;
+  fromAssigneeName?: string;
+  fromStatus: ScheduledFieldVisit['status'];
+  toDate: string;
+  toTime?: string;
+  toAssigneeName?: string;
+  remarks: string;
+  at: string;
+  byId?: string;
+  byName?: string;
 }
 
 export interface QuotationItem {

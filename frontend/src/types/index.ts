@@ -900,6 +900,8 @@ export interface ExpenseClaim {
   expenseDate: string; // YYYY-MM-DD
   paymentMode: ExpensePaymentMode;
   associatedProject?: string; // Lead / Project / Customer name
+  leadId?: string; // linked lead: the expense counts in that lead's system cost
+  leadName?: string;
   description?: string; // Detailed reason
 
   // Bill / Receipt proof image

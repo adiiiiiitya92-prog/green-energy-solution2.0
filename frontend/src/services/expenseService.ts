@@ -206,6 +206,8 @@ export const expenseService = {
     expenseDate: string;
     paymentMode: ExpensePaymentMode;
     associatedProject?: string;
+    leadId?: string;
+    leadName?: string;
     description?: string;
     billProofUrl?: string;
     billProofBlob?: string;
@@ -243,6 +245,8 @@ export const expenseService = {
       expenseDate: params.expenseDate,
       paymentMode: params.paymentMode,
       associatedProject: params.associatedProject?.trim(),
+      leadId: params.leadId || undefined,
+      leadName: params.leadId ? params.leadName : undefined,
       description: params.description?.trim(),
       billProofUrl: params.billProofUrl,
       billProofBlob: params.billProofBlob,
@@ -274,6 +278,8 @@ export const expenseService = {
     expenseDate: string;
     paymentMode: ExpensePaymentMode;
     associatedProject?: string;
+    leadId?: string;
+    leadName?: string;
     description?: string;
     billProofUrl?: string;
     billProofBlob?: string;
@@ -321,6 +327,8 @@ export const expenseService = {
       expenseDate: params.expenseDate,
       paymentMode: params.paymentMode,
       associatedProject: params.associatedProject?.trim(),
+      leadId: params.leadId || undefined,
+      leadName: params.leadId ? params.leadName : undefined,
       description: params.description?.trim(),
       billProofUrl: params.billProofUrl || prev?.billProofUrl,
       billProofBlob: params.billProofBlob || prev?.billProofBlob,

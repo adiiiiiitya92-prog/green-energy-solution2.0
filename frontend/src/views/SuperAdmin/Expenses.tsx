@@ -617,6 +617,12 @@ export const Expenses: React.FC = () => {
                         <strong className="text-slate-700">{claim.associatedProject}</strong>
                       </div>
                     )}
+                    {claim.leadId && (
+                      <div className="bg-emerald-50 border border-emerald-200 px-3 py-1 rounded-lg">
+                        <span className="text-emerald-600 font-medium">Lead cost: </span>
+                        <strong className="text-emerald-800">{claim.leadName || 'Linked lead'}</strong>
+                      </div>
+                    )}
                   </div>
 
                   {/* Description / Notes */}

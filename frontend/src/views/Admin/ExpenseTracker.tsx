@@ -2,7 +2,8 @@ import React, { useState, useEffect, useRef } from 'react';
 import { roleLabel } from '../../utils/roleLabel';
 import { useAuthStore } from '../../store/authStore';
 import { expenseService, resolveExpenseReceiptUrl, normalizeReceiptUrl } from '../../services/expenseService';
-import type { ExpenseClaim, ExpenseCategory, ExpensePaymentMode } from '../../types';
+import type { ExpenseClaim, ExpenseCategory, ExpensePaymentMode, Lead } from '../../types';
+import { leadService, filterLeadsForUser } from '../../services/leadService';
 import { BillProofPreviewModal } from '../../components/Expenses/BillProofPreviewModal';
 import {
   Receipt,
@@ -48,12 +49,29 @@ export const ExpenseTracker: React.FC = () => {
   const [expenseDate, setExpenseDate] = useState(() => new Date().toISOString().split('T')[0]);
   const [paymentMode, setPaymentMode] = useState<ExpensePaymentMode>('upi_online');
   const [associatedProject, setAssociatedProject] = useState('');
+  // Linked lead: the expense is added to that lead's system cost in the business P&L
+  const [linkedLeadId, setLinkedLeadId] = useState('');
+  const [leadOptions, setLeadOptions] = useState<Lead[]>([]);
   const [description, setDescription] = useState('');
   const [billProofUrl, setBillProofUrl] = useState('');
   const [billProofBlob, setBillProofBlob] = useState('');
 
   // Reapply Context
   const [reapplyTarget, setReapplyTarget] = useState<ExpenseClaim | null>(null);
+
+  useEffect(() => {
+    leadService.getLeads()
+      .then(list => setLeadOptions(filterLeadsForUser(list, currentUser, currentRole)))
+      .catch(() => {});
+  }, [currentUser, currentRole]);
+
+  const leadLabel = (l: Lead) => `${l.name}${l.phoneNumber ? ` • ${l.phoneNumber}` : ''}`;
+  const linkedLead = leadOptions.find(l => l.id === linkedLeadId);
+  const handleProjectChange = (val: string) => {
+    setAssociatedProject(val);
+    const match = leadOptions.find(l => leadLabel(l) === val);
+    setLinkedLeadId(match ? match.id : '');
+  };
 
   const showToast = (text: string, type: 'success' | 'error' = 'success') => {
     setToastMessage({ text, type });
@@ -132,6 +150,7 @@ export const ExpenseTracker: React.FC = () => {
     setExpenseDate(claim.expenseDate);
     setPaymentMode(claim.paymentMode);
     setAssociatedProject(claim.associatedProject || '');
+    setLinkedLeadId(claim.leadId || '');
     setDescription(claim.description || '');
     setBillProofUrl(claim.billProofUrl || '');
     setBillProofBlob(claim.billProofBlob || '');
@@ -184,6 +203,8 @@ export const ExpenseTracker: React.FC = () => {
           expenseDate,
           paymentMode,
           associatedProject,
+          leadId: linkedLeadId || undefined,
+          leadName: linkedLead?.name,
           description,
           billProofUrl,
           billProofBlob
@@ -199,6 +220,8 @@ export const ExpenseTracker: React.FC = () => {
           expenseDate,
           paymentMode,
           associatedProject,
+          leadId: linkedLeadId || undefined,
+          leadName: linkedLead?.name,
           description,
           billProofUrl,
           billProofBlob
@@ -211,6 +234,7 @@ export const ExpenseTracker: React.FC = () => {
       setAmount('');
       setDescription('');
       setAssociatedProject('');
+      setLinkedLeadId('');
       setBillProofUrl('');
       setBillProofBlob('');
       await loadClaims();
@@ -516,11 +540,24 @@ export const ExpenseTracker: React.FC = () => {
                 </label>
                 <input
                   type="text"
+                  list="expense-lead-options"
                   value={associatedProject}
-                  onChange={(e) => setAssociatedProject(e.target.value)}
-                  placeholder="e.g. Ramesh Patil 10kW Rooftop Site, or General Head Office"
+                  onChange={(e) => handleProjectChange(e.target.value)}
+                  placeholder="Type customer name and pick from the list, or write General Head Office"
                   className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:bg-white transition-all placeholder:text-slate-400"
                 />
+                <datalist id="expense-lead-options">
+                  {leadOptions.map(l => <option key={l.id} value={leadLabel(l)} />)}
+                </datalist>
+                {linkedLead ? (
+                  <p className="mt-1.5 text-[11px] font-bold text-emerald-700 flex items-center gap-1">
+                    <CheckCircle2 className="w-3.5 h-3.5" /> Linked to lead: {linkedLead.name}. This cost will be added to this customer's system cost.
+                  </p>
+                ) : associatedProject.trim() ? (
+                  <p className="mt-1.5 text-[11px] font-semibold text-slate-500">
+                    Not linked to a lead. Pick a customer from the list if this expense was for a specific site; otherwise it counts as a general office expense.
+                  </p>
+                ) : null}
               </div>
 
               {/* Bill Proof Image Upload Area */}

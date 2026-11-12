@@ -188,7 +188,7 @@ export const Layout: React.FC<LayoutProps> = ({ children }) => {
     {
       name: 'Liaisoning Panel',
       path: '/liaisoning',
-      roles: ['liaisoning', 'manager'],
+      roles: ['liaisoning', 'manager', 'super_admin'],
       icon: Landmark
     },
     {
@@ -310,7 +310,7 @@ export const Layout: React.FC<LayoutProps> = ({ children }) => {
     {
       name: 'My Field Visits',
       path: '/my-field-visits',
-      roles: ['field_employee', 'admin', 'inventory_manager', 'installation_supervisor'],
+      roles: ['field_employee', 'admin', 'inventory_manager', 'installation_supervisor', 'liaisoning'],
       icon: MapPin
     },
     {
@@ -347,7 +347,7 @@ export const Layout: React.FC<LayoutProps> = ({ children }) => {
     {
       name: 'Complaint Box',
       path: '/complaints',
-      roles: ['super_admin', 'manager', 'admin', 'field_employee', 'inventory_manager', 'dealer', 'installation_supervisor', 'telecaller'],
+      roles: ['super_admin', 'manager', 'admin', 'field_employee', 'inventory_manager', 'dealer', 'installation_supervisor', 'telecaller', 'liaisoning'],
       icon: ShieldAlert
     },
     {

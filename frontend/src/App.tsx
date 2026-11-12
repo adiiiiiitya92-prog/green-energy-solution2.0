@@ -286,6 +286,8 @@ export const App: React.FC = () => {
               ) : isLiaisoning ? (
                 <>
                   <Route path="/liaisoning" element={<LiaisoningPanel />} />
+                  <Route path="/my-field-visits" element={<MyFieldVisits />} />
+                  <Route path="/complaints" element={<Complaints />} />
                   <Route path="/leave-application" element={<LeaveApplication />} />
                   <Route path="/expense-tracker" element={<ExpenseTracker />} />
                   <Route path="*" element={<Navigate to="/liaisoning" replace />} />

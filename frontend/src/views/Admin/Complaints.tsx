@@ -153,6 +153,10 @@ export const Complaints: React.FC = () => {
   // - Admins/Super Admins see all complaints across the company.
   // - Employees strictly see only complaints assigned to them.
   // - Inventory managers see complaints with inventory requests or inventory categories.
+  const myLiaisoningLeadIds = useMemo(
+    () => new Set(leads.filter(l => currentUser?.id && l.liaisoningId === currentUser.id).map(l => l.id)),
+    [leads, currentUser?.id]
+  );
   const accessibleComplaints = useMemo(() => {
     if (isAdmin) {
       return complaints;
@@ -194,7 +198,11 @@ export const Complaints: React.FC = () => {
       // 4. Check if created by this employee
       const isCreator = Boolean(currentUserId && c.createdByUserId === currentUserId);
 
-      // 5. Inventory manager role check
+      // 5. Liaisoning: complaints of the leads assigned to them
+      const isLiaisoning = currentRole === 'liaisoning' || currentUser?.role === 'liaisoning';
+      if (isLiaisoning && c.leadId && myLiaisoningLeadIds.has(c.leadId)) return true;
+
+      // 6. Inventory manager role check
       const isInvManager = currentRole === 'inventory_manager' || currentUser?.role === 'inventory_manager';
       if (isInvManager) {
         const hasInvReq = Boolean(c.inventoryRequests && c.inventoryRequests.length > 0);
@@ -205,7 +213,7 @@ export const Complaints: React.FC = () => {
       // Complaint will only go to this employee's panel if assigned to them or created by them
       return isAssignedDirectly || isAssignedField || isAssignedSales || isRelatedEmployee || hasAssignedVisit || isCreator;
     });
-  }, [complaints, isAdmin, currentRole, currentUser]);
+  }, [complaints, isAdmin, currentRole, currentUser, myLiaisoningLeadIds]);
 
   // Filter Complaints from accessibleComplaints
   const filteredComplaints = accessibleComplaints.filter(c => {
@@ -2327,7 +2335,7 @@ const ComplaintDetailModal: React.FC<ComplaintDetailModalProps> = ({
                 className="w-full p-2 bg-slate-50 border border-slate-300 rounded-xl text-xs font-semibold"
               >
                 <option value="">-- Select Field Employee --</option>
-                {employees.filter(e => e.role === 'field_employee' || e.role === 'sales_person' || e.role === 'admin').map(emp => (
+                {employees.filter(e => e.role === 'field_employee' || e.role === 'sales_person' || e.role === 'admin' || e.role === 'liaisoning').map(emp => (
                   <option key={emp.id} value={emp.id}>{emp.fullName}</option>
                 ))}
               </select>

@@ -1,11 +1,17 @@
 import React, { useEffect, useState, useMemo } from 'react';
 import { useAuthStore } from '../../store/authStore';
 import { fieldVisitScheduleService } from '../../services/fieldVisitScheduleService';
-import type { ScheduledFieldVisit } from '../../types';
-import { MapPin, CheckCircle2, AlertTriangle, CalendarDays, RefreshCw, Clock, Check } from 'lucide-react';
+import type { Lead, ScheduledFieldVisit } from '../../types';
+import { leadService } from '../../services/leadService';
+import { ScheduleFieldVisitModal } from '../../components/FieldVisits/ScheduleFieldVisitModal';
+import { MapPin, CheckCircle2, AlertTriangle, CalendarDays, RefreshCw, Clock, Check, CalendarPlus } from 'lucide-react';
 
 export const MyFieldVisits: React.FC = () => {
-  const { currentUser } = useAuthStore();
+  const { currentUser, currentRole } = useAuthStore();
+  // Liaisoning staff can schedule their own visits for the leads assigned to them
+  const canSelfSchedule = (currentRole || currentUser?.role) === 'liaisoning';
+  const [myLeads, setMyLeads] = useState<Lead[]>([]);
+  const [scheduleOpen, setScheduleOpen] = useState(false);
   const [visits, setVisits] = useState<ScheduledFieldVisit[]>([]);
   const [loading, setLoading] = useState(false);
   const [doneNotes, setDoneNotes] = useState('');
@@ -24,6 +30,13 @@ export const MyFieldVisits: React.FC = () => {
       setLoading(false);
     }
   };
+
+  useEffect(() => {
+    if (!canSelfSchedule || !currentUser?.id) return;
+    leadService.getLeads()
+      .then(list => setMyLeads(list.filter(l => l.liaisoningId === currentUser.id)))
+      .catch(() => {});
+  }, [canSelfSchedule, currentUser?.id]);
 
   useEffect(() => {
     load();
@@ -161,13 +174,24 @@ export const MyFieldVisits: React.FC = () => {
                 </p>
               </div>
             </div>
-            <button
-              onClick={load}
-              className="flex items-center gap-2 text-xs font-semibold bg-white/15 hover:bg-white/25 px-3 py-1.5 rounded-lg"
-            >
-              <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
-              Refresh
-            </button>
+            <div className="flex items-center gap-2">
+              {canSelfSchedule && (
+                <button
+                  onClick={() => setScheduleOpen(true)}
+                  className="flex items-center gap-2 text-xs font-bold bg-white text-blue-700 hover:bg-blue-50 px-3 py-1.5 rounded-lg"
+                >
+                  <CalendarPlus className="w-3.5 h-3.5" />
+                  Schedule Visit
+                </button>
+              )}
+              <button
+                onClick={load}
+                className="flex items-center gap-2 text-xs font-semibold bg-white/15 hover:bg-white/25 px-3 py-1.5 rounded-lg"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
+                Refresh
+              </button>
+            </div>
           </div>
         </div>
 
@@ -200,7 +224,9 @@ export const MyFieldVisits: React.FC = () => {
             <MapPin className="w-10 h-10 mx-auto opacity-30 mb-2" />
             <p className="text-sm font-semibold text-slate-500">No field visits scheduled yet.</p>
             <p className="text-xs mt-1">
-              Your manager will schedule field visits for you from the Dashboard.
+              {canSelfSchedule
+                ? 'Use "Schedule Visit" to plan a visit for one of your leads. Super Admin can also schedule visits for you.'
+                : 'Your manager will schedule field visits for you from the Dashboard.'}
             </p>
           </div>
         )}
@@ -257,6 +283,15 @@ export const MyFieldVisits: React.FC = () => {
           </div>
         )}
       </div>
+      {scheduleOpen && (
+        <ScheduleFieldVisitModal
+          leadOptions={myLeads}
+          selfOnly
+          onClose={() => setScheduleOpen(false)}
+          onSaved={load}
+        />
+      )}
     </div>
   );
 };
+

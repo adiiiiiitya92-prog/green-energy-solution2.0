@@ -9,9 +9,12 @@ import {
   uploadImageToFirebase, uploadPdfToFirebase, getFreshB2SignedUrl, getSafeBlobUrl, getQuickB2Url, fetchCollectionFromFirestore
 } from '../../services/firebase';
 import { useAuthStore } from '../../store/authStore';
-import type { Lead, ClientRegistration, ReleaseDocument } from '../../types';
+import type { Lead, ClientRegistration, ReleaseDocument, ScheduledFieldVisit, Profile } from '../../types';
+import { fieldVisitScheduleService } from '../../services/fieldVisitScheduleService';
+import { employeeService } from '../../services/employeeService';
+import { ScheduleFieldVisitModal } from '../../components/FieldVisits/ScheduleFieldVisitModal';
 import {
-  Landmark, Search, RefreshCw, X, Truck, Phone, CheckCircle, UploadCloud, Eye, Download, Trash2, Loader2, FileCheck2, Clock, Camera
+  Landmark, Search, RefreshCw, X, Truck, Phone, CheckCircle, UploadCloud, Eye, Download, Trash2, Loader2, FileCheck2, Clock, Camera, CalendarPlus, MapPin
 } from 'lucide-react';
 
 type Stage = 'reg_pending' | 'release_pending' | 'released';
@@ -67,6 +70,27 @@ export const LiaisoningPanel: React.FC = () => {
   const [detailLoading, setDetailLoading] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
   const selectedRef = useRef<Lead | null>(null);
+
+  // Field visits: liaisoning staff schedule for themselves; super admin / manager pick a liaisoning person
+  const [visits, setVisits] = useState<ScheduledFieldVisit[]>([]);
+  const [liaisoningStaff, setLiaisoningStaff] = useState<Profile[]>([]);
+  const [scheduleFor, setScheduleFor] = useState<Lead | null>(null);
+  const loadVisits = async () => {
+    try {
+      await fieldVisitScheduleService.autoMarkMissed().catch(() => {});
+      setVisits(await fieldVisitScheduleService.getAll());
+    } catch (_) {}
+  };
+  const today = dayjs().format('YYYY-MM-DD');
+  const visitsByLead = useMemo(() => {
+    const map: Record<string, ScheduledFieldVisit[]> = {};
+    visits.forEach(v => { (map[v.leadId] = map[v.leadId] || []).push(v); });
+    Object.values(map).forEach(list => list.sort((a, b) => (b.scheduledDate || '').localeCompare(a.scheduledDate || '')));
+    return map;
+  }, [visits]);
+  const nextVisitOf = (leadId: string) => (visitsByLead[leadId] || [])
+    .filter(v => v.status === 'scheduled' && v.scheduledDate >= today)
+    .sort((a, b) => a.scheduledDate.localeCompare(b.scheduledDate))[0];
 
   const refreshStatusMaps = async () => {
     const deleted = await getDeletedRecordIdsSet();
@@ -134,6 +158,22 @@ export const LiaisoningPanel: React.FC = () => {
       setLoading(false);
     }
   };
+
+  useEffect(() => {
+    loadVisits();
+    if (!assignedOnlyId) {
+      employeeService.getEmployees()
+        .then(list => setLiaisoningStaff(list.filter(e => e.role === 'liaisoning' && e.isActive !== false)))
+        .catch(() => {});
+    }
+    const onVisits = (e: Event) => {
+      const col = (e as CustomEvent).detail?.collectionName;
+      if (!col || col === 'scheduledFieldVisits') loadVisits();
+    };
+    window.addEventListener('app-realtime-update', onVisits);
+    return () => window.removeEventListener('app-realtime-update', onVisits);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
     loadData();
@@ -446,6 +486,14 @@ export const LiaisoningPanel: React.FC = () => {
                     <FileCheck2 className="w-3 h-3" /> Checklist {done}/3
                   </span>
                   {l.isLoan && <span className="px-2 py-0.5 rounded-md bg-amber-50 text-amber-800 border border-amber-200">🏦 Loan</span>}
+                  {(() => {
+                    const nv = nextVisitOf(l.id);
+                    return nv ? (
+                      <span className="px-2 py-0.5 rounded-md bg-blue-50 text-blue-700 border border-blue-200 flex items-center gap-1">
+                        <MapPin className="w-3 h-3" /> Visit {dayjs(nv.scheduledDate).format('DD MMM')}
+                      </span>
+                    ) : null;
+                  })()}
                   {!assignedOnlyId && (
                     <span className={`px-2 py-0.5 rounded-md border ${l.liaisoningId ? 'bg-emerald-50 text-emerald-800 border-emerald-200' : 'bg-rose-50 text-rose-700 border-rose-200'}`}>
                       🏛️ {l.liaisoningId ? (l.liaisoningName || 'Assigned') : 'Not assigned'}
@@ -482,6 +530,47 @@ export const LiaisoningPanel: React.FC = () => {
                   <Loader2 className="w-3.5 h-3.5 animate-spin" /> Syncing latest records...
                 </p>
               )}
+
+              <div className="bg-blue-50/40 border border-blue-200/70 rounded-2xl p-4 space-y-3">
+                <div className="flex items-center justify-between gap-2">
+                  <h3 className="text-sm font-bold text-slate-800 uppercase tracking-wider flex items-center gap-1.5">
+                    <MapPin className="w-4 h-4 text-blue-600" /> Field Visits
+                  </h3>
+                  <button
+                    type="button"
+                    onClick={() => setScheduleFor(selected)}
+                    className="px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-[11px] font-bold flex items-center gap-1.5 cursor-pointer"
+                  >
+                    <CalendarPlus className="w-3.5 h-3.5" /> Schedule Visit
+                  </button>
+                </div>
+                {(visitsByLead[selected.id] || []).length === 0 ? (
+                  <p className="text-[11px] text-slate-400">No field visit scheduled for this lead.</p>
+                ) : (
+                  <div className="space-y-1.5">
+                    {(visitsByLead[selected.id] || []).slice(0, 8).map(v => {
+                      const missed = v.status === 'missed' || (v.status === 'scheduled' && v.scheduledDate < today);
+                      return (
+                        <div key={v.id} className="flex items-center justify-between gap-2 bg-white border border-slate-200 rounded-lg px-3 py-2">
+                          <div className="min-w-0">
+                            <p className="text-[11px] font-bold text-slate-800">
+                              {dayjs(v.scheduledDate).format('DD MMM YYYY')}{v.scheduledTime ? ` · ${v.scheduledTime}` : ''} · {v.assignedToName}
+                            </p>
+                            {v.purpose && <p className="text-[10px] text-slate-500 truncate">{v.purpose}</p>}
+                          </div>
+                          <span className={`shrink-0 text-[10px] font-extrabold px-2 py-0.5 rounded border ${
+                            v.status === 'done' ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                              : missed ? 'bg-rose-50 text-rose-700 border-rose-200'
+                              : 'bg-blue-50 text-blue-700 border-blue-200'
+                          }`}>
+                            {v.status === 'done' ? 'DONE' : missed ? 'MISSED' : 'SCHEDULED'}
+                          </span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
 
               <div className="bg-slate-50 border border-slate-200 rounded-2xl p-5 space-y-4">
                 <h3 className="text-sm font-bold text-slate-800 uppercase tracking-wider border-b border-slate-200/60 pb-3">
@@ -699,6 +788,16 @@ export const LiaisoningPanel: React.FC = () => {
             </div>
           </div>
         </div>
+      )}
+      {scheduleFor && (
+        <ScheduleFieldVisitModal
+          lead={scheduleFor}
+          selfOnly={!!assignedOnlyId}
+          assignees={liaisoningStaff}
+          defaultAssigneeId={scheduleFor.liaisoningId}
+          onClose={() => setScheduleFor(null)}
+          onSaved={loadVisits}
+        />
       )}
     </div>
   );

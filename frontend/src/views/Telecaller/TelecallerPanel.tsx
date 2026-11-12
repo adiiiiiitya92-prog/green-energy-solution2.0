@@ -3,10 +3,11 @@ import dayjs from 'dayjs';
 import { leadService, filterLeadsForUser } from '../../services/leadService';
 import { employeeService } from '../../services/employeeService';
 import { useAuthStore } from '../../store/authStore';
+import { isFollowUpDone } from '../../utils/followUp';
 import { FollowUpReminders } from '../../components/Common/FollowUpReminders';
 import type { Lead, Profile } from '../../types';
 import {
-  PhoneCall, Plus, Search, UserPlus, CalendarClock, FileText, X, RefreshCw, Users, Bell, UserX, ClipboardCheck
+  PhoneCall, Plus, Search, UserPlus, CalendarClock, FileText, X, RefreshCw, Users, Bell, UserX, ClipboardCheck, Pencil
 } from 'lucide-react';
 
 const QuotationDocument = lazy(() =>
@@ -60,6 +61,10 @@ export const TelecallerPanel: React.FC = () => {
   const [followForm, setFollowForm] = useState({ date: '', notes: '' });
 
   const [quoteLeadId, setQuoteLeadId] = useState<string | null>(null);
+
+  const [editLead, setEditLead] = useState<Lead | null>(null);
+  const [editForm, setEditForm] = useState({ name: '', phone: '', email: '', requirement: '', description: '', isHot: false, isLoan: false, loanBankName: '' });
+  const [savingEdit, setSavingEdit] = useState(false);
   const quoteOpenRef = useRef(false);
 
   const loadData = async () => {
@@ -115,7 +120,7 @@ export const TelecallerPanel: React.FC = () => {
   const stats = useMemo(() => ({
     total: leads.length,
     unassigned: leads.filter(l => !l.assignedSalesPersonId && !l.assignedAdminId).length,
-    dueFollowUps: leads.filter(l => l.nextFollowUpDate && !l.followUpCompleted && l.nextFollowUpDate <= today).length,
+    dueFollowUps: leads.filter(l => l.nextFollowUpDate && !isFollowUpDone(l) && l.nextFollowUpDate <= today).length,
     quoted: leads.filter(l => l.status === 'quotation_sent').length
   }), [leads, today]);
 
@@ -180,6 +185,55 @@ export const TelecallerPanel: React.FC = () => {
     await loadData();
   };
 
+  const openEdit = (l: Lead) => {
+    setEditLead(l);
+    setEditForm({
+      name: l.name || '',
+      phone: l.phoneNumber || '',
+      email: l.email || '',
+      requirement: l.requirement || '',
+      description: l.description || '',
+      isHot: !!l.isHot,
+      isLoan: !!l.isLoan,
+      loanBankName: l.loanBankName || ''
+    });
+  };
+
+  const saveEdit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editLead) return;
+    const name = editForm.name.trim();
+    const phone = editForm.phone.trim();
+    const requirement = editForm.requirement.trim();
+    if (!name || !phone || !requirement) {
+      alert('Please fill Name, Phone and Requirement.');
+      return;
+    }
+    const email = editForm.email.trim();
+    const patch: Partial<Lead> = {
+      phoneNumber: phone,
+      requirement,
+      description: editForm.description.trim(),
+      isHot: editForm.isHot,
+      isLoan: editForm.isLoan,
+      loanBankName: editForm.isLoan ? editForm.loanBankName.trim() : ''
+    };
+    // Only send name/email when they changed, so the duplicate check runs only on real edits
+    if (name !== (editLead.name || '')) patch.name = name;
+    if (email !== (editLead.email || '')) patch.email = email; // '' clears it on the server too
+    if (editForm.isHot !== !!editLead.isHot) patch.clientRating = editForm.isHot ? 5 : 3;
+    setSavingEdit(true);
+    try {
+      await leadService.updateLead(editLead.id, patch);
+      setEditLead(null);
+      await loadData();
+    } catch (err: any) {
+      alert(err?.message || 'Could not save changes.');
+    } finally {
+      setSavingEdit(false);
+    }
+  };
+
   const openFollowUp = (l: Lead) => {
     setFollowLead(l);
     setFollowForm({ date: l.nextFollowUpDate || dayjs().add(1, 'day').format('YYYY-MM-DD'), notes: l.followUpNotes || '' });
@@ -187,7 +241,7 @@ export const TelecallerPanel: React.FC = () => {
 
   const followUpBadge = (l: Lead) => {
     if (!l.nextFollowUpDate) return <span className="text-[10px] text-slate-300">—</span>;
-    if (l.followUpCompleted) return <span className="text-[10px] font-bold text-emerald-600">Done</span>;
+    if (isFollowUpDone(l)) return <span className="text-[10px] font-bold text-emerald-600">Done</span>;
     const cls = l.nextFollowUpDate < today
       ? 'bg-rose-50 text-rose-700'
       : l.nextFollowUpDate === today ? 'bg-amber-50 text-amber-700' : 'bg-slate-50 text-slate-600';
@@ -321,6 +375,12 @@ export const TelecallerPanel: React.FC = () => {
                       <td className="px-4 py-3">
                         <div className="flex items-center justify-end gap-1.5">
                           <button
+                            onClick={() => openEdit(l)}
+                            className="flex items-center gap-1 text-[10px] font-bold text-slate-700 bg-slate-100 hover:bg-slate-200 px-2 py-1 rounded-lg"
+                          >
+                            <Pencil className="w-3 h-3" /> Edit
+                          </button>
+                          <button
                             onClick={() => {
                               setAssignLead(l);
                               setAssignForm({ salesId: l.assignedSalesPersonId || '', adminId: l.assignedAdminId || '' });
@@ -422,6 +482,64 @@ export const TelecallerPanel: React.FC = () => {
               <button type="button" onClick={() => setAddOpen(false)} className="flex-1 text-xs font-bold text-slate-600 bg-slate-100 hover:bg-slate-200 px-3 py-2 rounded-lg">Cancel</button>
               <button type="submit" disabled={saving} className="flex-1 text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-700 disabled:opacity-60 px-3 py-2 rounded-lg">
                 {saving ? 'Saving…' : 'Save Lead'}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
+
+      {/* Edit Lead Modal */}
+      {editLead && (
+        <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4" onClick={() => !savingEdit && setEditLead(null)}>
+          <form
+            onSubmit={saveEdit}
+            onClick={e => e.stopPropagation()}
+            className="bg-white rounded-2xl p-6 w-full max-w-lg shadow-xl space-y-3 max-h-[90vh] overflow-y-auto"
+          >
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-black text-slate-900">Edit Lead Details</h3>
+              <button type="button" onClick={() => setEditLead(null)} className="text-slate-400 hover:text-slate-700"><X className="w-4 h-4" /></button>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div>
+                <label className={labelCls}>Customer Name *</label>
+                <input className={inputCls} value={editForm.name} onChange={e => setEditForm(f => ({ ...f, name: e.target.value }))} />
+              </div>
+              <div>
+                <label className={labelCls}>Phone *</label>
+                <input className={inputCls} inputMode="tel" value={editForm.phone} onChange={e => setEditForm(f => ({ ...f, phone: e.target.value }))} />
+              </div>
+              <div>
+                <label className={labelCls}>Email</label>
+                <input className={inputCls} type="email" value={editForm.email} onChange={e => setEditForm(f => ({ ...f, email: e.target.value }))} />
+              </div>
+              <div>
+                <label className={labelCls}>Requirement *</label>
+                <input className={inputCls} placeholder="e.g. 3 kW rooftop" value={editForm.requirement} onChange={e => setEditForm(f => ({ ...f, requirement: e.target.value }))} />
+              </div>
+            </div>
+            <div>
+              <label className={labelCls}>Address / Notes</label>
+              <textarea rows={3} className={inputCls} value={editForm.description} onChange={e => setEditForm(f => ({ ...f, description: e.target.value }))} />
+            </div>
+            <div className="flex items-center gap-4 text-xs font-bold text-slate-600">
+              <label className="flex items-center gap-1.5 cursor-pointer">
+                <input type="checkbox" checked={editForm.isHot} onChange={e => setEditForm(f => ({ ...f, isHot: e.target.checked }))} /> Hot lead
+              </label>
+              <label className="flex items-center gap-1.5 cursor-pointer">
+                <input type="checkbox" checked={editForm.isLoan} onChange={e => setEditForm(f => ({ ...f, isLoan: e.target.checked }))} /> Loan case
+              </label>
+            </div>
+            {editForm.isLoan && (
+              <div>
+                <label className={labelCls}>Loan Bank Name</label>
+                <input className={inputCls} placeholder="e.g. SBI" value={editForm.loanBankName} onChange={e => setEditForm(f => ({ ...f, loanBankName: e.target.value }))} />
+              </div>
+            )}
+            <div className="flex gap-2 pt-1">
+              <button type="button" onClick={() => setEditLead(null)} className="flex-1 text-xs font-bold text-slate-600 bg-slate-100 hover:bg-slate-200 px-3 py-2 rounded-lg">Cancel</button>
+              <button type="submit" disabled={savingEdit} className="flex-1 text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-700 disabled:opacity-60 px-3 py-2 rounded-lg">
+                {savingEdit ? 'Saving…' : 'Save Changes'}
               </button>
             </div>
           </form>

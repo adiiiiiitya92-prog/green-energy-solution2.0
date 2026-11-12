@@ -1,4 +1,5 @@
 import { leadService, filterLeadsForUser } from './leadService';
+import { isFollowUpDone } from '../utils/followUp';
 import { productService } from './productService';
 import { quotationService } from './quotationService';
 import { complaintService } from './complaintService';
@@ -81,7 +82,7 @@ export async function getLiveSoftwareContext(): Promise<SoftwareLiveContext> {
       if (capMatch) {
         totalCapacityKw += parseFloat(capMatch[1]) || 0;
       }
-      if (l.nextFollowUpDate && l.nextFollowUpDate.startsWith(todayStr)) {
+      if (l.nextFollowUpDate && l.nextFollowUpDate.startsWith(todayStr) && !isFollowUpDone(l)) {
         todayFollowUps++;
       }
     });

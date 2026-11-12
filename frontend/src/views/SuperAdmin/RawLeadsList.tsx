@@ -5,7 +5,7 @@ import { employeeService } from '../../services/employeeService';
 import { fieldVisitScheduleService } from '../../services/fieldVisitScheduleService';
 import { useAuthStore } from '../../store/authStore';
 import type { Lead, Profile, ScheduledFieldVisit } from '../../types';
-import { ClipboardList, Clock, MapPin, CalendarPlus, UserCheck, RefreshCw, CalendarClock, History } from 'lucide-react';
+import { ClipboardList, Clock, MapPin, CalendarPlus, UserCheck, RefreshCw, CalendarClock, History, Search, X } from 'lucide-react';
 
 export const RawLeadsList: React.FC = () => {
   const { currentUser } = useAuthStore();
@@ -13,6 +13,7 @@ export const RawLeadsList: React.FC = () => {
   const [employees, setEmployees] = useState<Profile[]>([]);
   const [scheduledVisits, setScheduledVisits] = useState<ScheduledFieldVisit[]>([]);
   const [loading, setLoading] = useState(false);
+  const [search, setSearch] = useState('');
 
   // rescheduleOf set = moving an existing visit instead of creating a new one
   const [visitModal, setVisitModal] = useState<{ open: boolean; leadId: string; leadName: string; rescheduleOf?: ScheduledFieldVisit }>({ open: false, leadId: '', leadName: '' });
@@ -93,6 +94,12 @@ export const RawLeadsList: React.FC = () => {
     return empsById.get(id)?.fullName || '—';
   };
 
+  const q = search.trim().toLowerCase();
+  const filteredLeads = !q ? rawLeads : rawLeads.filter(l =>
+    [l.name, l.phoneNumber, l.requirement, getAssigneeName(l)]
+      .some(v => (v || '').toString().toLowerCase().includes(q))
+  );
+
   const getTargetInfo = (l: Lead) => {
     if (!l.targetDays || !l.targetSetAt) return null;
     const setDate = new Date(l.targetSetAt);
@@ -116,7 +123,7 @@ export const RawLeadsList: React.FC = () => {
               <div>
                 <h1 className="text-xl font-bold">Raw Leads List</h1>
                 <p className="text-xs text-blue-50 opacity-90">
-                  {rawLeads.length} raw leads • Target tracking & field visit scheduling
+                  {search.trim() ? `${filteredLeads.length} of ${rawLeads.length}` : rawLeads.length} raw leads • Target tracking & field visit scheduling
                 </p>
               </div>
             </div>
@@ -130,12 +137,34 @@ export const RawLeadsList: React.FC = () => {
           </div>
         </div>
 
+        {/* Search */}
+        <div className="relative mb-4">
+          <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+          <input
+            type="text"
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            placeholder="Search by name, phone, requirement or assigned person..."
+            className="w-full pl-9 pr-9 py-2.5 text-sm bg-white border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-400"
+          />
+          {search && (
+            <button onClick={() => setSearch('')} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600" title="Clear">
+              <X className="w-4 h-4" />
+            </button>
+          )}
+        </div>
+
         {/* Table */}
         <div className="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden">
           {rawLeads.length === 0 ? (
             <div className="p-10 text-center text-slate-400">
               <ClipboardList className="w-10 h-10 mx-auto opacity-30 mb-2" />
               <p className="text-sm font-semibold text-slate-500">No raw (new) leads right now.</p>
+            </div>
+          ) : filteredLeads.length === 0 ? (
+            <div className="p-10 text-center text-slate-400">
+              <Search className="w-10 h-10 mx-auto opacity-30 mb-2" />
+              <p className="text-sm font-semibold text-slate-500">No leads match "{search}".</p>
             </div>
           ) : (
             <div className="overflow-x-auto">
@@ -153,7 +182,7 @@ export const RawLeadsList: React.FC = () => {
                   </tr>
                 </thead>
                 <tbody>
-                  {rawLeads.map((l, i) => {
+                  {filteredLeads.map((l, i) => {
                     const targetInfo = getTargetInfo(l);
                     const visits = leadVisitsMap.get(l.id) || [];
                     const upcomingVisit = visits.find(v => v.status === 'scheduled' && v.scheduledDate >= today);

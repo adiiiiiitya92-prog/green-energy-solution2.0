@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { leadService, filterLeadsForUser } from '../../services/leadService';
+import { isFollowUpDone, isLeadPastFollowUp } from '../../utils/followUp';
 import { quotationService, getCleanWhatsAppPhone } from '../../services/quotationService';
 import { useAuthStore } from '../../store/authStore';
 import type { Lead } from '../../types';
@@ -105,7 +106,7 @@ export const FollowUpReminders: React.FC<{
             followUpSetAt: q.followUpSetAt || q.createdAt,
             followUpSetBy: q.createdBy || q.preparedBy || 'Admin',
             notes: q.followUpNotes || `Quotation ${q.quotationNumber} issued. Follow up for order finalization.`,
-            completed: q.followUpCompleted || lead?.followUpCompleted || false,
+            completed: q.followUpCompleted || lead?.followUpCompleted || isLeadPastFollowUp(lead?.status) || false,
             quotationNumber: q.quotationNumber,
             systemCapacity: q.systemCapacity,
             grandTotal: q.grandTotal,
@@ -139,7 +140,7 @@ export const FollowUpReminders: React.FC<{
             followUpSetAt: lead.followUpSetAt || lead.createdAt,
             followUpSetBy: lead.followUpSetBy || lead.createdBy || 'Admin',
             notes: lead.followUpNotes || existingQ?.notes || 'Scheduled lead follow-up call.',
-            completed: lead.followUpCompleted || false,
+            completed: isFollowUpDone(lead),
             quotationNumber: existingQ?.quotationNumber,
             systemCapacity: existingQ?.systemCapacity,
             grandTotal: existingQ?.grandTotal,

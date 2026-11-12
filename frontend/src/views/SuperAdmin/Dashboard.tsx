@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { isFollowUpDone } from '../../utils/followUp';
 import { roleLabel } from '../../utils/roleLabel';
 import { Link } from 'react-router-dom';
 import { db, getDeletedRecordIdsSet } from '../../services/db';
@@ -432,7 +433,7 @@ export const Dashboard: React.FC = () => {
 
   // 6. Needs Attention aggregation
   const now = dayjs();
-  const overdueFollowUps = leads.filter(l => l.nextFollowUpDate && !l.followUpCompleted && dayjs(l.nextFollowUpDate).isBefore(now, 'day')).length;
+  const overdueFollowUps = leads.filter(l => l.nextFollowUpDate && !isFollowUpDone(l) && dayjs(l.nextFollowUpDate).isBefore(now, 'day')).length;
   const leadsWithoutNextStep = leads.filter(l => l.status === 'new' && !l.nextFollowUpDate && !l.assignedSalesPersonId && !l.assignedEmployeeId).length;
 
   // 7. Payment Overdue: confirmed leads with no payment update in 15+ days

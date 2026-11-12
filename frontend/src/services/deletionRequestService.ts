@@ -2,6 +2,7 @@ import { db } from './db';
 import type { DeletionRequest, ApprovalRequest } from '../types';
 import { saveRecordToFirestore, fetchCollectionFromFirestore } from './firebase';
 import { useAuthStore } from '../store/authStore';
+import { summarizeUnitChanges, describeUnitChanges, rebaseProductEdit } from '../utils/productStockChange';
 
 /**
  * Extracts rich employee requester information from currently authenticated session
@@ -52,6 +53,16 @@ export function computeFieldDiff(
 
   for (const key of allKeys) {
     if (ignoredKeys.has(key)) continue;
+    // Serial lists are summarised from productUnits below instead of dumping raw JSON
+    if (key === 'serialNumbers') continue;
+    if (key === 'productUnits') {
+      const lines = describeUnitChanges(summarizeUnitChanges(oldObj as any, newObj as any))
+        .filter(l => !l.startsWith('Available stock'));
+      if (lines.length) {
+        diffs.push({ field: key, label: 'Stock Units', oldValue: '—', newValue: lines.join(' | ') });
+      }
+      continue;
+    }
 
     const oldVal = oldObj ? oldObj[key] : undefined;
     const newVal = newObj ? newObj[key] : undefined;
@@ -213,7 +224,14 @@ export const deletionRequestService = {
           await leadService.updateLead(req.updatedData as any);
         } else if (req.entityType === 'product') {
           const { productService } = await import('./productService');
-          await productService.updateProduct(req.updatedData as any);
+          // Apply the requested change on top of today's stock so dispatches made meanwhile are kept
+          const current = await db.products.get(req.entityId);
+          const toSave = current && req.previousData
+            ? rebaseProductEdit(req.previousData as any, req.updatedData as any, current)
+            : (req.updatedData as any);
+          await productService.updateProduct(toSave, {
+            logNotes: `Approved by ${req.reviewedByUserName}: ${req.reason || 'stock adjustment'} (requested by ${req.requestedByUserName})`
+          });
         } else if (req.entityType === 'challan') {
           const { challanService } = await import('./challanService');
           await challanService.updateChallan(req.entityId, req.updatedData as any);

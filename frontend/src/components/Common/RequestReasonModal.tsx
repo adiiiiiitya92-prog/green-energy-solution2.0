@@ -10,6 +10,7 @@ interface RequestReasonModalProps {
   entityType: string;
   entityName: string;
   loading?: boolean;
+  summary?: string[];
 }
 
 export const RequestReasonModal: React.FC<RequestReasonModalProps> = ({
@@ -20,6 +21,7 @@ export const RequestReasonModal: React.FC<RequestReasonModalProps> = ({
   entityType,
   entityName,
   loading = false,
+  summary,
 }) => {
   const { currentUser, currentRole } = useAuthStore();
   const [reason, setReason] = useState('');
@@ -34,6 +36,8 @@ export const RequestReasonModal: React.FC<RequestReasonModalProps> = ({
     'Testing / demo data cleanup'
   ] : [
     'Updated stock quantity after physical count',
+    'Damaged / defective units removed from stock',
+    'Units used at site, not recorded in challan',
     'Revised product pricing as per new vendor rate',
     'Updated customer contact / address details',
     'Corrected dispatch vehicle / driver details'
@@ -41,12 +45,13 @@ export const RequestReasonModal: React.FC<RequestReasonModalProps> = ({
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    const finalReason = reason.trim() || (actionType === 'delete' ? 'Deletion requested via CRM panel' : 'Edit updates requested via CRM panel');
+    const finalReason = reason.trim();
+    if (!finalReason) return;
     onSubmit(finalReason);
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-xs p-4 animate-fade-in">
+    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-900/60 backdrop-blur-xs p-4 animate-fade-in">
       <div className="bg-white rounded-3xl border border-slate-200 shadow-2xl w-full max-w-lg overflow-hidden flex flex-col">
         {/* Header */}
         <div className={`p-5 text-white flex justify-between items-center ${
@@ -100,6 +105,11 @@ export const RequestReasonModal: React.FC<RequestReasonModalProps> = ({
             <div className="text-sm font-black text-slate-900 break-words">
               {entityName}
             </div>
+            {summary && summary.length > 0 && (
+              <ul className="mt-1 space-y-1 text-[11px] font-semibold text-slate-700 list-disc pl-4 max-h-32 overflow-y-auto">
+                {summary.map((line, i) => <li key={i} className="break-words">{line}</li>)}
+              </ul>
+            )}
           </div>
 
           {/* Requester Identity Info */}

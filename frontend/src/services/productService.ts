@@ -156,7 +156,7 @@ export const productService = {
     window.dispatchEvent(new CustomEvent('app-realtime-update'));
   },
 
-  async requestProductEdit(updatedProduct: Product, customReason?: string): Promise<{ success: boolean; requiresApproval: boolean; requestId?: string }> {
+  async requestProductEdit(updatedProduct: Product, customReason?: string, baseline?: Product): Promise<{ success: boolean; requiresApproval: boolean; requestId?: string }> {
     const { useAuthStore } = await import('../store/authStore');
     const currentRole = useAuthStore.getState().currentRole;
     const currentUser = useAuthStore.getState().currentUser;
@@ -167,7 +167,7 @@ export const productService = {
       return { success: true, requiresApproval: false };
     }
 
-    const previousData = await db.products.get(updatedProduct.id);
+    const previousData = baseline || await db.products.get(updatedProduct.id);
     if (!previousData) {
       throw new Error(`Product #${updatedProduct.id} not found.`);
     }

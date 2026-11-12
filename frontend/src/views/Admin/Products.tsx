@@ -11,6 +11,8 @@ import { AiPalletScannerModal } from '../../components/Products/AiPalletScannerM
 import { ProductHistoryView } from '../../components/Products/ProductHistoryView';
 import { QuickStockInwardModal } from '../../components/Products/QuickStockInwardModal';
 import { ProductReportModal } from '../../components/Products/ProductReportModal';
+import { RequestReasonModal } from '../../components/Common/RequestReasonModal';
+import { summarizeUnitChanges, describeUnitChanges, isPureStockAddition } from '../../utils/productStockChange';
 import { pdfService, exportProductCatalogToCSV } from '../../services/pdfService';
 import dayjs from 'dayjs';
 import {
@@ -176,6 +178,11 @@ export const Products: React.FC = () => {
   // Dedicated Serial Numbers Management Modal State
   const [managingSerialsProduct, setManagingSerialsProduct] = useState<Product | null>(null);
   const [managingUnits, setManagingUnits] = useState<ProductUnit[]>([]);
+  // Units as they were when the modal loaded, used to detect stock reductions that need approval
+  const [managingBaseline, setManagingBaseline] = useState<ProductUnit[]>([]);
+  // Non-super-admin edit waiting for remarks before it goes to Super Admin
+  const [pendingApproval, setPendingApproval] = useState<{ product: Product; baseline: Product; lines: string[]; afterSubmit?: () => void } | null>(null);
+  const [submittingApproval, setSubmittingApproval] = useState(false);
   const [managingStockQty, setManagingStockQty] = useState<number>(0);
   const [manageSerialPrefix, setManageSerialPrefix] = useState<string>('');
   const [manageBulkText, setManageBulkText] = useState<string>('');
@@ -211,6 +218,7 @@ export const Products: React.FC = () => {
       if (updated) {
         const norm = normalizeProductUnits(updated);
         setManagingUnits(norm);
+        setManagingBaseline(norm);
         setManagingStockQty(norm.filter(u => u.status === 'available').length);
         return updated;
       }
@@ -466,12 +474,12 @@ export const Products: React.FC = () => {
     const updated: Product = {
       ...editingProduct,
       name: editName.trim(),
-      brand: editBrand.trim() || undefined,
+      brand: editBrand.trim(), // '' (not undefined) so clearing it also clears it on the server
       unit: editUnit.trim() || 'Nos',
       category: editCategory,
       bomCategory: isBom ? (editBomCategory.trim() || 'General') : undefined,
       rate: isBom ? 0 : Number(editRate),
-      description: editDescription.trim() || undefined,
+      description: editDescription.trim(),
       stockQuantity: newStock,
       minStockThreshold: isBom ? 10 : (Number(editMinStockThreshold) || 0),
       productUnits: existingUnits,
@@ -483,20 +491,10 @@ export const Products: React.FC = () => {
 
     const isSuperAdmin = currentRole === 'super_admin' || currentUser?.role === 'super_admin';
     if (!isSuperAdmin) {
-      const reason = prompt(`Submit changes for "${updated.name}" to Super Admin for approval? (Enter reason or notes):`, 'Stock / Price specification adjustment');
-      if (reason === null) return;
-
-      try {
-        const res = await productService.requestProductEdit(updated, reason.trim() || undefined);
-        if (res.requiresApproval) {
-          showToast(`🔒 Edit request submitted to Super Admin with full modification details!`);
-          return;
-        }
-      } catch (err: any) {
-        console.error("Error submitting edit request:", err);
-        showToast('Error submitting edit request: ' + (err?.message || ''));
-        return;
-      }
+      // Only Super Admin can change catalog / stock directly; everyone else sends a request with remarks
+      const baseline: Product = { ...editingProduct, productUnits: normalizeProductUnits(editingProduct) };
+      setPendingApproval({ product: updated, baseline, lines: describeUnitChanges(summarizeUnitChanges(baseline, updated)) });
+      return;
     }
 
     // Optimistically update memory state
@@ -539,6 +537,7 @@ export const Products: React.FC = () => {
     const availCount = units.filter(u => u.status === 'available' || !u.status).length;
     setManagingSerialsProduct(freshProduct);
     setManagingUnits(units);
+    setManagingBaseline(units);
     setManagingStockQty(availCount);
     setAddBatchQty('');
     setSerialModalTab('available');
@@ -676,6 +675,30 @@ export const Products: React.FC = () => {
       productUnits: managingUnits,
       serialNumbers: managingUnits.filter(u => u.status === 'available' || !u.status).map(u => u.serialNumber)
     };
+
+    const isSuperAdmin = currentRole === 'super_admin' || currentUser?.role === 'super_admin';
+    if (!isSuperAdmin) {
+      const baseline: Product = {
+        ...targetProduct,
+        productUnits: managingBaseline,
+        stockQuantity: managingBaseline.filter(u => u.status === 'available' || !u.status).length
+      };
+      const summary = summarizeUnitChanges(baseline, updatedProduct);
+      if (summary.added.length === 0 && summary.removed.length === 0 && summary.changed.length === 0) {
+        setManagingSerialsProduct(null);
+        return;
+      }
+      if (!isPureStockAddition(summary)) {
+        // Reducing stock or changing existing units needs Super Admin approval
+        setPendingApproval({
+          product: updatedProduct,
+          baseline,
+          lines: describeUnitChanges(summary),
+          afterSubmit: () => setManagingSerialsProduct(null)
+        });
+        return;
+      }
+    }
 
     setManagingSerialsProduct(null);
     setProducts(prev => prev.map(p => p.id === updatedProduct.id ? updatedProduct : p));
@@ -2374,6 +2397,11 @@ export const Products: React.FC = () => {
                 <span>Available: <strong className="text-emerald-700">{managingUnits.filter(u => u.status === 'available' || !u.status).length}</strong></span>
                 <span>Sold/Dispatched: <strong className="text-rose-700">{managingUnits.filter(u => u.status && u.status !== 'available').length}</strong></span>
                 <span>Total: <strong className="text-slate-900">{managingUnits.length}</strong></span>
+                {!isSuperAdmin && (
+                  <span className="text-[10px] font-bold text-amber-700 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded-lg">
+                    New stock saves directly • reducing or changing existing units needs Super Admin approval
+                  </span>
+                )}
               </div>
 
               <div className="flex gap-2">
@@ -2390,13 +2418,40 @@ export const Products: React.FC = () => {
                   className="px-5 py-2 bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white rounded-xl font-black text-xs cursor-pointer shadow-md flex items-center gap-1.5"
                 >
                   <Check className="w-4 h-4" />
-                  <span>Save Serial Numbers & Stock</span>
+                  <span>{isSuperAdmin ? 'Save Serial Numbers & Stock' : 'Save / Request Approval'}</span>
                 </button>
               </div>
             </div>
           </div>
         </div>
       )}
+      {/* Super Admin approval request (non-super-admin stock / catalog edits) */}
+      {pendingApproval && (
+        <RequestReasonModal
+          isOpen
+          actionType="edit"
+          entityType="product stock"
+          entityName={pendingApproval.product.name}
+          summary={pendingApproval.lines}
+          loading={submittingApproval}
+          onClose={() => !submittingApproval && setPendingApproval(null)}
+          onSubmit={async (reason) => {
+            setSubmittingApproval(true);
+            try {
+              await productService.requestProductEdit(pendingApproval.product, reason, pendingApproval.baseline);
+              pendingApproval.afterSubmit?.();
+              setPendingApproval(null);
+              showToast('🔒 Request sent to Super Admin for approval. Stock will change only after approval.');
+            } catch (err: any) {
+              console.error('Error submitting edit request:', err);
+              showToast('Error submitting request: ' + (err?.message || ''));
+            } finally {
+              setSubmittingApproval(false);
+            }
+          }}
+        />
+      )}
+
       {/* MODAL 5: AI Pallet & Serial Numbers Scanner Modal */}
       {showAiPalletModal && (
         <AiPalletScannerModal
@@ -2422,6 +2477,7 @@ export const Products: React.FC = () => {
               const norm = normalizeProductUnits(updatedOrNew);
               setManagingSerialsProduct(updatedOrNew);
               setManagingUnits(norm);
+              setManagingBaseline(norm);
               setManagingStockQty(norm.filter(u => u.status === 'available').length);
             }
           }}

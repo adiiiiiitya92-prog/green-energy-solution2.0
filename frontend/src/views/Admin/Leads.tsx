@@ -649,7 +649,7 @@ export const Leads: React.FC = () => {
       if (isRaw) {
         raw++;
       } else {
-        confirmed++;
+        if (l.status !== 'closed') confirmed++;
         if (fin && fin.pendingBalance > 0) pending++;
       }
       const isConfirmedOrPaid = ['confirmed', 'registered', 'installed', 'closed'].includes(l.status) || hasPayment;
@@ -761,7 +761,8 @@ export const Leads: React.FC = () => {
       if (loanFilter === 'loan') {
         matchesRaw = true;
       } else if (rawFilter === 'confirmed') {
-        matchesRaw = !isRaw;
+        // Closed leads are finished, so they are not listed under Confirmed (still shown in All / Process Done)
+        matchesRaw = !isRaw && lead.status !== 'closed';
       } else if (rawFilter === 'raw') {
         matchesRaw = isRaw;
       } else if (rawFilter === 'process_done_payment_pending') {

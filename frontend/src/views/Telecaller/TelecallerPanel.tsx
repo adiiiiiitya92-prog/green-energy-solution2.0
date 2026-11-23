@@ -113,7 +113,7 @@ export const TelecallerPanel: React.FC = () => {
   const sortedLeads = useMemo(() => {
     const q = search.trim().toLowerCase();
     return leads
-      .filter(l => !q || l.name.toLowerCase().includes(q) || (l.phoneNumber || '').includes(q))
+      .filter(l => !q || (l.name || '').toLowerCase().includes(q) || (l.phoneNumber || '').includes(q))
       .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
   }, [leads, search]);
 

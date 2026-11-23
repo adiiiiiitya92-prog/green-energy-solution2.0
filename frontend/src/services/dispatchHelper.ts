@@ -204,7 +204,8 @@ export function computeLeadDispatchSummary(
   if (hasStructure && hasInverter && hasSystem) {
     isOverallDispatched = true;
   } else if (leadChallans.length > 0 && leadQuotation && leadQuotation.items && leadQuotation.items.length > 0) {
-    const requiredItems = leadQuotation.items.map(i => i.itemName.toLowerCase());
+    // Some saved quotations have items without a name; treat those as blank instead of crashing the Leads page
+    const requiredItems = leadQuotation.items.map(i => String(i?.itemName || (i as any)?.name || '').toLowerCase());
     const hasReqStructure = requiredItems.some(i => i.includes('structure') || i.includes('hdgi'));
     const hasReqInverter = requiredItems.some(i => i.includes('inverter'));
     const hasReqSystem = requiredItems.some(i => i.includes('panel') || i.includes('module'));
